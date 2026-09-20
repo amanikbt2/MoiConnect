@@ -2,6 +2,7 @@ import mongoose, { Schema, Document } from 'mongoose';
 import { PaperType, PaperStatus } from '@moi/shared';
 
 export interface IPaperDocument extends Document {
+  mtid?: string;
   title: string;
   description?: string;
   type: PaperType;
@@ -57,7 +58,8 @@ const paperSchema = new Schema<IPaperDocument>(
     rejectionReason: { type: String, trim: true },
     reviewedBy: { type: Schema.Types.ObjectId, ref: 'User' },
     reviewedAt: { type: Date },
-    downloads: { type: Number, default: 0 }
+    downloads: { type: Number, default: 0 },
+    mtid: { type: String, trim: true, index: true }
   },
   { timestamps: true }
 );

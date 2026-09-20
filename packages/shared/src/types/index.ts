@@ -38,6 +38,7 @@ export type PaperStatus = 'pending' | 'approved' | 'rejected';
 
 export interface IPaper {
   _id: string;
+  mtid?: string;
   title: string;
   description?: string;
   type: PaperType;

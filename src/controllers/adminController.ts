@@ -68,6 +68,25 @@ export const reviewPaper = async (req: AuthenticatedRequest, res: Response): Pro
       paper.rejectionReason = rejectionReason;
     } else {
       paper.rejectionReason = undefined;
+
+      // Smart MTID Auto-assignment (N0001 for Notes, C0001 for CATs, P0001 for Past Papers)
+      if (status === 'approved' && !paper.mtid) {
+        let prefix = 'N';
+        let typesToCount = ['notes', 'revision'];
+        if (paper.type === 'cat') {
+          prefix = 'C';
+          typesToCount = ['cat'];
+        } else if (paper.type === 'past_paper') {
+          prefix = 'P';
+          typesToCount = ['past_paper'];
+        }
+
+        const approvedCount = await Paper.countDocuments({
+          status: 'approved',
+          type: { $in: typesToCount }
+        });
+        paper.mtid = `${prefix}${String(approvedCount + 1).padStart(4, '0')}`;
+      }
     }
     paper.reviewedBy = admin._id;
     paper.reviewedAt = new Date();
