@@ -39,15 +39,9 @@ const limiter = rateLimit({
 });
 app.use('/api', limiter);
 
-// Root Web Admin Dashboard & Privacy Policy
+// Root Web Admin Dashboard
 app.get('/', renderAdminDashboard);
 app.get('/admin', renderAdminDashboard);
-app.get('/privacy', (_req, res) => {
-  res.sendFile(path.join(__dirname, '../public/privacy.html'));
-});
-app.get('/privacy.html', (_req, res) => {
-  res.sendFile(path.join(__dirname, '../public/privacy.html'));
-});
 
 // API Base Route
 app.use('/api/v1', routes);
