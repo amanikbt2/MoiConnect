@@ -9,12 +9,22 @@ import { connectDB } from './config/db';
 import routes from './routes';
 import { setupSocketIO } from './socket';
 import { errorHandler } from './middleware/errorHandler';
+import path from 'path';
+import { renderAdminDashboard } from './controllers/dashboardController';
 
 const app = express();
 const server = http.createServer(app);
 
+// Static files for favicon and public assets
+app.use(express.static(path.join(__dirname, '../public')));
+app.use(express.static(path.join(__dirname, '../../public')));
+app.use(express.static(path.join(process.cwd(), 'public')));
+
 // Security & Utility Middlewares
-app.use(helmet({ crossOriginResourcePolicy: false }));
+app.use(helmet({
+  crossOriginResourcePolicy: false,
+  contentSecurityPolicy: false
+}));
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
@@ -28,6 +38,16 @@ const limiter = rateLimit({
   message: { success: false, error: 'Too many requests, please try again later.' }
 });
 app.use('/api', limiter);
+
+// Root Web Admin Dashboard & Privacy Policy
+app.get('/', renderAdminDashboard);
+app.get('/admin', renderAdminDashboard);
+app.get('/privacy', (_req, res) => {
+  res.sendFile(path.join(__dirname, '../public/privacy.html'));
+});
+app.get('/privacy.html', (_req, res) => {
+  res.sendFile(path.join(__dirname, '../public/privacy.html'));
+});
 
 // API Base Route
 app.use('/api/v1', routes);

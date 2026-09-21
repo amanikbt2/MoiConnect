@@ -7,40 +7,98 @@ import { Message } from '../models/Message';
 
 export interface AuthenticatedSocket extends Socket {
   userId?: string;
+  isGuest?: boolean;
 }
 
+interface OnlineSession {
+  socketId: string;
+  userId?: string;
+  isGuest: boolean;
+  connectedAt: Date;
+}
+
+// In-memory zero-polling active sockets registry for maximum speed (O(1) lookups)
+const activeSockets = new Map<string, OnlineSession>();
+
+export const getOnlineStats = () => {
+  let authenticatedCount = 0;
+  let guestCount = 0;
+  const onlineUserIdsSet = new Set<string>();
+
+  activeSockets.forEach(session => {
+    if (session.userId) {
+      authenticatedCount++;
+      onlineUserIdsSet.add(session.userId);
+    } else {
+      guestCount++;
+    }
+  });
+
+  return {
+    totalOnline: activeSockets.size,
+    authenticatedCount,
+    guestCount,
+    onlineUserIds: Array.from(onlineUserIdsSet)
+  };
+};
+
 export const setupSocketIO = (io: SocketIOServer): void => {
-  // Connection Authentication Middleware
+  // Connection Authentication Middleware (Supports both Authenticated users & Anonymous/Guest users)
   io.use(async (socket: AuthenticatedSocket, next) => {
     try {
       const token = socket.handshake.auth?.token || socket.handshake.headers?.authorization?.split(' ')[1];
       if (!token) {
-        return next(new Error('Authentication error: Token not provided'));
+        // Guest user (not signed in / unknown)
+        socket.userId = undefined;
+        socket.isGuest = true;
+        return next();
       }
 
       const decoded = jwt.verify(token, config.jwtAccessSecret) as { userId: string };
       const user = await User.findById(decoded.userId);
-      if (!user || user.accountStatus === 'suspended') {
-        return next(new Error('Authentication error: User invalid or suspended'));
+      if (user && user.accountStatus !== 'suspended') {
+        socket.userId = user._id.toString();
+        socket.isGuest = false;
+      } else {
+        socket.userId = undefined;
+        socket.isGuest = true;
       }
-
-      socket.userId = user._id.toString();
       next();
     } catch (err) {
-      next(new Error('Authentication error: Invalid token'));
+      // Fallback to guest session on token verification error
+      socket.userId = undefined;
+      socket.isGuest = true;
+      next();
     }
   });
 
   io.on('connection', (socket: AuthenticatedSocket) => {
-    const userId = socket.userId!;
-    console.log(`[Socket Connected]: User ${userId}`);
+    const isGuest = !socket.userId;
+    const userId = socket.userId;
 
-    // Join personal notification room
-    socket.join(`user:${userId}`);
+    // Record socket connection instantly in memory
+    activeSockets.set(socket.id, {
+      socketId: socket.id,
+      userId,
+      isGuest,
+      connectedAt: new Date()
+    });
+
+    console.log(`[Socket Connected]: ${isGuest ? 'Guest (Unknown)' : `User ${userId}`} (Active: ${activeSockets.size})`);
+
+    // Join personal notification room if authenticated
+    if (userId) {
+      socket.join(`user:${userId}`);
+    }
 
     // Join conversation room with security verification
     socket.on('join_conversation', async (conversationId: string) => {
       try {
+        if (!userId) {
+          socket.emit('error', { message: 'Must be logged in to join chat' });
+          return;
+        }
+
         const conversation = await Conversation.findById(conversationId);
         if (!conversation) {
           socket.emit('error', { message: 'Conversation not found' });
@@ -57,7 +115,6 @@ export const setupSocketIO = (io: SocketIOServer): void => {
         }
 
         socket.join(`conversation:${conversationId}`);
-        console.log(`[Socket]: User ${userId} joined room conversation:${conversationId}`);
       } catch (err: any) {
         socket.emit('error', { message: err.message });
       }
@@ -66,6 +123,11 @@ export const setupSocketIO = (io: SocketIOServer): void => {
     // Real-time message handler
     socket.on('send_message', async (data: { conversationId: string; text: string }) => {
       try {
+        if (!userId) {
+          socket.emit('error', { message: 'Must be logged in to send messages' });
+          return;
+        }
+
         const { conversationId, text } = data;
         if (!conversationId || !text || !text.trim()) return;
 
@@ -84,7 +146,6 @@ export const setupSocketIO = (io: SocketIOServer): void => {
           return;
         }
 
-        // Authenticated sender ID enforced on server side
         const message = await Message.create({
           conversationId,
           senderId: userId,
@@ -99,10 +160,8 @@ export const setupSocketIO = (io: SocketIOServer): void => {
 
         const populatedMessage = await message.populate('senderId', 'name email avatarUrl');
 
-        // Broadcast to conversation room
         io.to(`conversation:${conversationId}`).emit('receive_message', populatedMessage);
 
-        // Notify other participants
         conversation.participants.forEach(participantId => {
           const pId = participantId.toString();
           if (pId !== userId) {
@@ -117,8 +176,10 @@ export const setupSocketIO = (io: SocketIOServer): void => {
       }
     });
 
+    // Clean up on disconnect instantly with zero delay or intervals
     socket.on('disconnect', () => {
-      console.log(`[Socket Disconnected]: User ${userId}`);
+      activeSockets.delete(socket.id);
+      console.log(`[Socket Disconnected]: ${isGuest ? 'Guest (Unknown)' : `User ${userId}`} (Active: ${activeSockets.size})`);
     });
   });
 };

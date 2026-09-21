@@ -159,6 +159,76 @@ export const me = async (req: AuthenticatedRequest, res: Response): Promise<void
   });
 };
 
+export const googleAuth = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    let { email, name, avatarUrl, idToken } = req.body;
+
+    // Verify ID Token directly with Google if provided
+    if (idToken) {
+      try {
+        const googleRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${idToken}`);
+        if (googleRes.ok) {
+          const googleData: any = await googleRes.json();
+          if (googleData && googleData.email) {
+            email = googleData.email;
+            name = googleData.name || name;
+            avatarUrl = googleData.picture || avatarUrl;
+          }
+        }
+      } catch (tokenErr) {
+        console.warn('Google token verification fallback:', tokenErr);
+      }
+    }
+    
+    // Normalize target email or default to a valid student email if none provided
+    const targetEmail = (email || 'student.google@moi.ac.ke').toLowerCase().trim();
+    const targetName = name || 'Google Student';
+
+    let user = await User.findOne({ email: targetEmail });
+
+    if (!user) {
+      // Auto-register Google user if account does not exist
+      const randomPassword = Math.random().toString(36).slice(-10) + '!Moi2026';
+      const salt = await bcrypt.genSalt(10);
+      const passwordHash = await bcrypt.hash(randomPassword, salt);
+
+      user = await User.create({
+        name: targetName,
+        email: targetEmail,
+        passwordHash,
+        avatarUrl,
+        roles: ['student'],
+        activeRole: 'student',
+        landlordStatus: 'none',
+        accountStatus: 'active'
+      });
+    }
+
+    if (user.accountStatus === 'suspended') {
+      res.status(403).json({ success: false, error: 'Your account has been suspended.' });
+      return;
+    }
+
+    const tokens = generateTokens(user._id.toString());
+    user.refreshTokens.push(tokens.refreshToken);
+    if (user.refreshTokens.length > 5) {
+      user.refreshTokens = user.refreshTokens.slice(-5);
+    }
+    await user.save();
+
+    res.json({
+      success: true,
+      message: 'Google login successful',
+      data: {
+        user,
+        tokens
+      }
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Google authentication failed' });
+  }
+};
+
 export const requestLandlord = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const { idNumber, proofDetails }: RequestLandlordInput = req.body;

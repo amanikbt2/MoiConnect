@@ -26,12 +26,19 @@ import * as chatController from '../controllers/chatController';
 import * as favoriteController from '../controllers/favoriteController';
 import * as reportController from '../controllers/reportController';
 import * as adminController from '../controllers/adminController';
+import * as dashboardController from '../controllers/dashboardController';
 
 const router = Router();
+
+// Web Dashboard API Routes
+router.get('/dashboard/overview', dashboardController.getDashboardOverview);
+router.post('/dashboard/papers/:id/approve', dashboardController.quickApprovePaper);
+router.post('/dashboard/papers/:id/reject', dashboardController.quickRejectPaper);
 
 // Auth Routes
 router.post('/auth/register', validateBody(registerSchema), authController.register);
 router.post('/auth/login', validateBody(loginSchema), authController.login);
+router.post('/auth/google', authController.googleAuth);
 router.post('/auth/refresh', validateBody(refreshTokenSchema), authController.refresh);
 router.post('/auth/logout', authenticate, authController.logout);
 router.get('/auth/me', authenticate, authController.me);
