@@ -960,7 +960,7 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
                 '<span style="background: #15803d; color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 10px;">' + item.popupId + '</span>' +
                 item.title +
               '</span>' +
-              '<button onclick="handleDeletePopup(\'' + item._id + '\')" class="btn" style="background: #fee2e2; color: #dc2626; padding: 3px 8px; font-size: 10px; font-weight: 800; border: 1px solid #fca5a5; border-radius: 6px;">' +
+              '<button data-id="' + item._id + '" onclick="handleDeletePopup(this.dataset.id)" class="btn" style="background: #fee2e2; color: #dc2626; padding: 3px 8px; font-size: 10px; font-weight: 800; border: 1px solid #fca5a5; border-radius: 6px;">' +
                 '🗑️ Delete' +
               '</button>' +
             '</div>' +
