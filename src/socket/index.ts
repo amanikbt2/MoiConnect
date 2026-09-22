@@ -19,6 +19,11 @@ interface OnlineSession {
 
 // In-memory zero-polling active sockets registry for maximum speed (O(1) lookups)
 const activeSockets = new Map<string, OnlineSession>();
+let ioInstance: SocketIOServer | null = null;
+
+export const getSocketIO = (): SocketIOServer | null => {
+  return ioInstance;
+};
 
 export const getOnlineStats = () => {
   let authenticatedCount = 0;
@@ -43,6 +48,7 @@ export const getOnlineStats = () => {
 };
 
 export const setupSocketIO = (io: SocketIOServer): void => {
+  ioInstance = io;
   // Connection Authentication Middleware (Supports both Authenticated users & Anonymous/Guest users)
   io.use(async (socket: AuthenticatedSocket, next) => {
     try {

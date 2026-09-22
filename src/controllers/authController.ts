@@ -161,9 +161,27 @@ export const me = async (req: AuthenticatedRequest, res: Response): Promise<void
 
 export const googleAuth = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
-    let { email, name, avatarUrl, idToken } = req.body;
+    let { email, name, avatarUrl, idToken, accessToken } = req.body;
 
-    // Verify ID Token directly with Google if provided
+    // Verify Access Token or ID Token directly with Google if provided
+    if (accessToken && !email) {
+      try {
+        const userRes = await fetch('https://www.googleapis.com/userinfo/v2/me', {
+          headers: { Authorization: `Bearer ${accessToken}` }
+        });
+        if (userRes.ok) {
+          const userData: any = await userRes.json();
+          if (userData && userData.email) {
+            email = userData.email;
+            name = userData.name || name;
+            avatarUrl = userData.picture || avatarUrl;
+          }
+        }
+      } catch (err) {
+        console.warn('Google accessToken verification error:', err);
+      }
+    }
+
     if (idToken) {
       try {
         const googleRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${idToken}`);
@@ -254,5 +272,24 @@ export const requestLandlord = async (req: AuthenticatedRequest, res: Response):
     });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message || 'Request failed' });
+  }
+};
+
+export const deleteAccount = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.user?._id;
+    if (!userId) {
+      res.status(401).json({ success: false, error: 'Unauthorized' });
+      return;
+    }
+
+    await User.findByIdAndDelete(userId);
+
+    res.json({
+      success: true,
+      message: 'Account and personal data completely wiped from database.'
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to delete account' });
   }
 };

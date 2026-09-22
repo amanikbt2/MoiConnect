@@ -27,6 +27,8 @@ import * as favoriteController from '../controllers/favoriteController';
 import * as reportController from '../controllers/reportController';
 import * as adminController from '../controllers/adminController';
 import * as dashboardController from '../controllers/dashboardController';
+import * as popupController from '../controllers/popupController';
+import * as notificationController from '../controllers/notificationController';
 
 const router = Router();
 
@@ -34,6 +36,19 @@ const router = Router();
 router.get('/dashboard/overview', dashboardController.getDashboardOverview);
 router.post('/dashboard/papers/:id/approve', dashboardController.quickApprovePaper);
 router.post('/dashboard/papers/:id/reject', dashboardController.quickRejectPaper);
+
+// Push Notification & Bell Inbox Routes
+router.post('/notifications/register-token', notificationController.registerDeviceToken);
+router.get('/notifications', notificationController.getNotifications);
+router.post('/notifications/:id/read', notificationController.markNotificationRead);
+router.post('/admin/push-notify', notificationController.sendAdminPushNotification);
+router.get('/admin/push-history', notificationController.getAdminNotificationHistory);
+
+// Notify & Popup API Routes
+router.get('/notify/popups', popupController.getAdminPopups);
+router.post('/notify/popups', popupController.createPopup);
+router.delete('/notify/popups/:id', popupController.deletePopup);
+router.post('/notify/check-popup', popupController.checkClientPopup);
 
 // Auth Routes
 router.post('/auth/register', validateBody(registerSchema), authController.register);
@@ -43,6 +58,7 @@ router.post('/auth/refresh', validateBody(refreshTokenSchema), authController.re
 router.post('/auth/logout', authenticate, authController.logout);
 router.get('/auth/me', authenticate, authController.me);
 router.post('/auth/request-landlord', authenticate, validateBody(requestLandlordSchema), authController.requestLandlord);
+router.delete('/auth/delete-account', authenticate, authController.deleteAccount);
 
 // Academic Resources Routes
 router.get('/papers', paperController.getPapers);

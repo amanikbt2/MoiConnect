@@ -282,6 +282,11 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
         System Health & API
       </button>
+
+      <button id="tab-btn-push" onclick="switchTab('push')" class="tab-btn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+        Push Notify
+      </button>
     </div>
 
     <!-- Notification Toast -->
@@ -476,9 +481,112 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
             <li style="background: #f8fafc; padding: 10px 14px; border-radius: 8px; border: 1px solid #e2e8f0; display: flex; justify-content: space-between;">
               <span>GET /api/v1/admin/stats</span>
               <span style="color: #d97706; font-weight: 700;">Admin Only</span>
-            </li>
-          </ul>
+    <!-- TAB 5: PUSH NOTIFY -->
+    <section id="tab-content-push" class="tab-content hidden">
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 24px;">
+        
+        <!-- Push Notify Form -->
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#15803d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                Send Push Notification
+              </h2>
+              <p class="card-sub">Broadcast high-priority push notifications to android mobile devices & guest users.</p>
+            </div>
+          </div>
+
+          <form id="push-form" onsubmit="handleSendPush(event)" style="display: flex; flex-direction: column; gap: 16px;">
+            <div>
+              <label style="display: block; font-size: 12px; font-weight: 700; color: #334155; margin-bottom: 6px;">Notification Title *</label>
+              <input type="text" id="push-title" class="form-control" placeholder="e.g. 📢 End of Semester Exam Timetable Released" required style="width: 100%; font-size: 14px; font-weight: 700;" />
+            </div>
+
+            <div>
+              <label style="display: block; font-size: 12px; font-weight: 700; color: #334155; margin-bottom: 6px;">Notification Subtitle / Category Header</label>
+              <input type="text" id="push-subtitle" class="form-control" placeholder="e.g. Academic Announcement • School of Information Sciences" style="width: 100%;" />
+            </div>
+
+            <div>
+              <label style="display: block; font-size: 12px; font-weight: 700; color: #334155; margin-bottom: 6px;">Select Monochrome Icon (100% Android & Native Compatible)</label>
+              <div style="display: flex; flex-wrap: wrap; gap: 10px;">
+                <label style="display: flex; align-items: center; gap: 6px; background: #f8fafc; border: 1px solid #cbd5e1; padding: 8px 12px; border-radius: 10px; cursor: pointer; font-size: 12px; font-weight: 700;">
+                  <input type="radio" name="push-icon" value="bell" checked />
+                  🔔 General (Bell)
+                </label>
+                <label style="display: flex; align-items: center; gap: 6px; background: #f8fafc; border: 1px solid #cbd5e1; padding: 8px 12px; border-radius: 10px; cursor: pointer; font-size: 12px; font-weight: 700;">
+                  <input type="radio" name="push-icon" value="academic" />
+                  🎓 Academic (Cap)
+                </label>
+                <label style="display: flex; align-items: center; gap: 6px; background: #f8fafc; border: 1px solid #cbd5e1; padding: 8px 12px; border-radius: 10px; cursor: pointer; font-size: 12px; font-weight: 700;">
+                  <input type="radio" name="push-icon" value="house" />
+                  🏠 Rentals (House)
+                </label>
+                <label style="display: flex; align-items: center; gap: 6px; background: #f8fafc; border: 1px solid #cbd5e1; padding: 8px 12px; border-radius: 10px; cursor: pointer; font-size: 12px; font-weight: 700;">
+                  <input type="radio" name="push-icon" value="alert" />
+                  ⚡ Urgent (Alert)
+                </label>
+              </div>
+            </div>
+
+            <div>
+              <label style="display: block; font-size: 12px; font-weight: 700; color: #334155; margin-bottom: 6px;">Recipient Audience Target *</label>
+              <div style="display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 8px;">
+                <label style="font-size: 13px; font-weight: 700; color: #0f172a; display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                  <input type="radio" name="push-target" value="all" checked onchange="toggleEmailBox()" />
+                  🌐 All Users & Guest Devices (Broadcast)
+                </label>
+                <label style="font-size: 13px; font-weight: 700; color: #0f172a; display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                  <input type="radio" name="push-target" value="emails" onchange="toggleEmailBox()" />
+                  ✉️ Specific Email List
+                </label>
+              </div>
+
+              <div id="email-recipients-box" class="hidden" style="margin-top: 6px;">
+                <textarea id="push-emails" class="form-control" rows="2" placeholder="e.g. student1@moi.ac.ke, student2@moi.ac.ke" style="width: 100%; font-family: monospace; font-size: 12px;"></textarea>
+                <span style="font-size: 11px; color: #64748b;">Enter comma-separated emails of recipient students.</span>
+              </div>
+            </div>
+
+            <div>
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <label style="font-size: 12px; font-weight: 700; color: #334155;">Notification Body Content *</label>
+                <span style="font-size: 11px; font-weight: 700; color: #15803d;">Magic Template Tags:</span>
+              </div>
+              
+              <!-- Magic variable tags helper -->
+              <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px;">
+                <button type="button" onclick="insertMagicVar('{name}')" style="background: #e0e7ff; color: #3730a3; border: 1px solid #c7d2fe; padding: 4px 8px; border-radius: 6px; font-size: 11px; font-weight: 800; cursor: pointer;">+ {name}</button>
+                <button type="button" onclick="insertMagicVar('{course}')" style="background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; padding: 4px 8px; border-radius: 6px; font-size: 11px; font-weight: 800; cursor: pointer;">+ {course}</button>
+                <button type="button" onclick="insertMagicVar('{admissionNumber}')" style="background: #fef3c7; color: #92400e; border: 1px solid #fde68a; padding: 4px 8px; border-radius: 6px; font-size: 11px; font-weight: 800; cursor: pointer;">+ {admissionNumber}</button>
+                <button type="button" onclick="insertMagicVar('{email}')" style="background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; padding: 4px 8px; border-radius: 6px; font-size: 11px; font-weight: 800; cursor: pointer;">+ {email}</button>
+              </div>
+
+              <textarea id="push-body" class="form-control" rows="4" placeholder="Dear {name}, your official timetable for {course} is now live. Tap to open!" required style="width: 100%; font-size: 13px;"></textarea>
+            </div>
+
+            <button type="submit" id="btn-submit-push" class="btn btn-approve" style="padding: 12px 20px; font-size: 14px; width: 100%; justify-content: center;">
+              🚀 Dispatch Android Push Notification
+            </button>
+          </form>
         </div>
+
+        <!-- Push History -->
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h3 style="font-size: 16px; font-weight: 800; color: #0f172a;">Broadcast History</h3>
+              <p class="card-sub">Recently dispatched push notifications</p>
+            </div>
+            <button onclick="loadPushHistory()" class="btn btn-view" style="font-size: 11px;">Refresh History</button>
+          </div>
+
+          <div id="push-history-container" style="display: flex; flex-direction: column; gap: 10px;">
+            <div style="text-align: center; padding: 32px; color: #94a3b8; font-size: 13px;">Loading broadcast history...</div>
+          </div>
+        </div>
+
       </div>
     </section>
 
@@ -742,8 +850,117 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
       \`).join('');
     }
 
+    function toggleEmailBox() {
+      const isEmails = document.querySelector('input[name="push-target"]:checked')?.value === 'emails';
+      const box = document.getElementById('email-recipients-box');
+      if (box) {
+        if (isEmails) {
+          box.classList.remove('hidden');
+        } else {
+          box.classList.add('hidden');
+        }
+      }
+    }
+
+    function insertMagicVar(variable) {
+      const textarea = document.getElementById('push-body');
+      if (textarea) {
+        textarea.value += variable;
+        textarea.focus();
+      }
+    }
+
+    async function handleSendPush(e) {
+      e.preventDefault();
+      const title = document.getElementById('push-title').value;
+      const subtitle = document.getElementById('push-subtitle').value;
+      const icon = document.querySelector('input[name="push-icon"]:checked')?.value || 'bell';
+      const target = document.querySelector('input[name="push-target"]:checked')?.value || 'all';
+      const recipientEmails = document.getElementById('push-emails')?.value || '';
+      const body = document.getElementById('push-body').value;
+
+      const btn = document.getElementById('btn-submit-push');
+      btn.disabled = true;
+      btn.innerText = '⏳ Dispatching Push Notification...';
+
+      try {
+        const res = await fetch('/api/v1/admin/push-notify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title,
+            subtitle,
+            icon,
+            target,
+            recipientEmails,
+            body
+          })
+        });
+
+        const json = await res.json();
+        if (json.success) {
+          showToast('🚀 ' + json.message);
+          document.getElementById('push-form').reset();
+          toggleEmailBox();
+          loadPushHistory();
+        } else {
+          showToast(json.error || 'Push dispatch failed.', true);
+        }
+      } catch (err) {
+        showToast('Push dispatch error: ' + err.message, true);
+      } finally {
+        btn.disabled = false;
+        btn.innerText = '🚀 Dispatch Android Push Notification';
+      }
+    }
+
+    async function loadPushHistory() {
+      const container = document.getElementById('push-history-container');
+      if (!container) return;
+
+      try {
+        const res = await fetch('/api/v1/admin/push-history');
+        const json = await res.json();
+        if (!json.success || !json.history) return;
+
+        if (json.history.length === 0) {
+          container.innerHTML = '<div style="text-align: center; padding: 24px; color: #94a3b8; font-size: 13px;">No push notifications sent yet.</div>';
+          return;
+        }
+
+        const ICON_MAP = {
+          bell: '🔔',
+          academic: '🎓',
+          house: '🏠',
+          alert: '⚡'
+        };
+
+        container.innerHTML = json.history.map(item => \`
+          <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; font-size: 12px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+              <span style="font-weight: 800; color: #0f172a; display: flex; align-items: center; gap: 6px;">
+                <span>\${ICON_MAP[item.icon] || '🔔'}</span> \${item.title}
+              </span>
+              <span style="font-size: 10px; font-weight: 800; text-transform: uppercase; background: #e0e7ff; color: #3730a3; padding: 2px 6px; border-radius: 4px;">
+                \${item.target}
+              </span>
+            </div>
+            \${item.subtitle ? \`<div style="font-size: 11px; font-weight: 700; color: #15803d; margin-bottom: 4px;">\${item.subtitle}</div>\` : ''}
+            <div style="color: #475569; margin-bottom: 6px; line-height: 1.4;">\${item.body}</div>
+            <div style="display: flex; justify-content: space-between; color: #94a3b8; font-size: 11px;">
+              <span>Target: \${item.target === 'emails' ? (item.recipientEmails || []).join(', ') : 'All Users & Guests'}</span>
+              <span>\${new Date(item.createdAt).toLocaleString()}</span>
+            </div>
+          </div>
+        \`).join('');
+      } catch (err) {
+        console.error('Failed to load push history:', err);
+      }
+    }
+
     // Auto load on page render
     loadDashboardData();
+    loadPushHistory();
   </script>
 </body>
 </html>`;
