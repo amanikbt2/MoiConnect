@@ -139,6 +139,8 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>MoiConnect Admin Control Center</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="shortcut icon" href="/favicon.ico">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f8fafc; color: #1e293b; min-height: 100vh; display: flex; flex-direction: column; }
@@ -675,7 +677,11 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
                 <label style="display: block; font-size: 12px; font-weight: 700; color: #334155; margin-bottom: 6px;">Select Monochrome Icon (100% Android & Native Compatible)</label>
                 <div style="display: flex; flex-wrap: wrap; gap: 10px;">
                   <label style="display: flex; align-items: center; gap: 6px; background: #f8fafc; border: 1px solid #cbd5e1; padding: 8px 12px; border-radius: 10px; cursor: pointer; font-size: 12px; font-weight: 700;">
-                    <input type="radio" name="push-icon" value="bell" checked />
+                    <input type="radio" name="push-icon" value="moiconnect" checked />
+                    🟢 MoiConnect App
+                  </label>
+                  <label style="display: flex; align-items: center; gap: 6px; background: #f8fafc; border: 1px solid #cbd5e1; padding: 8px 12px; border-radius: 10px; cursor: pointer; font-size: 12px; font-weight: 700;">
+                    <input type="radio" name="push-icon" value="bell" />
                     🔔 General (Bell)
                   </label>
                   <label style="display: flex; align-items: center; gap: 6px; background: #f8fafc; border: 1px solid #cbd5e1; padding: 8px 12px; border-radius: 10px; cursor: pointer; font-size: 12px; font-weight: 700;">

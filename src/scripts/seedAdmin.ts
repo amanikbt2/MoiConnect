@@ -8,24 +8,26 @@ const seedAdmin = async () => {
     console.log('[Seed Script]: Connecting to MongoDB...');
     await mongoose.connect(config.mongoUri);
 
-    const adminEmail = process.env.ADMIN_EMAIL || 'admin@moi.ac.ke';
-    const adminPassword = process.env.ADMIN_PASSWORD || 'MoiAdmin2026!';
+    const adminEmail = process.env.ADMIN_EMAIL || 'dev@gmail.com';
+    const adminPassword = process.env.ADMIN_PASSWORD || 'spiderman';
     const adminName = process.env.ADMIN_NAME || 'Moi System Admin';
 
-    const existingAdmin = await User.findOne({ email: adminEmail });
-    if (existingAdmin) {
-      console.log(`[Seed Script]: Admin user ${adminEmail} already exists.`);
-      if (!existingAdmin.roles.includes('admin')) {
-        existingAdmin.roles.push('admin');
-        existingAdmin.activeRole = 'admin';
-        await existingAdmin.save();
-        console.log(`[Seed Script]: Added admin role to existing user ${adminEmail}.`);
-      }
-      process.exit(0);
-    }
-
+    let existingAdmin = await User.findOne({ email: adminEmail });
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(adminPassword, salt);
+
+    if (existingAdmin) {
+      console.log(`[Seed Script]: Admin user ${adminEmail} already exists. Updating password & roles...`);
+      existingAdmin.passwordHash = passwordHash;
+      if (!existingAdmin.roles.includes('admin')) {
+        existingAdmin.roles.push('admin');
+      }
+      existingAdmin.activeRole = 'admin';
+      existingAdmin.accountStatus = 'active';
+      await existingAdmin.save();
+      console.log(`[Seed Script]: Updated existing user ${adminEmail} to admin with active credentials.`);
+      process.exit(0);
+    }
 
     const admin = await User.create({
       name: adminName,
