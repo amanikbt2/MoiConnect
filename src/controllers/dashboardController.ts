@@ -238,7 +238,9 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
   <header>
     <div class="header-container">
       <div class="brand-box">
-        <div class="brand-logo">M</div>
+        <div class="brand-logo" style="background: transparent; border: none; padding: 0;">
+          <img src="/favicon.png" alt="MC Logo" style="width: 44px; height: 44px; border-radius: 10px; object-fit: cover;" />
+        </div>
         <div>
           <div class="brand-title">
             MoiConnect <span class="brand-badge">Admin Hub</span>
