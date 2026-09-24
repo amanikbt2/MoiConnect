@@ -10,7 +10,11 @@ import routes from './routes';
 import { setupSocketIO } from './socket';
 import { errorHandler } from './middleware/errorHandler';
 import path from 'path';
-import { renderAdminDashboard } from './controllers/dashboardController';
+import {
+  renderAdminDashboard,
+  renderPublicTempFolder,
+  renderSmartPreviewPage
+} from './controllers/dashboardController';
 
 const app = express();
 const server = http.createServer(app);
@@ -20,9 +24,32 @@ app.use(express.static(path.join(__dirname, '../public')));
 app.use(express.static(path.join(__dirname, '../../public')));
 app.use(express.static(path.join(process.cwd(), 'public')));
 
-// Serve temporary and uploaded files
+// Serve temporary and uploaded files with permissive inline viewing headers
+const tempDirs = [
+  path.join(__dirname, '../uploads/temp'),
+  path.join(process.cwd(), 'uploads/temp')
+];
+
+const tempStaticOptions = {
+  maxAge: 0,
+  setHeaders: (res: express.Response) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.setHeader('Content-Disposition', 'inline');
+    res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
+  }
+};
+
+// General uploads static route
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+
+// Public Temporary Storage routes (accessible via /mydomain_admin/temp_files/*, /admin/temp_files/*, /temp_files/*)
+['/uploads/temp', '/temp_files', '/admin/temp_files', '/mydomain_admin/temp_files'].forEach(routePath => {
+  tempDirs.forEach(dir => {
+    app.use(routePath, express.static(dir, tempStaticOptions));
+  });
+});
 
 // Security & Utility Middlewares
 app.use(helmet({
@@ -46,6 +73,19 @@ app.use('/api', limiter);
 // Root Web Admin Dashboard
 app.get('/', renderAdminDashboard);
 app.get('/admin', renderAdminDashboard);
+
+// Public Temporary Storage Directory Index Viewer (/mydomain_admin/temp_files/)
+app.get([
+  '/mydomain_admin/temp_files',
+  '/mydomain_admin/temp_files/',
+  '/admin/temp_files',
+  '/admin/temp_files/',
+  '/temp_files',
+  '/temp_files/'
+], renderPublicTempFolder);
+
+// Smart Document & Media Preview Route (Images, PDF, Word DOCX/DOC, Text)
+app.get(['/admin/preview', '/preview'], renderSmartPreviewPage);
 
 // API Base Route
 app.use('/api/v1', routes);

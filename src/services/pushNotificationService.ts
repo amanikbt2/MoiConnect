@@ -145,3 +145,39 @@ export const dispatchPushNotification = async (payload: IPushNotificationPayload
     storedNotificationId: notificationRecord._id
   };
 };
+
+export const sendPushToTokens = async (
+  tokens: string[],
+  title: string,
+  body: string,
+  data: Record<string, any> = {}
+): Promise<void> => {
+  if (!tokens || tokens.length === 0) return;
+  const messages = tokens.map((to) => ({
+    to,
+    sound: 'default',
+    title,
+    body,
+    data,
+    priority: 'high',
+    channelId: 'default'
+  }));
+
+  const CHUNK_SIZE = 100;
+  for (let i = 0; i < messages.length; i += CHUNK_SIZE) {
+    const chunk = messages.slice(i, i + CHUNK_SIZE);
+    try {
+      await fetch('https://exp.host/--/api/v2/push/send', {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+          'Accept-encoding': 'gzip, deflate',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(chunk)
+      });
+    } catch (err) {
+      console.error('[Push Notification Error]:', err);
+    }
+  }
+};

@@ -1,4 +1,5 @@
 import { Response } from 'express';
+import path from 'path';
 import { Paper } from '../models/Paper';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { CreatePaperInput } from '@moi/shared';
@@ -85,6 +86,21 @@ export const uploadPaperFile = async (req: AuthenticatedRequest, res: Response):
     const relativeUrl = `/uploads/temp/${req.file.filename}`;
     const fullUrl = `${protocol}://${host}${relativeUrl}`;
 
+    const cleanOrig = req.file.originalname.toLowerCase();
+    const ext = path.extname(cleanOrig).replace('.', '');
+    let detectedType = 'pdf';
+    if (['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'svg', 'ico', 'tiff'].includes(ext)) {
+      detectedType = 'image';
+    } else if (['doc', 'docx', 'dotx', 'odt'].includes(ext)) {
+      detectedType = 'doc';
+    } else if (['txt', 'text', 'md', 'csv', 'json', 'log', 'rtf'].includes(ext)) {
+      detectedType = 'text';
+    } else if (ext === 'pdf') {
+      detectedType = 'pdf';
+    } else {
+      detectedType = ext || 'pdf';
+    }
+
     res.status(201).json({
       success: true,
       message: 'File temporarily saved to server for admin verification.',
@@ -94,7 +110,7 @@ export const uploadPaperFile = async (req: AuthenticatedRequest, res: Response):
         fileUrl: fullUrl,
         relativeUrl,
         fileSize: req.file.size,
-        fileType: req.file.originalname.endsWith('.pdf') ? 'pdf' : (req.file.originalname.endsWith('.docx') || req.file.originalname.endsWith('.doc') ? 'doc' : 'image')
+        fileType: detectedType
       }
     });
   } catch (error: any) {

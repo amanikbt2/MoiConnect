@@ -1,4 +1,5 @@
 import { Response } from 'express';
+import path from 'path';
 import { Paper } from '../models/Paper';
 import { House } from '../models/House';
 import { User } from '../models/User';
@@ -188,11 +189,25 @@ export const replacePaperFile = async (req: AuthenticatedRequest, res: Response)
     const protocol = req.protocol || 'http';
     const relativeUrl = `/uploads/temp/${req.file.filename}`;
     const fullUrl = `${protocol}://${host}${relativeUrl}`;
+    const cleanOrig = req.file.originalname.toLowerCase();
+    const ext = path.extname(cleanOrig).replace('.', '');
+    let detectedType = 'pdf';
+    if (['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'svg', 'ico', 'tiff'].includes(ext)) {
+      detectedType = 'image';
+    } else if (['doc', 'docx', 'dotx', 'odt'].includes(ext)) {
+      detectedType = 'doc';
+    } else if (['txt', 'text', 'md', 'csv', 'json', 'log', 'rtf'].includes(ext)) {
+      detectedType = 'text';
+    } else if (ext === 'pdf') {
+      detectedType = 'pdf';
+    } else {
+      detectedType = ext || 'pdf';
+    }
 
     paper.tempFilename = req.file.filename;
     paper.fileUrl = fullUrl;
     paper.fileSize = req.file.size;
-    paper.fileType = req.file.originalname.endsWith('.pdf') ? 'pdf' : 'doc';
+    paper.fileType = detectedType;
 
     await paper.save();
 

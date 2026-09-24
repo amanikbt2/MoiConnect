@@ -4,6 +4,7 @@ import { config } from '../config';
 import { User } from '../models/User';
 import { Conversation } from '../models/Conversation';
 import { Message } from '../models/Message';
+import { CommunityMessage } from '../models/CommunityMessage';
 
 export interface AuthenticatedSocket extends Socket {
   userId?: string;
@@ -96,6 +97,50 @@ export const setupSocketIO = (io: SocketIOServer): void => {
     if (userId) {
       socket.join(`user:${userId}`);
     }
+
+    // Auto-join open community broadcast room
+    socket.join('community_room');
+
+    // Real-Time Community Chat Socket Handler
+    socket.on('community:send_message', async (data: {
+      text: string;
+      fileAttachment?: any;
+      replyTo?: any;
+      senderName?: string;
+      senderFaculty?: string;
+      avatarBg?: string;
+    }) => {
+      try {
+        const { text, fileAttachment, replyTo, senderName, senderFaculty, avatarBg } = data;
+        if (!text?.trim() && !fileAttachment) return;
+
+        let name = senderName || 'Moi Student';
+        let faculty = senderFaculty || 'School of Science & Computing';
+        let bg = avatarBg || '#15803d';
+
+        if (userId) {
+          const u = await User.findById(userId).select('name');
+          if (u) {
+            name = u.name;
+          }
+        }
+
+        const newCommunityMsg = await CommunityMessage.create({
+          senderId: userId || '60d0fe4f5311236168a109ca',
+          senderName: name,
+          senderFaculty: faculty,
+          avatarBg: bg,
+          text: text?.trim() || '',
+          fileAttachment,
+          replyTo,
+          reactions: {}
+        });
+
+        io.to('community_room').emit('community:receive_message', newCommunityMsg);
+      } catch (err: any) {
+        console.error('[Socket Community Message Error]:', err);
+      }
+    });
 
     // Join conversation room with security verification
     socket.on('join_conversation', async (conversationId: string) => {

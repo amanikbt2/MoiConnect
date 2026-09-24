@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import path from 'path';
 import { User } from '../models/User';
 import { Paper } from '../models/Paper';
 import { House } from '../models/House';
@@ -233,11 +234,25 @@ export const quickReplacePaperFile = async (req: Request, res: Response): Promis
     const protocol = req.protocol || 'http';
     const relativeUrl = `/uploads/temp/${req.file.filename}`;
     const fullUrl = `${protocol}://${host}${relativeUrl}`;
+    const cleanOrig = req.file.originalname.toLowerCase();
+    const ext = path.extname(cleanOrig).replace('.', '');
+    let detectedType = 'pdf';
+    if (['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'svg', 'ico', 'tiff'].includes(ext)) {
+      detectedType = 'image';
+    } else if (['doc', 'docx', 'dotx', 'odt'].includes(ext)) {
+      detectedType = 'doc';
+    } else if (['txt', 'text', 'md', 'csv', 'json', 'log', 'rtf'].includes(ext)) {
+      detectedType = 'text';
+    } else if (ext === 'pdf') {
+      detectedType = 'pdf';
+    } else {
+      detectedType = ext || 'pdf';
+    }
 
     paper.tempFilename = req.file.filename;
     paper.fileUrl = fullUrl;
     paper.fileSize = req.file.size;
-    paper.fileType = req.file.originalname.endsWith('.pdf') ? 'pdf' : 'doc';
+    paper.fileType = detectedType;
 
     await paper.save();
 
@@ -294,6 +309,413 @@ export const deleteDashboardBatchTempFiles = async (req: Request, res: Response)
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message || 'Failed to batch delete temp files' });
   }
+};
+
+// 9. Render Public Temporary Storage Folder Page (GET /mydomain_admin/temp_files/)
+export const renderPublicTempFolder = async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const tempSummary = await listTempFiles();
+    const files = tempSummary.files;
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MoiConnect • Public Server Temp Storage</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f8fafc; color: #1e293b; min-height: 100vh; display: flex; flex-direction: column; }
+    header { background-color: #064e3b; color: #ffffff; padding: 16px 24px; border-bottom: 2px solid #047857; }
+    .header-container { max-width: 1200px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
+    .brand-title { font-size: 18px; font-weight: 800; display: flex; align-items: center; gap: 10px; }
+    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 8px; font-size: 12px; font-weight: 700; text-decoration: none; cursor: pointer; border: none; transition: all 0.2s; }
+    .btn-green { background-color: #10b981; color: #ffffff; }
+    .btn-green:hover { background-color: #059669; }
+    .btn-dark { background-color: #1e293b; color: #ffffff; }
+    .btn-dark:hover { background-color: #0f172a; }
+    .btn-view { background-color: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd; }
+    .btn-view:hover { background-color: #bae6fd; }
+    main { max-width: 1200px; width: 100%; margin: 0 auto; padding: 24px 16px; flex: 1; }
+    .card { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 16px; padding: 24px; box-shadow: 0 2px 4px rgba(0,0,0,0.02); }
+    .stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-bottom: 20px; }
+    .stat-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; }
+    .stat-label { font-size: 11px; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 4px; }
+    .stat-val { font-size: 24px; font-weight: 800; color: #15803d; }
+    table { width: 100%; border-collapse: collapse; text-align: left; font-size: 13px; }
+    th { background: #f1f5f9; padding: 12px 14px; font-weight: 700; color: #475569; border-bottom: 2px solid #e2e8f0; }
+    td { padding: 12px 14px; border-bottom: 1px solid #f1f5f9; vertical-align: middle; }
+    tr:hover td { background-color: #f8fafc; }
+    .tag { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 700; }
+    .tag-img { background: #fdf2f8; color: #9d174d; border: 1px solid #fbcfe8; }
+    .tag-pdf { background: #dcfce7; color: #15803d; border: 1px solid #bbf7d0; }
+    .tag-doc { background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd; }
+    .tag-txt { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; }
+    .search-bar { width: 100%; max-width: 320px; padding: 8px 12px; border-radius: 8px; border: 1px solid #cbd5e1; font-size: 13px; }
+    #toast { position: fixed; bottom: 20px; right: 20px; padding: 12px 20px; border-radius: 8px; background: #15803d; color: #ffffff; font-weight: 700; font-size: 13px; z-index: 9999; display: none; }
+  </style>
+</head>
+<body>
+  <div id="toast"></div>
+  <header>
+    <div class="header-container">
+      <div class="brand-title">
+        <span>📂</span>
+        <span>MoiConnect Server • Public Temporary Storage</span>
+      </div>
+      <div style="display: flex; gap: 10px; align-items: center;">
+        <a href="/admin" class="btn btn-green">⬅️ Back to Admin Dashboard</a>
+        <button onclick="location.reload()" class="btn btn-dark">🔄 Refresh</button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <div class="card">
+      <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 20px;">
+        <div>
+          <h2 style="font-size: 20px; font-weight: 800; color: #0f172a;">Server Media (Temp) Public Directory</h2>
+          <p style="font-size: 12px; color: #64748b; margin-top: 2px;">Assessed URL: <code>/mydomain_admin/temp_files/</code> • Local Directory: <code>backend/uploads/temp/</code></p>
+        </div>
+        <input type="text" id="file-search" oninput="filterFiles()" class="search-bar" placeholder="Search files by name..." />
+      </div>
+
+      <div class="stats-row">
+        <div class="stat-box">
+          <div class="stat-label">Total Files in Storage</div>
+          <div class="stat-val">${tempSummary.totalFiles}</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Total Disk Space</div>
+          <div class="stat-val" style="color: #0284c7;">${tempSummary.totalSizeFormatted}</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Public Access Mount</div>
+          <div style="font-family: monospace; font-size: 13px; font-weight: 700; color: #15803d; margin-top: 6px;">/mydomain_admin/temp_files/</div>
+        </div>
+      </div>
+
+      <div style="overflow-x: auto;">
+        <table id="temp-table">
+          <thead>
+            <tr>
+              <th>File Name</th>
+              <th>Format</th>
+              <th>Size</th>
+              <th>Modified</th>
+              <th>Public URL</th>
+              <th style="text-align: right;">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${files.length === 0 ? `<tr><td colspan="6" style="text-align: center; padding: 48px; color: #94a3b8;">No temporary files in storage. Server is completely clean!</td></tr>` : files.map(f => {
+              const ext = (path.extname(f.filename) || '').toLowerCase().replace('.', '');
+              let tagClass = 'tag-pdf';
+              let tagIcon = '📄';
+              let tagText = 'PDF';
+              if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'svg'].includes(ext)) {
+                tagClass = 'tag-img';
+                tagIcon = '🖼️';
+                tagText = ext.toUpperCase() + ' IMAGE';
+              } else if (['docx', 'doc'].includes(ext)) {
+                tagClass = 'tag-doc';
+                tagIcon = '📝';
+                tagText = ext.toUpperCase() + ' WORD';
+              } else if (['txt', 'md', 'csv', 'json'].includes(ext)) {
+                tagClass = 'tag-txt';
+                tagIcon = '📑';
+                tagText = ext.toUpperCase() + ' TEXT';
+              }
+              const publicUrl = `/mydomain_admin/temp_files/${encodeURIComponent(f.filename)}`;
+              const previewUrl = `/admin/preview?url=${encodeURIComponent(publicUrl)}&title=${encodeURIComponent(f.filename)}&type=${encodeURIComponent(ext)}`;
+
+              return `
+              <tr class="file-row" data-name="${f.filename.toLowerCase()}">
+                <td>
+                  <a href="${publicUrl}" target="_blank" style="font-weight: 700; color: #0284c7; text-decoration: none;">
+                    ${f.filename}
+                  </a>
+                </td>
+                <td><span class="tag ${tagClass}">${tagIcon} ${tagText}</span></td>
+                <td style="font-weight: 600;">${f.sizeFormatted}</td>
+                <td style="color: #64748b;">${new Date(f.modifiedAt).toLocaleString()}</td>
+                <td>
+                  <button onclick="copyUrl('${publicUrl}')" class="btn btn-view" style="font-size: 11px; padding: 4px 8px;">
+                    📋 Copy Link
+                  </button>
+                </td>
+                <td style="text-align: right;">
+                  <div style="display: inline-flex; gap: 6px;">
+                    <a href="${previewUrl}" target="_blank" class="btn btn-view" style="font-size: 11px; padding: 4px 10px;">
+                      👁️ Smart Preview
+                    </a>
+                    <a href="${publicUrl}" download class="btn btn-dark" style="font-size: 11px; padding: 4px 10px;">
+                      📥 Download
+                    </a>
+                  </div>
+                </td>
+              </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    function copyUrl(rel) {
+      var full = window.location.origin + rel;
+      navigator.clipboard.writeText(full).then(function() {
+        showToast('Copied to clipboard: ' + full);
+      });
+    }
+
+    function showToast(msg) {
+      var t = document.getElementById('toast');
+      t.innerText = msg;
+      t.style.display = 'block';
+      setTimeout(function() { t.style.display = 'none'; }, 3000);
+    }
+
+    function filterFiles() {
+      var q = document.getElementById('file-search').value.toLowerCase().trim();
+      var rows = document.querySelectorAll('.file-row');
+      for (var i = 0; i < rows.length; i++) {
+        var name = rows[i].getAttribute('data-name') || '';
+        rows[i].style.display = (!q || name.indexOf(q) !== -1) ? '' : 'none';
+      }
+    }
+  </script>
+</body>
+</html>`;
+
+    res.setHeader('Content-Type', 'text/html');
+    res.send(html);
+  } catch (error: any) {
+    res.status(500).send('Error rendering public temp folder: ' + error.message);
+  }
+};
+
+// 10. Render Smart Document & Media Preview Page (GET /admin/preview) for PDF, Word DOCX/DOC, Images, and Text
+export const renderSmartPreviewPage = (req: Request, res: Response): void => {
+  const fileUrl = (req.query.url as string) || '';
+  const title = (req.query.title as string) || 'Document Preview';
+  const rawType = ((req.query.type as string) || '').toLowerCase();
+
+  const cleanUrl = fileUrl.split('?')[0];
+  const ext = (path.extname(cleanUrl) || '').toLowerCase().replace('.', '') || rawType;
+
+  let category = 'pdf';
+  if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'svg', 'ico', 'tiff'].includes(ext)) {
+    category = 'image';
+  } else if (['docx', 'doc', 'dotx', 'odt'].includes(ext)) {
+    category = 'docx';
+  } else if (['txt', 'text', 'md', 'csv', 'json', 'log', 'rtf'].includes(ext)) {
+    category = 'text';
+  } else {
+    category = 'pdf';
+  }
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${title} • Smart Preview</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <!-- Mammoth.js for offline Word DOCX document parsing -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #0f172a; color: #f8fafc; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+    
+    /* Top Toolbar */
+    .toolbar { height: 60px; background-color: #1e293b; border-bottom: 1px solid #334155; display: flex; align-items: center; justify-content: space-between; padding: 0 16px; gap: 12px; z-index: 100; }
+    .toolbar-left { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .toolbar-title { font-size: 15px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 450px; }
+    .badge { font-size: 11px; font-weight: 800; padding: 3px 8px; border-radius: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .badge-image { background: #ec4899; color: #ffffff; }
+    .badge-pdf { background: #10b981; color: #ffffff; }
+    .badge-docx { background: #0284c7; color: #ffffff; }
+    .badge-text { background: #f59e0b; color: #ffffff; }
+    
+    .toolbar-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border-radius: 8px; font-size: 12px; font-weight: 700; text-decoration: none; cursor: pointer; border: none; transition: all 0.2s; color: #ffffff; }
+    .btn-back { background: #334155; }
+    .btn-back:hover { background: #475569; }
+    .btn-primary { background: #15803d; }
+    .btn-primary:hover { background: #16a34a; }
+    .btn-sub { background: #0284c7; }
+    .btn-sub:hover { background: #0369a1; }
+    .btn-tool { background: #334155; padding: 6px 10px; font-size: 12px; border-radius: 6px; color: #ffffff; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; border: none; cursor: pointer; }
+    .btn-tool:hover { background: #475569; }
+    
+    /* Main Preview Container */
+    .viewport { flex: 1; position: relative; overflow: auto; display: flex; justify-content: center; align-items: center; background: #0b0f19; }
+    
+    /* Image Viewer */
+    .image-wrapper { position: relative; display: flex; justify-content: center; align-items: center; width: 100%; height: 100%; overflow: auto; padding: 20px; }
+    .image-element { max-width: 90%; max-height: 90%; object-fit: contain; transition: transform 0.2s ease; border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+    .floating-controls { position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%); background: rgba(30, 41, 59, 0.9); backdrop-filter: blur(8px); padding: 8px 14px; border-radius: 30px; display: flex; gap: 8px; border: 1px solid #475569; z-index: 10; box-shadow: 0 4px 20px rgba(0,0,0,0.4); }
+
+    /* PDF Viewer */
+    .pdf-frame { width: 100%; height: 100%; border: none; }
+
+    /* Word DOCX Viewer */
+    .docx-viewport { width: 100%; height: 100%; overflow-y: auto; padding: 32px 16px; background: #334155; display: flex; flex-direction: column; align-items: center; }
+    .docx-paper { background: #ffffff; color: #1e293b; width: 100%; max-width: 860px; min-height: 800px; padding: 50px 40px; border-radius: 8px; box-shadow: 0 8px 30px rgba(0,0,0,0.25); line-height: 1.7; font-size: 14px; }
+    .docx-paper h1, .docx-paper h2, .docx-paper h3 { color: #0f172a; margin-top: 18px; margin-bottom: 8px; }
+    .docx-paper p { margin-bottom: 12px; }
+    .docx-paper table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 13px; }
+    .docx-paper th, .docx-paper td { border: 1px solid #cbd5e1; padding: 8px 12px; }
+    .docx-paper th { background: #f8fafc; font-weight: 700; }
+    .docx-paper img { max-width: 100%; height: auto; border-radius: 4px; margin: 10px 0; }
+    .docx-external-bar { background: #1e293b; padding: 12px 20px; border-radius: 8px; margin-bottom: 20px; width: 100%; max-width: 860px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; border: 1px solid #475569; font-size: 12px; }
+
+    /* Text Viewer */
+    .text-viewport { width: 100%; height: 100%; overflow: auto; padding: 30px; background: #0f172a; }
+    .text-box { max-width: 960px; margin: 0 auto; background: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 24px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 13px; line-height: 1.6; color: #e2e8f0; white-space: pre-wrap; word-break: break-word; user-select: text; }
+
+    /* Loader */
+    .spinner { border: 4px solid rgba(255, 255, 255, 0.1); width: 44px; height: 44px; border-radius: 50%; border-left-color: #10b981; animation: spin 1s linear infinite; margin-bottom: 14px; }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <!-- Top Toolbar -->
+  <div class="toolbar">
+    <div class="toolbar-left">
+      <button onclick="window.history.length > 1 ? window.history.back() : window.close()" class="btn btn-back">
+        ⬅ Back
+      </button>
+      <span class="badge badge-${category}">${category.toUpperCase()} • ${ext.toUpperCase()}</span>
+      <span class="toolbar-title" title="${title}">${title}</span>
+    </div>
+
+    <div class="toolbar-actions">
+      <a href="${fileUrl}" download class="btn btn-primary">
+        📥 Download File
+      </a>
+      <a href="${fileUrl}" target="_blank" class="btn btn-sub">
+        🔗 Raw URL
+      </a>
+    </div>
+  </div>
+
+  <!-- Viewport Content -->
+  <div class="viewport">
+    ${category === 'image' ? `
+      <div class="image-wrapper" id="img-container">
+        <img id="preview-image" src="${fileUrl}" alt="${title}" class="image-element" />
+        <div class="floating-controls">
+          <button class="btn btn-tool" onclick="zoomIn()">🔍 Zoom +</button>
+          <button class="btn btn-tool" onclick="zoomOut()">🔍 Zoom -</button>
+          <button class="btn btn-tool" onclick="resetZoom()">🎯 100%</button>
+          <button class="btn btn-tool" onclick="rotateImage()">⟳ Rotate</button>
+          <button class="btn btn-tool" onclick="toggleBackground()">🎨 Backdrop</button>
+        </div>
+      </div>
+      <script>
+        var currentScale = 1;
+        var currentRotation = 0;
+        var isLightBg = false;
+        var img = document.getElementById('preview-image');
+        var container = document.getElementById('img-container');
+
+        function updateTransform() {
+          img.style.transform = 'scale(' + currentScale + ') rotate(' + currentRotation + 'deg)';
+        }
+        function zoomIn() { currentScale = Math.min(currentScale + 0.25, 4); updateTransform(); }
+        function zoomOut() { currentScale = Math.max(currentScale - 0.25, 0.25); updateTransform(); }
+        function resetZoom() { currentScale = 1; currentRotation = 0; updateTransform(); }
+        function rotateImage() { currentRotation = (currentRotation + 90) % 360; updateTransform(); }
+        function toggleBackground() {
+          isLightBg = !isLightBg;
+          container.style.background = isLightBg ? '#ffffff' : '#0b0f19';
+        }
+      </script>
+    ` : category === 'pdf' ? `
+      <iframe src="${fileUrl}#toolbar=1" class="pdf-frame"></iframe>
+    ` : category === 'docx' ? `
+      <div class="docx-viewport">
+        <div class="docx-external-bar">
+          <span style="color: #94a3b8;">Formatted live with client-side document renderer</span>
+          <div style="display: flex; gap: 8px;">
+            <a href="https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(fileUrl)}" target="_blank" class="btn btn-tool">
+              🌐 Office Online
+            </a>
+            <a href="https://docs.google.com/viewer?url=${encodeURIComponent(fileUrl)}&embedded=true" target="_blank" class="btn btn-tool">
+              🌐 Google Docs Viewer
+            </a>
+          </div>
+        </div>
+        <div id="docx-loading" style="display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 60px;">
+          <div class="spinner"></div>
+          <div style="color: #cbd5e1; font-size: 14px; font-weight: 600;">Parsing Word (.docx) document...</div>
+        </div>
+        <div id="docx-content" class="docx-paper" style="display: none;"></div>
+      </div>
+      <script>
+        fetch('${fileUrl}')
+          .then(function(res) {
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            return res.arrayBuffer();
+          })
+          .then(function(buffer) {
+            return mammoth.convertToHtml({ arrayBuffer: buffer });
+          })
+          .then(function(result) {
+            document.getElementById('docx-loading').style.display = 'none';
+            var paper = document.getElementById('docx-content');
+            paper.innerHTML = result.value || '<p style="color: #94a3b8; font-style: italic;">(Empty or unreadable document body)</p>';
+            paper.style.display = 'block';
+          })
+          .catch(function(err) {
+            document.getElementById('docx-loading').innerHTML = '<div style="color: #f87171; text-align: center;"><b>Could not parse document in browser.</b><br><span style="font-size: 12px; color: #94a3b8;">' + err.message + '</span><br><br><a href="${fileUrl}" download class="btn btn-primary">Download Word File</a></div>';
+          });
+      </script>
+    ` : `
+      <div class="text-viewport">
+        <div id="text-loading" style="text-align: center; padding: 60px;">
+          <div class="spinner" style="margin: 0 auto 12px;"></div>
+          <div style="color: #94a3b8;">Loading text file content...</div>
+        </div>
+        <div id="text-wrapper" style="display: none;">
+          <div style="max-width: 960px; margin: 0 auto 12px; display: flex; justify-content: flex-end;">
+            <button onclick="copyTextContent()" class="btn btn-tool">📋 Copy Text</button>
+          </div>
+          <pre id="text-content" class="text-box"></pre>
+        </div>
+      </div>
+      <script>
+        var rawText = '';
+        fetch('${fileUrl}')
+          .then(function(res) { return res.text(); })
+          .then(function(t) {
+            rawText = t;
+            document.getElementById('text-loading').style.display = 'none';
+            document.getElementById('text-wrapper').style.display = 'block';
+            document.getElementById('text-content').textContent = t;
+          })
+          .catch(function(err) {
+            document.getElementById('text-loading').innerHTML = '<div style="color: #f87171;">Failed to load text file: ' + err.message + '</div>';
+          });
+
+        function copyTextContent() {
+          navigator.clipboard.writeText(rawText).then(function() {
+            alert('Text copied to clipboard!');
+          });
+        }
+      </script>
+    `}
+  </div>
+</body>
+</html>`;
+
+  res.setHeader('Content-Type', 'text/html');
+  res.send(html);
 };
 
 // 4. Render HTML Admin Dashboard Page for GET / and GET /admin
@@ -397,6 +819,12 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
     .tiny-paper-row:hover { background-color: #f8fafc; border-color: #10b981; box-shadow: 0 2px 6px rgba(0,0,0,0.04); transform: translateY(-1px); }
     .size-pill { font-size: 11px; font-weight: 700; color: #475569; background-color: #f1f5f9; padding: 2px 8px; border-radius: 6px; border: 1px solid #e2e8f0; white-space: nowrap; }
     .btn-tiny { padding: 5px 12px; font-size: 11px; font-weight: 800; border-radius: 6px; border: none; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+
+    /* Media Choice Radio Cards */
+    .choice-radio-card { display: block; padding: 12px; background: #ffffff; border: 2px solid #e2e8f0; border-radius: 10px; cursor: pointer; transition: all 0.2s; user-select: none; }
+    .choice-radio-card:hover { border-color: #cbd5e1; background: #f8fafc; }
+    .choice-radio-card.active { border-color: #15803d; background: #f0fdf4; box-shadow: 0 2px 6px rgba(21, 128, 61, 0.1); }
+    .choice-radio-card.active.upload-active { border-color: #d97706; background: #fffbeb; box-shadow: 0 2px 6px rgba(217, 119, 6, 0.1); }
 
     /* Utilities */
     .hidden { display: none !important; }
@@ -1024,33 +1452,89 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
 
         <!-- 1. Media Operations Box -->
         <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 14px; padding: 16px; margin-bottom: 20px;">
-          <div style="font-size: 13px; font-weight: 800; color: #0f172a; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">
+          <div style="font-size: 13px; font-weight: 800; color: #0f172a; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
             <span style="display: flex; align-items: center; gap: 6px;">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#15803d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
               Document Media Management
             </span>
-            <span id="modal-media-storage-tag" style="font-size: 11px; font-weight: 700; background: #e0f2fe; color: #0369a1; padding: 2px 8px; border-radius: 6px;">Server Temp</span>
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <span id="modal-format-badge" style="font-size: 11px; font-weight: 800; background: #e2e8f0; color: #1e293b; padding: 2px 8px; border-radius: 6px;">PDF</span>
+              <span id="modal-media-storage-tag" style="font-size: 11px; font-weight: 700; background: #e0f2fe; color: #0369a1; padding: 2px 8px; border-radius: 6px;">Server Temp</span>
+            </div>
           </div>
 
+          <!-- Action buttons: Download, Smart Tab Preview & Copy Public Temp Link -->
           <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px;">
             <a id="modal-download-btn" href="#" download class="btn" style="background: #0284c7; color: #ffffff;">
               📥 Download Media File
             </a>
-            <a id="modal-preview-btn" href="#" target="_blank" class="btn btn-view">
+            <a id="modal-preview-btn" href="#" target="_blank" class="btn btn-view" style="font-weight: 800; color: #0f172a;">
               👁️ Open & Preview in Tab
             </a>
+            <button type="button" id="modal-copy-url-btn" onclick="copyModalFileUrl()" class="btn btn-view" style="font-size: 11px;">
+              📋 Copy Public Temp URL
+            </button>
           </div>
 
-          <!-- File Replacement tool -->
-          <div style="border-top: 1px dashed #cbd5e1; padding-top: 12px; margin-top: 12px;">
-            <div style="font-size: 12px; font-weight: 700; color: #334155; margin-bottom: 6px;">
-              🔄 Replace with Clean Media (Overwrites & deletes old temporary file):
+          <!-- Inline Smart Live Preview Card -->
+          <div id="modal-inline-preview-card" style="margin-bottom: 14px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; display: none;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+              <span style="font-size: 11px; font-weight: 800; color: #475569; text-transform: uppercase;" id="modal-inline-preview-label">Live Preview</span>
+              <a id="modal-inline-open-link" href="#" target="_blank" style="font-size: 11px; color: #0284c7; text-decoration: none; font-weight: 700;">Open Full View ↗</a>
             </div>
-            <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center;">
-              <input type="file" id="modal-replace-input" accept=".pdf,.doc,.docx,image/*" style="font-size: 12px; flex: 1; min-width: 200px;" />
-              <button type="button" id="btn-modal-replace" onclick="handleModalFileReplace()" class="btn" style="background: #d97706; color: #ffffff;">
-                Upload Clean Copy
-              </button>
+            <div id="modal-inline-preview-body" style="display: flex; justify-content: center; align-items: center; min-height: 80px;">
+              <!-- Dynamically populated -->
+            </div>
+          </div>
+
+          <!-- Approval Document Media Choice (Radio Buttons) -->
+          <div style="border-top: 1px dashed #cbd5e1; padding-top: 14px; margin-top: 12px;">
+            <div style="font-size: 12px; font-weight: 800; color: #1e293b; margin-bottom: 8px;">
+              Approval Document Media Choice:
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px;">
+              <!-- Option 1: Use Current Document -->
+              <label id="choice-card-current" class="choice-radio-card active" onclick="setMediaChoice('current')">
+                <div style="display: flex; align-items: flex-start; gap: 8px;">
+                  <input type="radio" name="modal-media-choice" id="radio-choice-current" value="current" checked onchange="setMediaChoice('current')" style="margin-top: 3px; accent-color: #15803d; cursor: pointer;" />
+                  <div>
+                    <div style="font-weight: 800; font-size: 12px; color: #0f172a;">📄 Use Current Document</div>
+                    <div style="font-size: 11px; color: #64748b; margin-top: 2px;">File is already clean & ready for approval.</div>
+                  </div>
+                </div>
+              </label>
+
+              <!-- Option 2: Upload Clean Document -->
+              <label id="choice-card-upload" class="choice-radio-card" onclick="setMediaChoice('upload')">
+                <div style="display: flex; align-items: flex-start; gap: 8px;">
+                  <input type="radio" name="modal-media-choice" id="radio-choice-upload" value="upload" onchange="setMediaChoice('upload')" style="margin-top: 3px; accent-color: #d97706; cursor: pointer;" />
+                  <div>
+                    <div style="font-weight: 800; font-size: 12px; color: #0f172a;">📤 Upload Clean Document</div>
+                    <div style="font-size: 11px; color: #64748b; margin-top: 2px;">Replace with edited / cleaned copy.</div>
+                  </div>
+                </div>
+              </label>
+            </div>
+
+            <!-- Status Box for Option 1 -->
+            <div id="media-status-current-box" style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 10px 12px; display: flex; align-items: center; gap: 8px; font-size: 12px; color: #166534; font-weight: 600;">
+              <span>✅</span>
+              <span>Using current file. It will be uploaded to Cloudinary (folder: <code>MoiConnect/pdf</code>) upon approval.</span>
+            </div>
+
+            <!-- Box for Option 2 (Upload Clean) -->
+            <div id="media-status-upload-box" class="hidden" style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 12px; font-size: 12px;">
+              <div style="font-weight: 700; color: #92400e; margin-bottom: 6px;">
+                Select clean replacement file (PDF, Word DOCX/DOC, Images, or Text):
+              </div>
+              <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center;">
+                <input type="file" id="modal-replace-input" accept=".pdf,.doc,.docx,.txt,.rtf,.md,image/*" onchange="onModalFileSelected()" style="font-size: 12px; flex: 1; min-width: 200px;" />
+                <button type="button" id="btn-modal-replace" onclick="handleModalFileReplace()" class="btn" style="background: #d97706; color: #ffffff;">
+                  Upload Clean Copy Now
+                </button>
+              </div>
+              <div id="selected-clean-file-info" style="margin-top: 8px; font-size: 11px; color: #92400e; font-weight: 700; display: none;"></div>
             </div>
           </div>
         </div>
@@ -1529,10 +2013,11 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
         ' on ' + new Date(paper.createdAt).toLocaleString();
 
       // Media details & links
-      const isTemp = paper.tempFilename || paper.fileUrl?.includes('/uploads/temp/');
+      // Media details & links
+      const isTemp = paper.tempFilename || (paper.fileUrl && paper.fileUrl.indexOf('/uploads/temp/') !== -1);
       const storageTag = document.getElementById('modal-media-storage-tag');
       if (isTemp) {
-        storageTag.innerText = '📁 Server Temp (backend/uploads/temp)';
+        storageTag.innerText = '📁 Server Temp (/mydomain_admin/temp_files/)';
         storageTag.style.background = '#fef3c7';
         storageTag.style.color = '#b45309';
       } else {
@@ -1541,13 +2026,98 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
         storageTag.style.color = '#15803d';
       }
 
+      // Smart format detection
+      const fmt = detectFormat(paper.fileUrl, paper.fileType);
+      const formatBadge = document.getElementById('modal-format-badge');
+      if (formatBadge) {
+        formatBadge.innerText = fmt.icon + ' ' + fmt.label;
+        if (fmt.category === 'image') {
+          formatBadge.style.background = '#fdf2f8';
+          formatBadge.style.color = '#9d174d';
+        } else if (fmt.category === 'docx') {
+          formatBadge.style.background = '#e0f2fe';
+          formatBadge.style.color = '#0369a1';
+        } else if (fmt.category === 'text') {
+          formatBadge.style.background = '#fef3c7';
+          formatBadge.style.color = '#92400e';
+        } else {
+          formatBadge.style.background = '#dcfce7';
+          formatBadge.style.color = '#15803d';
+        }
+      }
+
       const downloadBtn = document.getElementById('modal-download-btn');
       downloadBtn.href = paper.fileUrl;
       const cleanDownloadName = (paper.unitCode || 'Paper') + '_' + (paper.title || 'file').replace(/[^a-zA-Z0-9_-]/g, '_') + '.' + (paper.fileType || 'pdf');
       downloadBtn.setAttribute('download', cleanDownloadName);
 
+      // Smart preview URL in web tab
       const previewBtn = document.getElementById('modal-preview-btn');
-      previewBtn.href = paper.fileUrl;
+      const smartPreviewUrl = '/admin/preview?url=' + encodeURIComponent(paper.fileUrl) + 
+        '&title=' + encodeURIComponent(paper.title || 'Paper') + 
+        '&type=' + encodeURIComponent(paper.fileType || fmt.category) + 
+        '&id=' + encodeURIComponent(paper._id);
+      previewBtn.href = smartPreviewUrl;
+
+      // Inline Smart Preview Card
+      const previewCard = document.getElementById('modal-inline-preview-card');
+      const previewBody = document.getElementById('modal-inline-preview-body');
+      const openLink = document.getElementById('modal-inline-open-link');
+      if (openLink) openLink.href = smartPreviewUrl;
+
+      if (previewCard && previewBody) {
+        previewCard.style.display = 'block';
+        if (fmt.category === 'image') {
+          previewBody.innerHTML = '<div style="text-align: center; width: 100%;">' +
+            '<a href="' + smartPreviewUrl + '" target="_blank" title="Click to view full image in tab">' +
+              '<img src="' + paper.fileUrl + '" alt="Preview" style="max-height: 220px; max-width: 100%; border-radius: 6px; object-fit: contain; box-shadow: 0 2px 8px rgba(0,0,0,0.1); border: 1px solid #e2e8f0;" />' +
+            '</a>' +
+            '<div style="font-size: 11px; color: #64748b; margin-top: 6px;">🔍 Click image or \\'Preview in Tab\\' to zoom & rotate</div>' +
+          '</div>';
+        } else if (fmt.category === 'pdf') {
+          previewBody.innerHTML = '<div style="display: flex; align-items: center; justify-content: space-between; width: 100%; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px;">' +
+            '<div style="display: flex; align-items: center; gap: 10px;">' +
+              '<span style="font-size: 28px;">📄</span>' +
+              '<div>' +
+                '<div style="font-weight: 800; font-size: 13px; color: #0f172a;">PDF Academic Document</div>' +
+                '<div style="font-size: 11px; color: #64748b;">' + formatBytes(paper.fileSize || 0) + ' • Ready for viewing</div>' +
+              '</div>' +
+            '</div>' +
+            '<a href="' + smartPreviewUrl + '" target="_blank" class="btn btn-view" style="font-size: 11px;">' +
+              '👁️ Launch PDF Viewer' +
+            '</a>' +
+          '</div>';
+        } else if (fmt.category === 'docx') {
+          previewBody.innerHTML = '<div style="display: flex; align-items: center; justify-content: space-between; width: 100%; background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 8px; padding: 12px;">' +
+            '<div style="display: flex; align-items: center; gap: 10px;">' +
+              '<span style="font-size: 28px;">📝</span>' +
+              '<div>' +
+                '<div style="font-weight: 800; font-size: 13px; color: #0369a1;">Microsoft Word Document (.docx)</div>' +
+                '<div style="font-size: 11px; color: #64748b;">' + formatBytes(paper.fileSize || 0) + ' • Viewable in Smart Viewer</div>' +
+              '</div>' +
+            '</div>' +
+            '<a href="' + smartPreviewUrl + '" target="_blank" class="btn btn-view" style="font-size: 11px;">' +
+              '👁️ Launch Word Viewer' +
+            '</a>' +
+          '</div>';
+        } else {
+          previewBody.innerHTML = '<div style="display: flex; align-items: center; justify-content: space-between; width: 100%; background: #fefce8; border: 1px solid #fef08a; border-radius: 8px; padding: 12px;">' +
+            '<div style="display: flex; align-items: center; gap: 10px;">' +
+              '<span style="font-size: 28px;">📑</span>' +
+              '<div>' +
+                '<div style="font-weight: 800; font-size: 13px; color: #854d0e;">Plain Text / Notes File</div>' +
+                '<div style="font-size: 11px; color: #64748b;">' + formatBytes(paper.fileSize || 0) + ' • Monospace text</div>' +
+              '</div>' +
+            '</div>' +
+            '<a href="' + smartPreviewUrl + '" target="_blank" class="btn btn-view" style="font-size: 11px;">' +
+              '👁️ Launch Text Reader' +
+            '</a>' +
+          '</div>';
+        }
+      }
+
+      // Reset media choice to 'current'
+      setMediaChoice('current');
 
       // Form fields
       document.getElementById('modal-input-title').value = paper.title || '';
@@ -1559,6 +2129,8 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
       // Reset file input
       const replaceInput = document.getElementById('modal-replace-input');
       if (replaceInput) replaceInput.value = '';
+      const cleanInfo = document.getElementById('selected-clean-file-info');
+      if (cleanInfo) cleanInfo.style.display = 'none';
 
       // Action buttons state
       const approveBtn = document.getElementById('modal-btn-approve');
@@ -1567,12 +2139,97 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
         approveBtn.innerText = '✓ Already Approved';
         approveBtn.disabled = true;
       } else {
-        approveBtn.innerText = '✨ Approve & Upload to Cloudinary';
+        approveBtn.innerText = '✨ Approve Current Document & Upload to Cloudinary';
         approveBtn.disabled = false;
       }
 
       // Unhide modal
       document.getElementById('material-modal').classList.remove('hidden');
+    }
+
+    function detectFormat(url, fallbackType) {
+      var clean = (url || '').split('?')[0].toLowerCase();
+      var parts = clean.split('.');
+      var ext = parts.length > 1 ? parts.pop() : '';
+      if (['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'svg', 'ico', 'tiff'].indexOf(ext) !== -1) {
+        return { category: 'image', ext: ext.toUpperCase(), icon: '🖼️', label: ext.toUpperCase() + ' Image' };
+      }
+      if (ext === 'pdf') {
+        return { category: 'pdf', ext: 'PDF', icon: '📄', label: 'Adobe PDF' };
+      }
+      if (['doc', 'docx', 'dotx', 'odt'].indexOf(ext) !== -1) {
+        return { category: 'docx', ext: ext.toUpperCase(), icon: '📝', label: 'Word ' + ext.toUpperCase() };
+      }
+      if (['txt', 'text', 'md', 'csv', 'json', 'log', 'rtf'].indexOf(ext) !== -1) {
+        return { category: 'text', ext: ext.toUpperCase(), icon: '📑', label: 'Text ' + ext.toUpperCase() };
+      }
+      if (fallbackType && fallbackType.toLowerCase().indexOf('image') !== -1) {
+        return { category: 'image', ext: 'IMG', icon: '🖼️', label: 'Image' };
+      }
+      if (fallbackType && fallbackType.toLowerCase().indexOf('doc') !== -1) {
+        return { category: 'docx', ext: 'DOC', icon: '📝', label: 'Word Document' };
+      }
+      return { category: 'pdf', ext: 'DOC', icon: '📄', label: 'Document' };
+    }
+
+    var currentMediaMode = 'current';
+
+    function setMediaChoice(mode) {
+      currentMediaMode = mode;
+      var radioCurrent = document.getElementById('radio-choice-current');
+      var radioUpload = document.getElementById('radio-choice-upload');
+      var cardCurrent = document.getElementById('choice-card-current');
+      var cardUpload = document.getElementById('choice-card-upload');
+      var currentBox = document.getElementById('media-status-current-box');
+      var uploadBox = document.getElementById('media-status-upload-box');
+      var approveBtn = document.getElementById('modal-btn-approve');
+
+      if (mode === 'current') {
+        if (radioCurrent) radioCurrent.checked = true;
+        if (cardCurrent) { cardCurrent.classList.add('active'); cardCurrent.classList.remove('upload-active'); }
+        if (cardUpload) { cardUpload.classList.remove('active'); cardUpload.classList.remove('upload-active'); }
+        if (currentBox) currentBox.classList.remove('hidden');
+        if (uploadBox) uploadBox.classList.add('hidden');
+        if (approveBtn && !approveBtn.disabled) {
+          approveBtn.innerText = '✨ Approve Current Document & Upload to Cloudinary';
+        }
+      } else {
+        if (radioUpload) radioUpload.checked = true;
+        if (cardUpload) { cardUpload.classList.add('active'); cardUpload.classList.add('upload-active'); }
+        if (cardCurrent) { cardCurrent.classList.remove('active'); }
+        if (uploadBox) uploadBox.classList.remove('hidden');
+        if (currentBox) currentBox.classList.add('hidden');
+        if (approveBtn && !approveBtn.disabled) {
+          approveBtn.innerText = '✨ Upload Clean Copy & Approve to Cloudinary';
+        }
+      }
+    }
+
+    function onModalFileSelected() {
+      var input = document.getElementById('modal-replace-input');
+      var info = document.getElementById('selected-clean-file-info');
+      if (!input || !input.files || input.files.length === 0) {
+        if (info) info.style.display = 'none';
+        return;
+      }
+      var file = input.files[0];
+      var fmt = detectFormat(file.name, file.type);
+      if (info) {
+        info.innerHTML = 'Selected replacement: <b>' + file.name + '</b> (' + formatBytes(file.size) + ') • Format: <b>' + fmt.icon + ' ' + fmt.label + '</b>';
+        info.style.display = 'block';
+      }
+    }
+
+    function copyModalFileUrl() {
+      if (!currentModalPaper) return;
+      var url = currentModalPaper.fileUrl;
+      if (currentModalPaper.tempFilename || (url && url.indexOf('/uploads/temp/') !== -1)) {
+        var fn = currentModalPaper.tempFilename || url.split('/uploads/temp/')[1]?.split('?')[0];
+        url = window.location.origin + '/mydomain_admin/temp_files/' + fn;
+      }
+      navigator.clipboard.writeText(url).then(function() {
+        showToast('Copied public temp URL: ' + url);
+      });
     }
 
     function closeMaterialModal() {
@@ -1656,8 +2313,14 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
           
           // Update download & preview links
           document.getElementById('modal-download-btn').href = json.data.fileUrl;
-          document.getElementById('modal-preview-btn').href = json.data.fileUrl;
+          const smartPreviewUrl = '/admin/preview?url=' + encodeURIComponent(json.data.fileUrl) + 
+            '&title=' + encodeURIComponent(json.data.title || 'Paper') + 
+            '&type=' + encodeURIComponent(json.data.fileType || '') + 
+            '&id=' + encodeURIComponent(json.data._id);
+          document.getElementById('modal-preview-btn').href = smartPreviewUrl;
           fileInput.value = '';
+          const cleanInfo = document.getElementById('selected-clean-file-info');
+          if (cleanInfo) cleanInfo.style.display = 'none';
           
           loadDashboardData();
           loadTempFiles();
@@ -1668,7 +2331,7 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
         showToast('Upload error: ' + err.message, true);
       } finally {
         btn.disabled = false;
-        btn.innerText = 'Upload Clean Copy';
+        btn.innerText = 'Upload Clean Copy Now';
       }
     }
 
@@ -1678,6 +2341,38 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
 
       const btn = document.getElementById('modal-btn-approve');
       btn.disabled = true;
+
+      // Smart upload if in upload mode and file selected
+      if (currentMediaMode === 'upload') {
+        const fileInput = document.getElementById('modal-replace-input');
+        if (fileInput && fileInput.files && fileInput.files.length > 0) {
+          btn.innerText = '⏳ Uploading Clean Replacement...';
+          const file = fileInput.files[0];
+          const formData = new FormData();
+          formData.append('file', file);
+          try {
+            const replaceRes = await fetch('/api/v1/dashboard/papers/' + currentModalPaper._id + '/replace-file', {
+              method: 'POST',
+              body: formData
+            });
+            const replaceJson = await replaceRes.json();
+            if (!replaceJson.success) {
+              showToast('Replacement upload failed: ' + replaceJson.error, true);
+              btn.disabled = false;
+              btn.innerText = '✨ Upload Clean Copy & Approve to Cloudinary';
+              return;
+            }
+            currentModalPaper = replaceJson.data;
+            fileInput.value = '';
+          } catch (rErr) {
+            showToast('Replacement error: ' + rErr.message, true);
+            btn.disabled = false;
+            btn.innerText = '✨ Upload Clean Copy & Approve to Cloudinary';
+            return;
+          }
+        }
+      }
+
       btn.innerText = '⏳ Uploading to Cloudinary & Approving...';
 
       try {
@@ -1698,7 +2393,7 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
         showToast('Approval error: ' + err.message, true);
       } finally {
         btn.disabled = false;
-        btn.innerText = '✨ Approve & Upload to Cloudinary';
+        btn.innerText = currentMediaMode === 'upload' ? '✨ Upload Clean Copy & Approve to Cloudinary' : '✨ Approve Current Document & Upload to Cloudinary';
       }
     }
 

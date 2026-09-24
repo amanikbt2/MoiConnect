@@ -29,9 +29,15 @@ import * as adminController from '../controllers/adminController';
 import * as dashboardController from '../controllers/dashboardController';
 import * as popupController from '../controllers/popupController';
 import * as notificationController from '../controllers/notificationController';
+import * as communityController from '../controllers/communityController';
 import { tempUpload } from '../middleware/upload';
 
 const router = Router();
+
+// Community Real-Time Chat API Routes
+router.get('/community/messages', communityController.getCommunityMessages);
+router.post('/community/messages', optionalAuthenticate, communityController.postCommunityMessage);
+router.post('/community/messages/:id/reaction', communityController.toggleCommunityReaction);
 
 // Web Dashboard API Routes
 router.get('/dashboard/overview', dashboardController.getDashboardOverview);
