@@ -136,7 +136,8 @@ export const setupSocketIO = (io: SocketIOServer): void => {
           reactions: {}
         });
 
-        io.to('community_room').emit('community:receive_message', newCommunityMsg);
+        // Broadcast to all other connected clients in community_room (excluding sender socket)
+        socket.to('community_room').emit('community:receive_message', newCommunityMsg);
       } catch (err: any) {
         console.error('[Socket Community Message Error]:', err);
       }
