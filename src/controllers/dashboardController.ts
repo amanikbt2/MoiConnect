@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import path from 'path';
+import fs from 'fs';
 import { User } from '../models/User';
 import { Paper } from '../models/Paper';
 import { House } from '../models/House';
@@ -266,6 +267,88 @@ export const quickReplacePaperFile = async (req: Request, res: Response): Promis
   }
 };
 
+// Helper to compute mime type and clean extension
+const getMimeTypeAndExt = (url: string, fileType?: string) => {
+  const clean = (url || '').split('?')[0].toLowerCase();
+  const parts = clean.split('.');
+  const urlExt = parts.length > 1 ? parts.pop()! : '';
+
+  let ext = 'pdf';
+  if (['pdf', 'jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'svg', 'docx', 'doc', 'txt', 'csv'].includes(urlExt)) {
+    ext = urlExt === 'jpeg' ? 'jpg' : urlExt;
+  } else {
+    const t = (fileType || '').toLowerCase();
+    if (t === 'image' || t === 'jpeg' || t === 'jpg' || t.includes('image')) ext = 'jpg';
+    else if (t === 'png') ext = 'png';
+    else if (t === 'webp') ext = 'webp';
+    else if (t === 'docx' || t === 'doc' || t.includes('word')) ext = 'docx';
+    else if (t === 'txt' || t === 'text') ext = 'txt';
+  }
+
+  let mimeType = 'application/pdf';
+  if (['jpg', 'jpeg'].includes(ext)) mimeType = 'image/jpeg';
+  else if (ext === 'png') mimeType = 'image/png';
+  else if (ext === 'webp') mimeType = 'image/webp';
+  else if (ext === 'gif') mimeType = 'image/gif';
+  else if (['docx', 'doc'].includes(ext)) mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  else if (['txt', 'csv'].includes(ext)) mimeType = 'text/plain';
+
+  return { ext, mimeType };
+};
+
+// Download Paper File with exact headers and extension (.jpg, .pdf, .docx, .png)
+export const downloadPaperFile = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const paper = await Paper.findById(id);
+    if (!paper || !paper.fileUrl) {
+      res.status(404).send('File not found');
+      return;
+    }
+
+    const { ext, mimeType } = getMimeTypeAndExt(paper.fileUrl, paper.fileType);
+    const cleanTitle = (paper.title || 'academic_file').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const unitCode = (paper.unitCode || 'Paper').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const downloadFilename = `${unitCode}_${cleanTitle}.${ext}`;
+
+    // Increment downloads count asynchronously
+    Paper.findByIdAndUpdate(id, { $inc: { downloads: 1 } }).exec();
+
+    // Check if local temp file exists
+    let localPath = '';
+    if (paper.tempFilename) {
+      localPath = path.join(process.cwd(), 'uploads', 'temp', paper.tempFilename);
+    } else if (paper.fileUrl.includes('/uploads/temp/')) {
+      const fn = paper.fileUrl.split('/uploads/temp/')[1]?.split('?')[0];
+      if (fn) localPath = path.join(process.cwd(), 'uploads', 'temp', fn);
+    } else if (paper.fileUrl.startsWith('/uploads/')) {
+      localPath = path.join(process.cwd(), paper.fileUrl.startsWith('/') ? paper.fileUrl.slice(1) : paper.fileUrl);
+    }
+
+    if (localPath && fs.existsSync(localPath)) {
+      res.setHeader('Content-Type', mimeType);
+      res.download(localPath, downloadFilename);
+      return;
+    }
+
+    // Remote URL (Cloudinary or HTTP)
+    if (paper.fileUrl.startsWith('http://') || paper.fileUrl.startsWith('https://')) {
+      const remoteRes = await fetch(paper.fileUrl);
+      if (remoteRes.ok) {
+        const remoteBuffer = Buffer.from(await remoteRes.arrayBuffer());
+        res.setHeader('Content-Type', remoteRes.headers.get('content-type') || mimeType);
+        res.setHeader('Content-Disposition', `attachment; filename="${downloadFilename}"`);
+        res.send(remoteBuffer);
+        return;
+      }
+    }
+
+    res.redirect(paper.fileUrl);
+  } catch (error: any) {
+    res.status(500).send('Download error: ' + error.message);
+  }
+};
+
 // 6. Get Server Media Temp Files
 export const getDashboardTempFiles = async (_req: Request, res: Response): Promise<void> => {
   try {
@@ -361,12 +444,18 @@ export const renderPublicTempFolder = async (_req: Request, res: Response): Prom
   <header>
     <div class="header-container">
       <div class="brand-title">
-        <span>📂</span>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
         <span>MoiConnect Server • Public Temporary Storage</span>
       </div>
       <div style="display: flex; gap: 10px; align-items: center;">
-        <a href="/admin" class="btn btn-green">⬅️ Back to Admin Dashboard</a>
-        <button onclick="location.reload()" class="btn btn-dark">🔄 Refresh</button>
+        <a href="/admin" class="btn btn-green">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+          Back to Admin Dashboard
+        </a>
+        <button onclick="location.reload()" class="btn btn-dark">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+          Refresh
+        </button>
       </div>
     </div>
   </header>
@@ -412,19 +501,19 @@ export const renderPublicTempFolder = async (_req: Request, res: Response): Prom
             ${files.length === 0 ? `<tr><td colspan="6" style="text-align: center; padding: 48px; color: #94a3b8;">No temporary files in storage. Server is completely clean!</td></tr>` : files.map(f => {
               const ext = (path.extname(f.filename) || '').toLowerCase().replace('.', '');
               let tagClass = 'tag-pdf';
-              let tagIcon = '📄';
+              let tagIcon = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`;
               let tagText = 'PDF';
               if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'svg'].includes(ext)) {
                 tagClass = 'tag-img';
-                tagIcon = '🖼️';
+                tagIcon = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>`;
                 tagText = ext.toUpperCase() + ' IMAGE';
               } else if (['docx', 'doc'].includes(ext)) {
                 tagClass = 'tag-doc';
-                tagIcon = '📝';
+                tagIcon = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>`;
                 tagText = ext.toUpperCase() + ' WORD';
               } else if (['txt', 'md', 'csv', 'json'].includes(ext)) {
                 tagClass = 'tag-txt';
-                tagIcon = '📑';
+                tagIcon = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>`;
                 tagText = ext.toUpperCase() + ' TEXT';
               }
               const publicUrl = `/mydomain_admin/temp_files/${encodeURIComponent(f.filename)}`;
@@ -442,16 +531,19 @@ export const renderPublicTempFolder = async (_req: Request, res: Response): Prom
                 <td style="color: #64748b;">${new Date(f.modifiedAt).toLocaleString()}</td>
                 <td>
                   <button onclick="copyUrl('${publicUrl}')" class="btn btn-view" style="font-size: 11px; padding: 4px 8px;">
-                    📋 Copy Link
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                    Copy Link
                   </button>
                 </td>
                 <td style="text-align: right;">
                   <div style="display: inline-flex; gap: 6px;">
                     <a href="${previewUrl}" target="_blank" class="btn btn-view" style="font-size: 11px; padding: 4px 10px;">
-                      👁️ Smart Preview
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                      Smart Preview
                     </a>
                     <a href="${publicUrl}" download class="btn btn-dark" style="font-size: 11px; padding: 4px 10px;">
-                      📥 Download
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                      Download
                     </a>
                   </div>
                 </td>
@@ -588,7 +680,8 @@ export const renderSmartPreviewPage = (req: Request, res: Response): void => {
   <div class="toolbar">
     <div class="toolbar-left">
       <button onclick="window.history.length > 1 ? window.history.back() : window.close()" class="btn btn-back">
-        ⬅ Back
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+        Back
       </button>
       <span class="badge badge-${category}">${category.toUpperCase()} • ${ext.toUpperCase()}</span>
       <span class="toolbar-title" title="${title}">${title}</span>
@@ -596,10 +689,12 @@ export const renderSmartPreviewPage = (req: Request, res: Response): void => {
 
     <div class="toolbar-actions">
       <a href="${fileUrl}" download class="btn btn-primary">
-        📥 Download File
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Download File
       </a>
       <a href="${fileUrl}" target="_blank" class="btn btn-sub">
-        🔗 Raw URL
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+        Raw URL
       </a>
     </div>
   </div>
@@ -610,11 +705,26 @@ export const renderSmartPreviewPage = (req: Request, res: Response): void => {
       <div class="image-wrapper" id="img-container">
         <img id="preview-image" src="${fileUrl}" alt="${title}" class="image-element" />
         <div class="floating-controls">
-          <button class="btn btn-tool" onclick="zoomIn()">🔍 Zoom +</button>
-          <button class="btn btn-tool" onclick="zoomOut()">🔍 Zoom -</button>
-          <button class="btn btn-tool" onclick="resetZoom()">🎯 100%</button>
-          <button class="btn btn-tool" onclick="rotateImage()">⟳ Rotate</button>
-          <button class="btn btn-tool" onclick="toggleBackground()">🎨 Backdrop</button>
+          <button class="btn btn-tool" onclick="zoomIn()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+            Zoom +
+          </button>
+          <button class="btn btn-tool" onclick="zoomOut()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+            Zoom -
+          </button>
+          <button class="btn btn-tool" onclick="resetZoom()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="2"/></svg>
+            100%
+          </button>
+          <button class="btn btn-tool" onclick="rotateImage()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+            Rotate
+          </button>
+          <button class="btn btn-tool" onclick="toggleBackground()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 0 0 20z"/></svg>
+            Backdrop
+          </button>
         </div>
       </div>
       <script>
@@ -644,10 +754,12 @@ export const renderSmartPreviewPage = (req: Request, res: Response): void => {
           <span style="color: #94a3b8;">Formatted live with client-side document renderer</span>
           <div style="display: flex; gap: 8px;">
             <a href="https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(fileUrl)}" target="_blank" class="btn btn-tool">
-              🌐 Office Online
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+              Office Online
             </a>
             <a href="https://docs.google.com/viewer?url=${encodeURIComponent(fileUrl)}&embedded=true" target="_blank" class="btn btn-tool">
-              🌐 Google Docs Viewer
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+              Google Docs Viewer
             </a>
           </div>
         </div>
@@ -684,7 +796,10 @@ export const renderSmartPreviewPage = (req: Request, res: Response): void => {
         </div>
         <div id="text-wrapper" style="display: none;">
           <div style="max-width: 960px; margin: 0 auto 12px; display: flex; justify-content: flex-end;">
-            <button onclick="copyTextContent()" class="btn btn-tool">📋 Copy Text</button>
+            <button onclick="copyTextContent()" class="btn btn-tool">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              Copy Text
+            </button>
           </div>
           <pre id="text-content" class="text-box"></pre>
         </div>
@@ -1466,13 +1581,16 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
           <!-- Action buttons: Download, Smart Tab Preview & Copy Public Temp Link -->
           <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px;">
             <a id="modal-download-btn" href="#" download class="btn" style="background: #0284c7; color: #ffffff;">
-              📥 Download Media File
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Download Media File
             </a>
             <a id="modal-preview-btn" href="#" target="_blank" class="btn btn-view" style="font-weight: 800; color: #0f172a;">
-              👁️ Open & Preview in Tab
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+              Open & Preview in Tab
             </a>
             <button type="button" id="modal-copy-url-btn" onclick="copyModalFileUrl()" class="btn btn-view" style="font-size: 11px;">
-              📋 Copy Public Temp URL
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              Copy Public Temp URL
             </button>
           </div>
 
@@ -1499,7 +1617,10 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
                 <div style="display: flex; align-items: flex-start; gap: 8px;">
                   <input type="radio" name="modal-media-choice" id="radio-choice-current" value="current" checked onchange="setMediaChoice('current')" style="margin-top: 3px; accent-color: #15803d; cursor: pointer;" />
                   <div>
-                    <div style="font-weight: 800; font-size: 12px; color: #0f172a;">📄 Use Current Document</div>
+                    <div style="font-weight: 800; font-size: 12px; color: #0f172a; display: flex; align-items: center; gap: 4px;">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#15803d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                      Use Current Document
+                    </div>
                     <div style="font-size: 11px; color: #64748b; margin-top: 2px;">File is already clean & ready for approval.</div>
                   </div>
                 </div>
@@ -1510,7 +1631,10 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
                 <div style="display: flex; align-items: flex-start; gap: 8px;">
                   <input type="radio" name="modal-media-choice" id="radio-choice-upload" value="upload" onchange="setMediaChoice('upload')" style="margin-top: 3px; accent-color: #d97706; cursor: pointer;" />
                   <div>
-                    <div style="font-weight: 800; font-size: 12px; color: #0f172a;">📤 Upload Clean Document</div>
+                    <div style="font-weight: 800; font-size: 12px; color: #0f172a; display: flex; align-items: center; gap: 4px;">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                      Upload Clean Document
+                    </div>
                     <div style="font-size: 11px; color: #64748b; margin-top: 2px;">Replace with edited / cleaned copy.</div>
                   </div>
                 </div>
@@ -1519,7 +1643,7 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
 
             <!-- Status Box for Option 1 -->
             <div id="media-status-current-box" style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 10px 12px; display: flex; align-items: center; gap: 8px; font-size: 12px; color: #166534; font-weight: 600;">
-              <span>✅</span>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#166534" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
               <span>Using current file. It will be uploaded to Cloudinary (folder: <code>MoiConnect/pdf</code>) upon approval.</span>
             </div>
 
@@ -1541,7 +1665,10 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
 
         <!-- 2. Metadata Editing Form -->
         <form id="modal-edit-form" onsubmit="handleSavePaperEdits(event)" style="display: flex; flex-direction: column; gap: 14px; margin-bottom: 20px;">
-          <div style="font-size: 13px; font-weight: 800; color: #0f172a;">✏️ Edit Metadata:</div>
+          <div style="font-size: 13px; font-weight: 800; color: #0f172a; display: flex; align-items: center; gap: 6px;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            Edit Metadata:
+          </div>
 
           <div>
             <label style="display: block; font-size: 11px; font-weight: 700; color: #475569; margin-bottom: 4px;">Unit Title *</label>
@@ -1579,7 +1706,8 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
 
           <div style="display: flex; justify-content: flex-end;">
             <button type="submit" id="btn-save-paper-edits" class="btn" style="background: #334155; color: #ffffff;">
-              💾 Save Metadata Edits
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+              Save Metadata Edits
             </button>
           </div>
         </form>
@@ -1587,10 +1715,12 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
         <!-- 3. Final Decision Approval / Rejection Row -->
         <div style="border-top: 2px solid #f1f5f9; padding-top: 16px; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px;">
           <button type="button" id="modal-btn-reject" onclick="rejectCurrentPaperFromModal()" class="btn btn-reject" style="padding: 10px 18px;">
-            ❌ Reject & Delete Temp File
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            Reject & Delete Temp File
           </button>
           <button type="button" id="modal-btn-approve" onclick="approveCurrentPaperFromModal()" class="btn btn-approve" style="padding: 10px 22px;">
-            ✨ Approve & Upload to Cloudinary
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            Approve & Upload to Cloudinary
           </button>
         </div>
       </div>
@@ -2013,15 +2143,14 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
         ' on ' + new Date(paper.createdAt).toLocaleString();
 
       // Media details & links
-      // Media details & links
       const isTemp = paper.tempFilename || (paper.fileUrl && paper.fileUrl.indexOf('/uploads/temp/') !== -1);
       const storageTag = document.getElementById('modal-media-storage-tag');
       if (isTemp) {
-        storageTag.innerText = '📁 Server Temp (/mydomain_admin/temp_files/)';
+        storageTag.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:4px;"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>Server Temp (/mydomain_admin/temp_files/)';
         storageTag.style.background = '#fef3c7';
         storageTag.style.color = '#b45309';
       } else {
-        storageTag.innerText = '☁️ Cloudinary CDN (MoiConnect/pdf)';
+        storageTag.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:4px;"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>Cloudinary CDN (MoiConnect/pdf)';
         storageTag.style.background = '#dcfce7';
         storageTag.style.color = '#15803d';
       }
@@ -2030,7 +2159,7 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
       const fmt = detectFormat(paper.fileUrl, paper.fileType);
       const formatBadge = document.getElementById('modal-format-badge');
       if (formatBadge) {
-        formatBadge.innerText = fmt.icon + ' ' + fmt.label;
+        formatBadge.innerHTML = fmt.icon + ' ' + fmt.label;
         if (fmt.category === 'image') {
           formatBadge.style.background = '#fdf2f8';
           formatBadge.style.color = '#9d174d';
@@ -2046,9 +2175,10 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
         }
       }
 
+      const realExt = getRealFileExt(paper.fileUrl, paper.fileType);
+      const cleanDownloadName = (paper.unitCode || 'Paper') + '_' + (paper.title || 'file').replace(/[^a-zA-Z0-9_-]/g, '_') + '.' + realExt;
       const downloadBtn = document.getElementById('modal-download-btn');
-      downloadBtn.href = paper.fileUrl;
-      const cleanDownloadName = (paper.unitCode || 'Paper') + '_' + (paper.title || 'file').replace(/[^a-zA-Z0-9_-]/g, '_') + '.' + (paper.fileType || 'pdf');
+      downloadBtn.href = '/api/v1/dashboard/papers/' + paper._id + '/download-file';
       downloadBtn.setAttribute('download', cleanDownloadName);
 
       // Smart preview URL in web tab
@@ -2072,45 +2202,45 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
             '<a href="' + smartPreviewUrl + '" target="_blank" title="Click to view full image in tab">' +
               '<img src="' + paper.fileUrl + '" alt="Preview" style="max-height: 220px; max-width: 100%; border-radius: 6px; object-fit: contain; box-shadow: 0 2px 8px rgba(0,0,0,0.1); border: 1px solid #e2e8f0;" />' +
             '</a>' +
-            '<div style="font-size: 11px; color: #64748b; margin-top: 6px;">🔍 Click image or \\'Preview in Tab\\' to zoom & rotate</div>' +
+            '<div style="font-size: 11px; color: #64748b; margin-top: 6px;">Click image or \\'Open & Preview in Tab\\' to zoom & rotate</div>' +
           '</div>';
         } else if (fmt.category === 'pdf') {
           previewBody.innerHTML = '<div style="display: flex; align-items: center; justify-content: space-between; width: 100%; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px;">' +
             '<div style="display: flex; align-items: center; gap: 10px;">' +
-              '<span style="font-size: 28px;">📄</span>' +
+              '<span style="font-size: 20px; color: #15803d;"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>' +
               '<div>' +
                 '<div style="font-weight: 800; font-size: 13px; color: #0f172a;">PDF Academic Document</div>' +
                 '<div style="font-size: 11px; color: #64748b;">' + formatBytes(paper.fileSize || 0) + ' • Ready for viewing</div>' +
               '</div>' +
             '</div>' +
             '<a href="' + smartPreviewUrl + '" target="_blank" class="btn btn-view" style="font-size: 11px;">' +
-              '👁️ Launch PDF Viewer' +
+              'Launch PDF Viewer' +
             '</a>' +
           '</div>';
         } else if (fmt.category === 'docx') {
           previewBody.innerHTML = '<div style="display: flex; align-items: center; justify-content: space-between; width: 100%; background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 8px; padding: 12px;">' +
             '<div style="display: flex; align-items: center; gap: 10px;">' +
-              '<span style="font-size: 28px;">📝</span>' +
+              '<span style="font-size: 20px; color: #0369a1;"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>' +
               '<div>' +
                 '<div style="font-weight: 800; font-size: 13px; color: #0369a1;">Microsoft Word Document (.docx)</div>' +
                 '<div style="font-size: 11px; color: #64748b;">' + formatBytes(paper.fileSize || 0) + ' • Viewable in Smart Viewer</div>' +
               '</div>' +
             '</div>' +
             '<a href="' + smartPreviewUrl + '" target="_blank" class="btn btn-view" style="font-size: 11px;">' +
-              '👁️ Launch Word Viewer' +
+              'Launch Word Viewer' +
             '</a>' +
           '</div>';
         } else {
           previewBody.innerHTML = '<div style="display: flex; align-items: center; justify-content: space-between; width: 100%; background: #fefce8; border: 1px solid #fef08a; border-radius: 8px; padding: 12px;">' +
             '<div style="display: flex; align-items: center; gap: 10px;">' +
-              '<span style="font-size: 28px;">📑</span>' +
+              '<span style="font-size: 20px; color: #92400e;"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>' +
               '<div>' +
                 '<div style="font-weight: 800; font-size: 13px; color: #854d0e;">Plain Text / Notes File</div>' +
                 '<div style="font-size: 11px; color: #64748b;">' + formatBytes(paper.fileSize || 0) + ' • Monospace text</div>' +
               '</div>' +
             '</div>' +
             '<a href="' + smartPreviewUrl + '" target="_blank" class="btn btn-view" style="font-size: 11px;">' +
-              '👁️ Launch Text Reader' +
+              'Launch Text Reader' +
             '</a>' +
           '</div>';
         }
@@ -2136,40 +2266,59 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
       const approveBtn = document.getElementById('modal-btn-approve');
       const rejectBtn = document.getElementById('modal-btn-reject');
       if (paper.status === 'approved') {
-        approveBtn.innerText = '✓ Already Approved';
+        approveBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:4px;"><polyline points="20 6 9 17 4 12"/></svg>Already Approved';
         approveBtn.disabled = true;
       } else {
-        approveBtn.innerText = '✨ Approve Current Document & Upload to Cloudinary';
+        approveBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:4px;"><polyline points="20 6 9 17 4 12"/></svg>Approve Current Document & Upload to Cloudinary';
         approveBtn.disabled = false;
       }
 
       // Unhide modal
-      document.getElementById('material-modal').classList.remove('hidden');
+    function getRealFileExt(url, fallbackType) {
+      var clean = (url || '').split('?')[0].toLowerCase();
+      var parts = clean.split('.');
+      var urlExt = parts.length > 1 ? parts.pop() : '';
+      if (['pdf', 'jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'svg', 'docx', 'doc', 'txt', 'csv'].indexOf(urlExt) !== -1) {
+        return urlExt === 'jpeg' ? 'jpg' : urlExt;
+      }
+      var t = (fallbackType || '').toLowerCase();
+      if (t === 'image' || t === 'jpeg' || t === 'jpg' || t.indexOf('image') !== -1) return 'jpg';
+      if (t === 'png') return 'png';
+      if (t === 'webp') return 'webp';
+      if (t === 'pdf') return 'pdf';
+      if (t === 'docx' || t === 'doc' || t.indexOf('word') !== -1) return 'docx';
+      if (t === 'txt' || t === 'text') return 'txt';
+      return 'pdf';
     }
 
     function detectFormat(url, fallbackType) {
       var clean = (url || '').split('?')[0].toLowerCase();
       var parts = clean.split('.');
       var ext = parts.length > 1 ? parts.pop() : '';
+      const SVG_IMG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:3px;"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>';
+      const SVG_PDF = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:3px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>';
+      const SVG_DOC = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:3px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>';
+      const SVG_TXT = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:3px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>';
+
       if (['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'svg', 'ico', 'tiff'].indexOf(ext) !== -1) {
-        return { category: 'image', ext: ext.toUpperCase(), icon: '🖼️', label: ext.toUpperCase() + ' Image' };
+        return { category: 'image', ext: ext.toUpperCase(), icon: SVG_IMG, label: ext.toUpperCase() + ' Image' };
       }
       if (ext === 'pdf') {
-        return { category: 'pdf', ext: 'PDF', icon: '📄', label: 'Adobe PDF' };
+        return { category: 'pdf', ext: 'PDF', icon: SVG_PDF, label: 'Adobe PDF' };
       }
       if (['doc', 'docx', 'dotx', 'odt'].indexOf(ext) !== -1) {
-        return { category: 'docx', ext: ext.toUpperCase(), icon: '📝', label: 'Word ' + ext.toUpperCase() };
+        return { category: 'docx', ext: ext.toUpperCase(), icon: SVG_DOC, label: 'Word ' + ext.toUpperCase() };
       }
       if (['txt', 'text', 'md', 'csv', 'json', 'log', 'rtf'].indexOf(ext) !== -1) {
-        return { category: 'text', ext: ext.toUpperCase(), icon: '📑', label: 'Text ' + ext.toUpperCase() };
+        return { category: 'text', ext: ext.toUpperCase(), icon: SVG_TXT, label: 'Text ' + ext.toUpperCase() };
       }
       if (fallbackType && fallbackType.toLowerCase().indexOf('image') !== -1) {
-        return { category: 'image', ext: 'IMG', icon: '🖼️', label: 'Image' };
+        return { category: 'image', ext: 'IMG', icon: SVG_IMG, label: 'Image' };
       }
       if (fallbackType && fallbackType.toLowerCase().indexOf('doc') !== -1) {
-        return { category: 'docx', ext: 'DOC', icon: '📝', label: 'Word Document' };
+        return { category: 'docx', ext: 'DOC', icon: SVG_DOC, label: 'Word Document' };
       }
-      return { category: 'pdf', ext: 'DOC', icon: '📄', label: 'Document' };
+      return { category: 'pdf', ext: 'DOC', icon: SVG_PDF, label: 'Document' };
     }
 
     var currentMediaMode = 'current';
@@ -2191,7 +2340,7 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
         if (currentBox) currentBox.classList.remove('hidden');
         if (uploadBox) uploadBox.classList.add('hidden');
         if (approveBtn && !approveBtn.disabled) {
-          approveBtn.innerText = '✨ Approve Current Document & Upload to Cloudinary';
+          approveBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:4px;"><polyline points="20 6 9 17 4 12"/></svg>Approve Current Document & Upload to Cloudinary';
         }
       } else {
         if (radioUpload) radioUpload.checked = true;
@@ -2200,7 +2349,7 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
         if (uploadBox) uploadBox.classList.remove('hidden');
         if (currentBox) currentBox.classList.add('hidden');
         if (approveBtn && !approveBtn.disabled) {
-          approveBtn.innerText = '✨ Upload Clean Copy & Approve to Cloudinary';
+          approveBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:4px;"><polyline points="20 6 9 17 4 12"/></svg>Upload Clean Copy & Approve to Cloudinary';
         }
       }
     }
@@ -2456,48 +2605,40 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
         }
 
         if (tempFilesData.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 36px; color: #94a3b8; font-size: 13px;">No temporary media files on server disk. Everything is clean! 🟢</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 36px; color: #94a3b8; font-size: 13px;">No temporary media files on server disk. Everything is clean!</td></tr>';
           return;
         }
 
-        tbody.innerHTML = tempFilesData.map(f => {
-          const linked = f.associatedPaper;
-          return \`
-            <tr>
-              <td>
-                <input type="checkbox" class="temp-file-cb" data-filename="\${f.filename}" />
-              </td>
-              <td style="font-family: monospace; font-size: 12px; font-weight: 700; color: #0f172a;">
-                <div style="display: flex; align-items: center; gap: 6px;">
-                  <span>📄</span>
-                  <span title="\${f.filename}">\${f.filename}</span>
-                </div>
-              </td>
-              <td style="font-weight: 700; color: #475569;">\${f.sizeFormatted}</td>
-              <td style="color: #64748b; font-size: 12px;">\${new Date(f.modifiedAt).toLocaleString()}</td>
-              <td>
-                \${linked ? \`
-                  <span style="font-size: 11px; font-weight: 700; color: #15803d; background: #dcfce7; padding: 3px 8px; border-radius: 6px;">
-                    📌 \${linked.unitCode || 'Paper'}: \${linked.title || ''} (\${linked.status.toUpperCase()})
-                  </span>
-                \` : \`
-                  <span style="font-size: 11px; font-weight: 700; color: #b45309; background: #fef3c7; padding: 3px 8px; border-radius: 6px;">
-                    ⚠️ Unlinked / Orphaned
-                  </span>
-                \`}
-              </td>
-              <td style="text-align: right;">
-                <div style="display: inline-flex; gap: 6px;">
-                  <a href="\${f.fileUrl}" download="\${f.filename}" class="btn btn-tiny" style="background: #0284c7; color: #ffffff;">
-                    📥 Download
-                  </a>
-                  <button onclick="deleteSingleTemp('\${f.filename}')" class="btn btn-tiny" style="background: #fee2e2; color: #dc2626; border: 1px solid #fecaca;">
-                    🗑️ Delete
-                  </button>
-                </div>
-              </td>
-            </tr>
-          \`;
+        tbody.innerHTML = tempFilesData.map(function(f) {
+          var linked = f.associatedPaper;
+          var linkedHtml = linked
+            ? '<span style="font-size: 11px; font-weight: 700; color: #15803d; background: #dcfce7; padding: 3px 8px; border-radius: 6px;">Linked ' + (linked.unitCode || 'Paper') + ': ' + (linked.title || '') + ' (' + (linked.status || '').toUpperCase() + ')</span>'
+            : '<span style="font-size: 11px; font-weight: 700; color: #b45309; background: #fef3c7; padding: 3px 8px; border-radius: 6px;">Unlinked / Orphaned</span>';
+
+          return '<tr>' +
+            '<td><input type="checkbox" class="temp-file-cb" data-filename="' + f.filename + '" /></td>' +
+            '<td style="font-family: monospace; font-size: 12px; font-weight: 700; color: #0f172a;">' +
+              '<div style="display: flex; align-items: center; gap: 6px;">' +
+                '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>' +
+                '<span title="' + f.filename + '">' + f.filename + '</span>' +
+              '</div>' +
+            '</td>' +
+            '<td style="font-weight: 700; color: #475569;">' + f.sizeFormatted + '</td>' +
+            '<td style="color: #64748b; font-size: 12px;">' + new Date(f.modifiedAt).toLocaleString() + '</td>' +
+            '<td>' + linkedHtml + '</td>' +
+            '<td style="text-align: right;">' +
+              '<div style="display: inline-flex; gap: 6px;">' +
+                '<a href="' + f.fileUrl + '" download="' + f.filename + '" class="btn btn-tiny" style="background: #0284c7; color: #ffffff;">' +
+                  '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>' +
+                  ' Download' +
+                '</a>' +
+                '<button onclick="deleteSingleTemp(\'' + f.filename + '\')" class="btn btn-tiny" style="background: #fee2e2; color: #dc2626; border: 1px solid #fecaca;">' +
+                  '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>' +
+                  ' Delete' +
+                '</button>' +
+              '</div>' +
+            '</td>' +
+          '</tr>';
         }).join('');
       } catch (err) {
         tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 24px; color: #dc2626;">Error loading temporary files: ' + err.message + '</td></tr>';

@@ -41,6 +41,7 @@ router.post('/community/messages/:id/reaction', communityController.toggleCommun
 
 // Web Dashboard API Routes
 router.get('/dashboard/overview', dashboardController.getDashboardOverview);
+router.get('/dashboard/papers/:id/download-file', dashboardController.downloadPaperFile);
 router.post('/dashboard/papers/:id/approve', dashboardController.quickApprovePaper);
 router.post('/dashboard/papers/:id/reject', dashboardController.quickRejectPaper);
 router.patch('/dashboard/papers/:id', dashboardController.quickEditPaper);
