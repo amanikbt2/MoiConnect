@@ -52,6 +52,7 @@ export interface IPaper {
   examYear?: number;
   fileUrl: string;
   publicId?: string;
+  tempFilename?: string;
   fileType: string;
   fileSize?: number;
   submittedBy: IUser | string;

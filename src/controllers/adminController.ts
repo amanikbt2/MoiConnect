@@ -4,6 +4,12 @@ import { House } from '../models/House';
 import { User } from '../models/User';
 import { Report } from '../models/Report';
 import { AuthenticatedRequest } from '../middleware/auth';
+import {
+  listTempFiles,
+  deleteTempFile,
+  deleteBatchTempFiles as deleteBatchTempFilesHelper,
+  uploadTempFileToCloudinary
+} from '../services/tempFileService';
 
 export const getStats = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
@@ -66,8 +72,31 @@ export const reviewPaper = async (req: AuthenticatedRequest, res: Response): Pro
     paper.status = status;
     if (status === 'rejected') {
       paper.rejectionReason = rejectionReason;
+      // Delete temporary file from server disk if present
+      if (paper.tempFilename || paper.fileUrl?.includes('/uploads/temp/')) {
+        deleteTempFile(paper.tempFilename || paper.fileUrl);
+        paper.tempFilename = undefined;
+      }
     } else {
       paper.rejectionReason = undefined;
+
+      // If document is in temporary server storage, upload to Cloudinary under MoiConnect/pdf
+      if (paper.tempFilename || paper.fileUrl?.includes('/uploads/temp/')) {
+        try {
+          const fileToUpload = paper.tempFilename || paper.fileUrl;
+          const uploadRes = await uploadTempFileToCloudinary(fileToUpload, 'MoiConnect/pdf');
+          paper.fileUrl = uploadRes.secure_url;
+          paper.publicId = uploadRes.public_id;
+          paper.tempFilename = undefined;
+        } catch (cloudErr: any) {
+          console.error('[Admin Review Paper] Cloudinary upload error:', cloudErr);
+          res.status(500).json({
+            success: false,
+            error: `Failed to upload document to Cloudinary storage: ${cloudErr?.message || cloudErr}`
+          });
+          return;
+        }
+      }
 
       // Smart MTID Auto-assignment (N0001 for Notes, C0001 for CATs, P0001 for Past Papers)
       if (status === 'approved' && !paper.mtid) {
@@ -94,11 +123,129 @@ export const reviewPaper = async (req: AuthenticatedRequest, res: Response): Pro
 
     res.json({
       success: true,
-      message: `Academic paper ${status}.`,
+      message: `Academic paper ${status}.${paper.mtid ? ` Assigned MTID: ${paper.mtid}` : ''}`,
       data: paper
     });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message || 'Paper review failed' });
+  }
+};
+
+export const updateAdminPaper = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const updates = req.body;
+
+    const paper = await Paper.findById(id);
+    if (!paper) {
+      res.status(404).json({ success: false, error: 'Paper not found.' });
+      return;
+    }
+
+    if (updates.title !== undefined) paper.title = updates.title;
+    if (updates.courseCode !== undefined) paper.courseCode = updates.courseCode.toUpperCase();
+    if (updates.unitCode !== undefined) paper.unitCode = updates.unitCode.toUpperCase();
+    if (updates.unitName !== undefined) paper.unitName = updates.unitName;
+    if (updates.school !== undefined) paper.school = updates.school;
+    if (updates.department !== undefined) paper.department = updates.department;
+    if (updates.type !== undefined) paper.type = updates.type;
+    if (updates.examYear !== undefined) paper.examYear = updates.examYear;
+
+    await paper.save();
+
+    res.json({
+      success: true,
+      message: 'Paper metadata updated successfully.',
+      data: paper
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to update paper' });
+  }
+};
+
+export const replacePaperFile = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    if (!req.file) {
+      res.status(400).json({ success: false, error: 'No replacement file provided.' });
+      return;
+    }
+
+    const paper = await Paper.findById(id);
+    if (!paper) {
+      // Remove newly uploaded file since paper not found
+      deleteTempFile(req.file.filename);
+      res.status(404).json({ success: false, error: 'Paper not found.' });
+      return;
+    }
+
+    // Delete old temp file if it was stored locally
+    if (paper.tempFilename || paper.fileUrl?.includes('/uploads/temp/')) {
+      deleteTempFile(paper.tempFilename || paper.fileUrl);
+    }
+
+    const host = req.get('host') || 'localhost:5000';
+    const protocol = req.protocol || 'http';
+    const relativeUrl = `/uploads/temp/${req.file.filename}`;
+    const fullUrl = `${protocol}://${host}${relativeUrl}`;
+
+    paper.tempFilename = req.file.filename;
+    paper.fileUrl = fullUrl;
+    paper.fileSize = req.file.size;
+    paper.fileType = req.file.originalname.endsWith('.pdf') ? 'pdf' : 'doc';
+
+    await paper.save();
+
+    res.json({
+      success: true,
+      message: 'Document file replaced successfully with clean upload.',
+      data: paper
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to replace file' });
+  }
+};
+
+export const getTempFiles = async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const data = await listTempFiles();
+    res.json({ success: true, ...data });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to list temp files' });
+  }
+};
+
+export const deleteSingleTempFile = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { filename } = req.params;
+    const deleted = deleteTempFile(filename);
+    if (!deleted) {
+      res.status(404).json({ success: false, error: `File "${filename}" not found on server.` });
+      return;
+    }
+
+    res.json({ success: true, message: `File "${filename}" removed from server temp storage.` });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to delete temp file' });
+  }
+};
+
+export const deleteBatchTempFiles = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { filenames } = req.body;
+    if (!Array.isArray(filenames) || filenames.length === 0) {
+      res.status(400).json({ success: false, error: 'No filenames provided for batch deletion.' });
+      return;
+    }
+
+    const result = deleteBatchTempFilesHelper(filenames);
+    res.json({
+      success: true,
+      message: `Deleted ${result.deletedCount} files from server temp storage.`,
+      ...result
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to batch delete temp files' });
   }
 };
 

@@ -38,9 +38,30 @@ export const createPaperSchema = z.object({
   examYear: z.union([z.number(), z.string()]).optional().transform((val) => typeof val === 'string' ? parseInt(val, 10) || 2025 : val),
   fileUrl: z.string().min(1, 'Valid file URL is required'),
   publicId: z.string().optional(),
+  tempFilename: z.string().optional(),
   fileType: z.string().default('pdf'),
   fileSize: z.union([z.number(), z.string()]).optional()
 });
+
+export const updatePaperSchema = z.object({
+  title: z.string().min(2).optional(),
+  type: z.enum(PAPER_TYPES).optional(),
+  school: z.string().min(2).optional(),
+  department: z.string().min(2).optional(),
+  courseCode: z.string().min(2).optional(),
+  unitCode: z.string().min(2).optional(),
+  unitName: z.string().min(2).optional(),
+  academicYear: z.string().optional(),
+  semester: z.string().optional(),
+  examYear: z.union([z.number(), z.string()]).optional().transform((val) => typeof val === 'string' ? parseInt(val, 10) || 2025 : val),
+  fileUrl: z.string().optional(),
+  publicId: z.string().optional(),
+  tempFilename: z.string().optional(),
+  fileType: z.string().optional(),
+  fileSize: z.union([z.number(), z.string()]).optional()
+});
+
+export type UpdatePaperInput = z.infer<typeof updatePaperSchema>;
 
 export const reviewPaperSchema = z.object({
   status: z.enum(['approved', 'rejected']),

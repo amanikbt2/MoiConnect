@@ -29,6 +29,7 @@ import * as adminController from '../controllers/adminController';
 import * as dashboardController from '../controllers/dashboardController';
 import * as popupController from '../controllers/popupController';
 import * as notificationController from '../controllers/notificationController';
+import { tempUpload } from '../middleware/upload';
 
 const router = Router();
 
@@ -36,6 +37,11 @@ const router = Router();
 router.get('/dashboard/overview', dashboardController.getDashboardOverview);
 router.post('/dashboard/papers/:id/approve', dashboardController.quickApprovePaper);
 router.post('/dashboard/papers/:id/reject', dashboardController.quickRejectPaper);
+router.patch('/dashboard/papers/:id', dashboardController.quickEditPaper);
+router.post('/dashboard/papers/:id/replace-file', tempUpload.single('file'), dashboardController.quickReplacePaperFile);
+router.get('/dashboard/temp-files', dashboardController.getDashboardTempFiles);
+router.delete('/dashboard/temp-files/:filename', dashboardController.deleteDashboardTempFile);
+router.post('/dashboard/temp-files/delete-batch', dashboardController.deleteDashboardBatchTempFiles);
 
 // Push Notification & Bell Inbox Routes
 router.post('/notifications/register-token', notificationController.registerDeviceToken);
@@ -61,6 +67,7 @@ router.post('/auth/request-landlord', authenticate, validateBody(requestLandlord
 router.delete('/auth/delete-account', authenticate, authController.deleteAccount);
 
 // Academic Resources Routes
+router.post('/papers/upload', optionalAuthenticate, tempUpload.single('file'), paperController.uploadPaperFile);
 router.get('/papers', paperController.getPapers);
 router.get('/papers/my-submissions', authenticate, paperController.getMySubmissions);
 router.get('/papers/:id', paperController.getPaperById);
@@ -98,6 +105,11 @@ router.use('/admin', authenticate, requireRole('admin'));
 router.get('/admin/stats', adminController.getStats);
 router.get('/admin/papers', adminController.getAdminPapers);
 router.patch('/admin/papers/:id/review', validateBody(reviewPaperSchema), adminController.reviewPaper);
+router.patch('/admin/papers/:id', adminController.updateAdminPaper);
+router.post('/admin/papers/:id/replace-file', tempUpload.single('file'), adminController.replacePaperFile);
+router.get('/admin/temp-files', adminController.getTempFiles);
+router.delete('/admin/temp-files/:filename', adminController.deleteSingleTempFile);
+router.post('/admin/temp-files/delete-batch', adminController.deleteBatchTempFiles);
 router.get('/admin/houses', adminController.getAdminHouses);
 router.patch('/admin/houses/:id/review', validateBody(reviewHouseSchema), adminController.reviewHouse);
 router.get('/admin/landlords', adminController.getPendingLandlords);

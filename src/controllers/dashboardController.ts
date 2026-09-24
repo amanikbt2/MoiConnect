@@ -4,6 +4,12 @@ import { Paper } from '../models/Paper';
 import { House } from '../models/House';
 import { Report } from '../models/Report';
 import { getOnlineStats } from '../socket';
+import {
+  listTempFiles,
+  deleteTempFile,
+  deleteBatchTempFiles,
+  uploadTempFileToCloudinary
+} from '../services/tempFileService';
 
 // 1. JSON API: Get full dashboard data
 export const getDashboardOverview = async (_req: Request, res: Response): Promise<void> => {
@@ -29,7 +35,7 @@ export const getDashboardOverview = async (_req: Request, res: Response): Promis
     const approvedPaperList = await Paper.find({ status: 'approved' })
       .populate('submittedBy', 'name email')
       .sort({ createdAt: -1 })
-      .limit(20);
+      .limit(30);
 
     const userList = await User.find()
       .select('-passwordHash -refreshTokens')
@@ -40,6 +46,8 @@ export const getDashboardOverview = async (_req: Request, res: Response): Promis
       .populate('landlordId', 'name email phone')
       .sort({ createdAt: -1 })
       .limit(30);
+
+    const tempFilesSummary = await listTempFiles();
 
     res.json({
       success: true,
@@ -56,7 +64,10 @@ export const getDashboardOverview = async (_req: Request, res: Response): Promis
         totalOnline: onlineStats.totalOnline,
         authenticatedOnline: onlineStats.authenticatedCount,
         guestOnline: onlineStats.guestCount,
-        onlineUserIds: onlineStats.onlineUserIds
+        onlineUserIds: onlineStats.onlineUserIds,
+        totalTempFiles: tempFilesSummary.totalFiles,
+        totalTempSizeBytes: tempFilesSummary.totalSizeBytes,
+        totalTempSizeFormatted: tempFilesSummary.totalSizeFormatted
       },
       pendingPapers: pendingPaperList,
       approvedPapers: approvedPaperList,
@@ -81,6 +92,24 @@ export const quickApprovePaper = async (req: Request, res: Response): Promise<vo
     paper.status = 'approved';
     paper.rejectionReason = undefined;
 
+    // Cloudinary Upload Pipeline: If document is stored in server temp, upload to Cloudinary under MoiConnect/pdf
+    if (paper.tempFilename || paper.fileUrl?.includes('/uploads/temp/')) {
+      try {
+        const fileTarget = paper.tempFilename || paper.fileUrl;
+        const uploadResult = await uploadTempFileToCloudinary(fileTarget, 'MoiConnect/pdf');
+        paper.fileUrl = uploadResult.secure_url;
+        paper.publicId = uploadResult.public_id;
+        paper.tempFilename = undefined;
+      } catch (cloudErr: any) {
+        console.error('[Dashboard Quick Approve] Cloudinary upload error:', cloudErr);
+        res.status(500).json({
+          success: false,
+          error: `Cloudinary upload to folder "MoiConnect/pdf" failed: ${cloudErr?.message || cloudErr}`
+        });
+        return;
+      }
+    }
+
     if (!paper.mtid) {
       let prefix = 'N';
       let typesToCount = ['notes', 'revision'];
@@ -102,7 +131,11 @@ export const quickApprovePaper = async (req: Request, res: Response): Promise<vo
     paper.reviewedAt = new Date();
     await paper.save();
 
-    res.json({ success: true, message: `Approved "${paper.title}" with MTID ${paper.mtid}`, data: paper });
+    res.json({
+      success: true,
+      message: `Approved "${paper.title}" with MTID ${paper.mtid} & uploaded to Cloudinary (MoiConnect/pdf).`,
+      data: paper
+    });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message || 'Approval failed' });
   }
@@ -122,12 +155,144 @@ export const quickRejectPaper = async (req: Request, res: Response): Promise<voi
 
     paper.status = 'rejected';
     paper.rejectionReason = reason || 'Does not meet document upload guidelines.';
+
+    // Clean up temporary server storage if file was stored locally
+    if (paper.tempFilename || paper.fileUrl?.includes('/uploads/temp/')) {
+      deleteTempFile(paper.tempFilename || paper.fileUrl);
+      paper.tempFilename = undefined;
+    }
+
     paper.reviewedAt = new Date();
     await paper.save();
 
-    res.json({ success: true, message: `Rejected "${paper.title}"`, data: paper });
+    res.json({
+      success: true,
+      message: `Rejected "${paper.title}" and deleted temporary file from server.`,
+      data: paper
+    });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message || 'Rejection failed' });
+  }
+};
+
+// 4. Quick Edit Paper Metadata
+export const quickEditPaper = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const updates = req.body;
+
+    const paper = await Paper.findById(id);
+    if (!paper) {
+      res.status(404).json({ success: false, error: 'Paper not found.' });
+      return;
+    }
+
+    if (updates.title !== undefined) paper.title = updates.title;
+    if (updates.courseCode !== undefined) paper.courseCode = updates.courseCode.toUpperCase();
+    if (updates.unitCode !== undefined) paper.unitCode = updates.unitCode.toUpperCase();
+    if (updates.unitName !== undefined) paper.unitName = updates.unitName;
+    if (updates.school !== undefined) paper.school = updates.school;
+    if (updates.department !== undefined) paper.department = updates.department;
+    if (updates.type !== undefined) paper.type = updates.type;
+    if (updates.examYear !== undefined) paper.examYear = updates.examYear;
+
+    await paper.save();
+
+    res.json({
+      success: true,
+      message: `Updated "${paper.title}" metadata successfully.`,
+      data: paper
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to update paper' });
+  }
+};
+
+// 5. Quick Replace Paper File with Clean Media
+export const quickReplacePaperFile = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    if (!req.file) {
+      res.status(400).json({ success: false, error: 'No replacement file provided.' });
+      return;
+    }
+
+    const paper = await Paper.findById(id);
+    if (!paper) {
+      deleteTempFile(req.file.filename);
+      res.status(404).json({ success: false, error: 'Paper not found.' });
+      return;
+    }
+
+    // Delete old temp file if it was on server
+    if (paper.tempFilename || paper.fileUrl?.includes('/uploads/temp/')) {
+      deleteTempFile(paper.tempFilename || paper.fileUrl);
+    }
+
+    const host = req.get('host') || 'localhost:5000';
+    const protocol = req.protocol || 'http';
+    const relativeUrl = `/uploads/temp/${req.file.filename}`;
+    const fullUrl = `${protocol}://${host}${relativeUrl}`;
+
+    paper.tempFilename = req.file.filename;
+    paper.fileUrl = fullUrl;
+    paper.fileSize = req.file.size;
+    paper.fileType = req.file.originalname.endsWith('.pdf') ? 'pdf' : 'doc';
+
+    await paper.save();
+
+    res.json({
+      success: true,
+      message: `Clean document uploaded! Previous temporary file replaced.`,
+      data: paper
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'File replacement failed' });
+  }
+};
+
+// 6. Get Server Media Temp Files
+export const getDashboardTempFiles = async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const data = await listTempFiles();
+    res.json({ success: true, ...data });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to list temp files' });
+  }
+};
+
+// 7. Delete Single Temp File
+export const deleteDashboardTempFile = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { filename } = req.params;
+    const deleted = deleteTempFile(filename);
+    if (!deleted) {
+      res.status(404).json({ success: false, error: `File "${filename}" not found on server.` });
+      return;
+    }
+    res.json({ success: true, message: `File "${filename}" deleted from server temporary storage.` });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to delete temp file' });
+  }
+};
+
+// 8. Delete Batch Temp Files
+export const deleteDashboardBatchTempFiles = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { filenames } = req.body;
+    if (!Array.isArray(filenames) || filenames.length === 0) {
+      res.status(400).json({ success: false, error: 'No filenames specified for batch cleanup.' });
+      return;
+    }
+
+    const result = deleteBatchTempFiles(filenames);
+    res.json({
+      success: true,
+      message: `Cleaned ${result.deletedCount} files from server temporary storage.`,
+      ...result
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to batch delete temp files' });
   }
 };
 
@@ -223,6 +388,16 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
     #toast.success { background-color: #dcfce7; color: #14532d; border: 1px solid #bbf7d0; display: block; }
     #toast.error { background-color: #fee2e2; color: #991b1b; border: 1px solid #fecaca; display: block; }
 
+    /* Modal Backdrop & Modern Approval Dialog */
+    .modal-backdrop { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(15, 23, 42, 0.7); backdrop-filter: blur(4px); z-index: 9999; display: flex; align-items: center; justify-content: center; padding: 16px; }
+    .modal-content { background-color: #ffffff; border-radius: 18px; width: 100%; max-width: 680px; max-height: 92vh; overflow-y: auto; padding: 24px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25); border: 1px solid #e2e8f0; }
+    
+    /* Tiny List Row for Pending Approvals */
+    .tiny-paper-row { background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px 14px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; cursor: pointer; transition: all 0.15s ease-in-out; }
+    .tiny-paper-row:hover { background-color: #f8fafc; border-color: #10b981; box-shadow: 0 2px 6px rgba(0,0,0,0.04); transform: translateY(-1px); }
+    .size-pill { font-size: 11px; font-weight: 700; color: #475569; background-color: #f1f5f9; padding: 2px 8px; border-radius: 6px; border: 1px solid #e2e8f0; white-space: nowrap; }
+    .btn-tiny { padding: 5px 12px; font-size: 11px; font-weight: 800; border-radius: 6px; border: none; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+
     /* Utilities */
     .hidden { display: none !important; }
     .flex-1 { flex: 1; }
@@ -251,7 +426,7 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
       <div class="header-actions">
         <div class="status-pill">
           <div class="status-dot"></div>
-          Backend API Live (Port 8080)
+          Backend API Live (Port 5000)
         </div>
         <button onclick="loadDashboardData()" class="btn-refresh">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
@@ -270,6 +445,12 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
         Pending Approvals
         <span id="badge-pending-count" class="tab-badge hidden">0</span>
+      </button>
+
+      <button id="tab-btn-temp" onclick="switchTab('temp')" class="tab-btn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+        Server Media (Temp)
+        <span id="badge-temp-count" class="tab-badge hidden">0</span>
       </button>
 
       <button id="tab-btn-stats" onclick="switchTab('stats')" class="tab-btn">
@@ -303,12 +484,15 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
           <div>
             <h2 class="card-title">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#15803d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-              Revision Materials Pending Approval
+              Revision Materials Approval Panel
             </h2>
-            <p class="card-sub">Review student uploads (Past Papers, CATs, Notes) and assign MTID numbers instantly.</p>
+            <p class="card-sub">Simple compact view. Click any material to inspect, download, edit, replace file, and approve directly to Cloudinary.</p>
           </div>
-          <div style="display: flex; align-items: center; gap: 8px;">
-            <span style="font-size: 12px; font-weight: 600; color: #64748b;">Status Filter:</span>
+          <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+            <div class="search-input-wrapper">
+              <svg class="search-input-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input type="text" id="paper-search-input" oninput="filterPapersList()" placeholder="Filter by title, code or school..." class="form-control search-input" style="width: 220px;" />
+            </div>
             <select id="paper-filter" onchange="loadDashboardData()" class="form-control" style="font-weight: 700;">
               <option value="pending">Pending Only</option>
               <option value="approved">Approved Materials</option>
@@ -316,8 +500,68 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
           </div>
         </div>
 
-        <div id="pending-papers-container" class="item-list">
-          <div style="text-align: center; padding: 48px; color: #94a3b8; font-size: 14px;">Loading pending revision materials...</div>
+        <div id="pending-papers-container" style="display: flex; flex-direction: column; gap: 8px;">
+          <div style="text-align: center; padding: 48px; color: #94a3b8; font-size: 14px;">Loading revision materials...</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB: SERVER MEDIA (TEMP) -->
+    <section id="tab-content-temp" class="tab-content hidden">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#15803d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+              Server Media Temporary Storage
+            </h2>
+            <p class="card-sub">Files uploaded by students and stored in <code>backend/uploads/temp/</code> waiting for approval or rejection.</p>
+          </div>
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <button onclick="loadTempFiles()" class="btn btn-view">
+              🔄 Refresh Storage
+            </button>
+            <button onclick="deleteSelectedTempFiles()" class="btn btn-reject">
+              🗑️ Delete Selected
+            </button>
+          </div>
+        </div>
+
+        <!-- Temp KPI Cards -->
+        <div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin-bottom: 20px;">
+          <div class="stat-card">
+            <div class="stat-label">Pending Temp Files</div>
+            <div id="temp-stat-count" class="stat-val">0</div>
+            <div class="stat-sub">Stored locally in uploads/temp</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Total Disk Space</div>
+            <div id="temp-stat-size" class="stat-val" style="color: #0284c7;">0 Bytes</div>
+            <div class="stat-sub">Clean anytime to free up server space</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Server Folder Path</div>
+            <div style="font-family: monospace; font-size: 13px; font-weight: 700; color: #15803d; margin-top: 6px;">backend/uploads/temp</div>
+            <div class="stat-sub">Served at /uploads/temp/*</div>
+          </div>
+        </div>
+
+        <div class="table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 36px;"><input type="checkbox" id="temp-select-all" onchange="toggleSelectAllTemp(this)" /></th>
+                <th>File Name</th>
+                <th>Size</th>
+                <th>Uploaded</th>
+                <th>Linked Material Status</th>
+                <th style="text-align: right;">Action</th>
+              </tr>
+            </thead>
+            <tbody id="temp-files-table-body">
+              <tr><td colspan="6" style="text-align: center; padding: 32px; color: #94a3b8;">Loading temporary server files...</td></tr>
+            </tbody>
+          </table>
         </div>
       </div>
     </section>
@@ -762,6 +1006,112 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
       </div>
     </section>
 
+    <!-- MATERIAL REVIEW, EDIT & APPROVAL MODAL -->
+    <div id="material-modal" class="modal-backdrop hidden" onclick="if(event.target === this) closeMaterialModal()">
+      <div class="modal-content">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; border-bottom: 1px solid #e2e8f0; padding-bottom: 14px;">
+          <div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span id="modal-type-badge" class="badge-tag">PAST_PAPER</span>
+              <span id="modal-mtid-badge" class="mtid-tag hidden">MTID</span>
+              <span id="modal-status-badge" style="font-size: 11px; font-weight: 800; padding: 2px 8px; border-radius: 6px; text-transform: uppercase;">STATUS</span>
+            </div>
+            <h3 id="modal-title-display" style="font-size: 18px; font-weight: 800; color: #0f172a; margin-top: 6px;">Title</h3>
+            <p id="modal-submitter-display" style="font-size: 12px; color: #64748b; margin-top: 2px;">Submitted by</p>
+          </div>
+          <button onclick="closeMaterialModal()" style="background: none; border: none; font-size: 26px; color: #64748b; cursor: pointer; line-height: 1;">&times;</button>
+        </div>
+
+        <!-- 1. Media Operations Box -->
+        <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 14px; padding: 16px; margin-bottom: 20px;">
+          <div style="font-size: 13px; font-weight: 800; color: #0f172a; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">
+            <span style="display: flex; align-items: center; gap: 6px;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#15803d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+              Document Media Management
+            </span>
+            <span id="modal-media-storage-tag" style="font-size: 11px; font-weight: 700; background: #e0f2fe; color: #0369a1; padding: 2px 8px; border-radius: 6px;">Server Temp</span>
+          </div>
+
+          <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px;">
+            <a id="modal-download-btn" href="#" download class="btn" style="background: #0284c7; color: #ffffff;">
+              📥 Download Media File
+            </a>
+            <a id="modal-preview-btn" href="#" target="_blank" class="btn btn-view">
+              👁️ Open & Preview in Tab
+            </a>
+          </div>
+
+          <!-- File Replacement tool -->
+          <div style="border-top: 1px dashed #cbd5e1; padding-top: 12px; margin-top: 12px;">
+            <div style="font-size: 12px; font-weight: 700; color: #334155; margin-bottom: 6px;">
+              🔄 Replace with Clean Media (Overwrites & deletes old temporary file):
+            </div>
+            <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center;">
+              <input type="file" id="modal-replace-input" accept=".pdf,.doc,.docx,image/*" style="font-size: 12px; flex: 1; min-width: 200px;" />
+              <button type="button" id="btn-modal-replace" onclick="handleModalFileReplace()" class="btn" style="background: #d97706; color: #ffffff;">
+                Upload Clean Copy
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 2. Metadata Editing Form -->
+        <form id="modal-edit-form" onsubmit="handleSavePaperEdits(event)" style="display: flex; flex-direction: column; gap: 14px; margin-bottom: 20px;">
+          <div style="font-size: 13px; font-weight: 800; color: #0f172a;">✏️ Edit Metadata:</div>
+
+          <div>
+            <label style="display: block; font-size: 11px; font-weight: 700; color: #475569; margin-bottom: 4px;">Unit Title *</label>
+            <input type="text" id="modal-input-title" class="form-control" style="width: 100%; font-weight: 700;" required />
+          </div>
+
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+            <div>
+              <label style="display: block; font-size: 11px; font-weight: 700; color: #475569; margin-bottom: 4px;">Course Code *</label>
+              <input type="text" id="modal-input-code" class="form-control" style="width: 100%; font-weight: 700; text-transform: uppercase;" required />
+            </div>
+            <div>
+              <label style="display: block; font-size: 11px; font-weight: 700; color: #475569; margin-bottom: 4px;">Exam Year</label>
+              <input type="number" id="modal-input-year" class="form-control" style="width: 100%;" />
+            </div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+            <div>
+              <label style="display: block; font-size: 11px; font-weight: 700; color: #475569; margin-bottom: 4px;">Material Type</label>
+              <select id="modal-input-type" class="form-control" style="width: 100%; font-weight: 700;">
+                <option value="past_paper">Past Paper</option>
+                <option value="cat">CAT Paper</option>
+                <option value="lecture_notes">Lecture Notes</option>
+                <option value="notes">Study Notes</option>
+                <option value="solution">Solutions</option>
+                <option value="revision">Revision Material</option>
+              </select>
+            </div>
+            <div>
+              <label style="display: block; font-size: 11px; font-weight: 700; color: #475569; margin-bottom: 4px;">School / Faculty</label>
+              <input type="text" id="modal-input-school" class="form-control" style="width: 100%;" />
+            </div>
+          </div>
+
+          <div style="display: flex; justify-content: flex-end;">
+            <button type="submit" id="btn-save-paper-edits" class="btn" style="background: #334155; color: #ffffff;">
+              💾 Save Metadata Edits
+            </button>
+          </div>
+        </form>
+
+        <!-- 3. Final Decision Approval / Rejection Row -->
+        <div style="border-top: 2px solid #f1f5f9; padding-top: 16px; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px;">
+          <button type="button" id="modal-btn-reject" onclick="rejectCurrentPaperFromModal()" class="btn btn-reject" style="padding: 10px 18px;">
+            ❌ Reject & Delete Temp File
+          </button>
+          <button type="button" id="modal-btn-approve" onclick="approveCurrentPaperFromModal()" class="btn btn-approve" style="padding: 10px 22px;">
+            ✨ Approve & Upload to Cloudinary
+          </button>
+        </div>
+      </div>
+    </div>
+
   </main>
 
   <footer>
@@ -1024,6 +1374,14 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
       }
     }
 
+    function formatBytes(bytes) {
+      if (!bytes || bytes === 0) return '0 Bytes';
+      const k = 1024;
+      const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+
     function renderStats(stats) {
       const onlineElem = document.getElementById('stat-online-users');
       if (onlineElem) onlineElem.innerText = stats.totalOnline || 0;
@@ -1047,6 +1405,20 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
       } else {
         pendingBadge.classList.add('hidden');
       }
+
+      // Temp files badge & stats
+      const tempBadge = document.getElementById('badge-temp-count');
+      if (stats.totalTempFiles > 0) {
+        tempBadge.innerText = stats.totalTempFiles;
+        tempBadge.classList.remove('hidden');
+      } else {
+        tempBadge.classList.add('hidden');
+      }
+
+      const tempCountElem = document.getElementById('temp-stat-count');
+      if (tempCountElem) tempCountElem.innerText = stats.totalTempFiles || 0;
+      const tempSizeElem = document.getElementById('temp-stat-size');
+      if (tempSizeElem) tempSizeElem.innerText = stats.totalTempSizeFormatted || '0 Bytes';
     }
 
     function renderPendingPapers(papers) {
@@ -1067,79 +1439,429 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
         return;
       }
 
-      container.innerHTML = filtered.map(paper => \`
-        <div class="item-card">
-          <div style="flex: 1;">
-            <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
-              <span class="badge-tag">\${paper.type?.toUpperCase()}</span>
-              \${paper.mtid ? \`<span class="mtid-tag">\${paper.mtid}</span>\` : ''}
-              <span style="font-size: 12px; font-weight: 700; color: #94a3b8;">• \${paper.unitCode || 'UNIT'}</span>
-            </div>
-            <div class="item-title">\${paper.title}</div>
-            <div class="item-meta">
-              \${paper.school || 'Moi Uni'} • \${paper.department || ''} (\${paper.unitName || ''})
-            </div>
-            <div class="item-sub">
-              Submitted by: <strong style="color: #334155;">\${paper.submittedBy?.name || 'Student'}</strong> (\${paper.submittedBy?.email || ''})
-            </div>
+      container.innerHTML = filtered.map(paper => {
+        const isApproved = paper.status === 'approved';
+        return \`
+        <div class="tiny-paper-row" onclick="openPaperModal('\${paper._id}')">
+          <div style="display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0;">
+            <span class="badge-tag" style="font-size: 10px; padding: 2px 6px;">\${paper.type?.toUpperCase() || 'DOCUMENT'}</span>
+            \${paper.mtid 
+              ? \`<span class="mtid-tag" style="font-size: 10px; padding: 2px 6px;">\${paper.mtid}</span>\` 
+              : '<span style="font-size: 10px; background: #fef3c7; color: #92400e; padding: 2px 6px; border-radius: 4px; font-weight: 800;">PENDING</span>'}
+            <span style="font-weight: 800; color: #0f172a; font-size: 13px; font-family: monospace;">\${paper.unitCode || 'UNIT'}</span>
+            <span style="color: #cbd5e1;">•</span>
+            <span style="font-weight: 700; color: #1e293b; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+              \${paper.title}
+            </span>
           </div>
 
-          <div class="btn-group">
-            <a href="\${paper.fileUrl}" target="_blank" class="btn btn-view">
-              \${SVG_FILE} View File
-            </a>
-            \${paper.status === 'pending' ? \`
-              <button onclick="approvePaper('\${paper._id}')" class="btn btn-approve">
-                \${SVG_CHECK} Approve
-              </button>
-              <button onclick="rejectPaper('\${paper._id}')" class="btn btn-reject">
-                \${SVG_CROSS} Reject
-              </button>
-            \` : \`
-              <span style="font-size: 12px; font-weight: 700; color: #15803d; background: #dcfce7; padding: 6px 12px; border-radius: 8px; border: 1px solid #bbf7d0;">
-                Approved
-              </span>
-            \`}
+          <div style="display: flex; align-items: center; gap: 10px; font-size: 11px; color: #64748b;">
+            <span style="color: #64748b;">\${paper.school ? paper.school.split('School of ')[1] || paper.school : ''}</span>
+            <span class="size-pill">\${formatBytes(paper.fileSize || 0)}</span>
+            <span style="color: #94a3b8;">\${paper.submittedBy?.name || 'Student'}</span>
+            <button class="btn btn-tiny" onclick="event.stopPropagation(); openPaperModal('\${paper._id}')" style="background: \${isApproved ? '#0284c7' : '#15803d'}; color: #ffffff;">
+              \${isApproved ? 'Inspect & Edit' : 'Review & Action ⚡'}
+            </button>
           </div>
         </div>
-      \`).join('');
+      \`;
+      }).join('');
     }
 
-    async function approvePaper(id) {
-      if (!confirm('Approve this revision material for campus public access?')) return;
+    function filterPapersList() {
+      const q = (document.getElementById('paper-search-input')?.value || '').toLowerCase().trim();
+      const filter = document.getElementById('paper-filter')?.value || 'pending';
+      const sourceList = filter === 'approved' ? (globalData?.approvedPapers || []) : (globalData?.pendingPapers || []);
+
+      if (!q) {
+        renderPendingPapers(sourceList);
+        return;
+      }
+
+      const filtered = sourceList.filter(p => 
+        (p.title && p.title.toLowerCase().includes(q)) ||
+        (p.unitCode && p.unitCode.toLowerCase().includes(q)) ||
+        (p.courseCode && p.courseCode.toLowerCase().includes(q)) ||
+        (p.school && p.school.toLowerCase().includes(q)) ||
+        (p.unitName && p.unitName.toLowerCase().includes(q))
+      );
+      renderPendingPapers(filtered);
+    }
+
+    function openPaperModal(id) {
+      const allPapers = [...(globalData?.pendingPapers || []), ...(globalData?.approvedPapers || [])];
+      const paper = allPapers.find(p => p._id === id);
+      if (!paper) {
+        showToast('Document not found in list.', true);
+        return;
+      }
+
+      currentModalPaper = paper;
+
+      // Header fields
+      document.getElementById('modal-title-display').innerText = paper.title || 'Untitled Document';
+      document.getElementById('modal-type-badge').innerText = (paper.type || 'DOCUMENT').toUpperCase();
+
+      const mtidBadge = document.getElementById('modal-mtid-badge');
+      if (paper.mtid) {
+        mtidBadge.innerText = paper.mtid;
+        mtidBadge.classList.remove('hidden');
+      } else {
+        mtidBadge.classList.add('hidden');
+      }
+
+      const statusBadge = document.getElementById('modal-status-badge');
+      statusBadge.innerText = (paper.status || 'PENDING').toUpperCase();
+      if (paper.status === 'approved') {
+        statusBadge.style.background = '#dcfce7';
+        statusBadge.style.color = '#15803d';
+      } else if (paper.status === 'rejected') {
+        statusBadge.style.background = '#fee2e2';
+        statusBadge.style.color = '#dc2626';
+      } else {
+        statusBadge.style.background = '#fef3c7';
+        statusBadge.style.color = '#b45309';
+      }
+
+      document.getElementById('modal-submitter-display').innerText = 
+        'Submitted by ' + (paper.submittedBy?.name || 'Student') + 
+        (paper.submittedBy?.email ? ' (' + paper.submittedBy.email + ')' : '') + 
+        ' on ' + new Date(paper.createdAt).toLocaleString();
+
+      // Media details & links
+      const isTemp = paper.tempFilename || paper.fileUrl?.includes('/uploads/temp/');
+      const storageTag = document.getElementById('modal-media-storage-tag');
+      if (isTemp) {
+        storageTag.innerText = '📁 Server Temp (backend/uploads/temp)';
+        storageTag.style.background = '#fef3c7';
+        storageTag.style.color = '#b45309';
+      } else {
+        storageTag.innerText = '☁️ Cloudinary CDN (MoiConnect/pdf)';
+        storageTag.style.background = '#dcfce7';
+        storageTag.style.color = '#15803d';
+      }
+
+      const downloadBtn = document.getElementById('modal-download-btn');
+      downloadBtn.href = paper.fileUrl;
+      const cleanDownloadName = (paper.unitCode || 'Paper') + '_' + (paper.title || 'file').replace(/[^a-zA-Z0-9_-]/g, '_') + '.' + (paper.fileType || 'pdf');
+      downloadBtn.setAttribute('download', cleanDownloadName);
+
+      const previewBtn = document.getElementById('modal-preview-btn');
+      previewBtn.href = paper.fileUrl;
+
+      // Form fields
+      document.getElementById('modal-input-title').value = paper.title || '';
+      document.getElementById('modal-input-code').value = paper.unitCode || paper.courseCode || '';
+      document.getElementById('modal-input-year').value = paper.examYear || 2025;
+      document.getElementById('modal-input-type').value = paper.type || 'past_paper';
+      document.getElementById('modal-input-school').value = paper.school || '';
+
+      // Reset file input
+      const replaceInput = document.getElementById('modal-replace-input');
+      if (replaceInput) replaceInput.value = '';
+
+      // Action buttons state
+      const approveBtn = document.getElementById('modal-btn-approve');
+      const rejectBtn = document.getElementById('modal-btn-reject');
+      if (paper.status === 'approved') {
+        approveBtn.innerText = '✓ Already Approved';
+        approveBtn.disabled = true;
+      } else {
+        approveBtn.innerText = '✨ Approve & Upload to Cloudinary';
+        approveBtn.disabled = false;
+      }
+
+      // Unhide modal
+      document.getElementById('material-modal').classList.remove('hidden');
+    }
+
+    function closeMaterialModal() {
+      document.getElementById('material-modal').classList.add('hidden');
+      currentModalPaper = null;
+    }
+
+    async function handleSavePaperEdits(e) {
+      e.preventDefault();
+      if (!currentModalPaper) return;
+
+      const title = document.getElementById('modal-input-title').value.trim();
+      const unitCode = document.getElementById('modal-input-code').value.trim().toUpperCase();
+      const examYear = parseInt(document.getElementById('modal-input-year').value.trim(), 10) || 2025;
+      const type = document.getElementById('modal-input-type').value;
+      const school = document.getElementById('modal-input-school').value.trim();
+
+      const btn = document.getElementById('btn-save-paper-edits');
+      btn.disabled = true;
+      btn.innerText = '⏳ Saving...';
+
       try {
-        const res = await fetch(\`/api/v1/dashboard/papers/\${id}/approve\`, { method: 'POST' });
+        const res = await fetch('/api/v1/dashboard/papers/' + currentModalPaper._id, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title,
+            courseCode: unitCode,
+            unitCode,
+            unitName: title,
+            examYear,
+            type,
+            school,
+            department: school
+          })
+        });
+
+        const json = await res.json();
+        if (json.success) {
+          showToast('Saved metadata edits!');
+          currentModalPaper = json.data;
+          document.getElementById('modal-title-display').innerText = json.data.title;
+          loadDashboardData();
+        } else {
+          showToast(json.error || 'Failed to save edits.', true);
+        }
+      } catch (err) {
+        showToast('Error saving: ' + err.message, true);
+      } finally {
+        btn.disabled = false;
+        btn.innerText = '💾 Save Metadata Edits';
+      }
+    }
+
+    async function handleModalFileReplace() {
+      if (!currentModalPaper) return;
+      const fileInput = document.getElementById('modal-replace-input');
+      if (!fileInput.files || fileInput.files.length === 0) {
+        alert('Please choose a replacement file (.pdf, .doc, image) from your device first.');
+        return;
+      }
+
+      const file = fileInput.files[0];
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const btn = document.getElementById('btn-modal-replace');
+      btn.disabled = true;
+      btn.innerText = '⏳ Uploading Replacement...';
+
+      try {
+        const res = await fetch('/api/v1/dashboard/papers/' + currentModalPaper._id + '/replace-file', {
+          method: 'POST',
+          body: formData
+        });
+
+        const json = await res.json();
+        if (json.success) {
+          showToast('Clean replacement file uploaded & old file replaced!');
+          currentModalPaper = json.data;
+          
+          // Update download & preview links
+          document.getElementById('modal-download-btn').href = json.data.fileUrl;
+          document.getElementById('modal-preview-btn').href = json.data.fileUrl;
+          fileInput.value = '';
+          
+          loadDashboardData();
+          loadTempFiles();
+        } else {
+          showToast(json.error || 'Failed to replace file.', true);
+        }
+      } catch (err) {
+        showToast('Upload error: ' + err.message, true);
+      } finally {
+        btn.disabled = false;
+        btn.innerText = 'Upload Clean Copy';
+      }
+    }
+
+    async function approveCurrentPaperFromModal() {
+      if (!currentModalPaper) return;
+      if (!confirm('Approve "' + currentModalPaper.title + '"? This will transfer the file to Cloudinary (folder: MoiConnect/pdf) and assign an MTID number.')) return;
+
+      const btn = document.getElementById('modal-btn-approve');
+      btn.disabled = true;
+      btn.innerText = '⏳ Uploading to Cloudinary & Approving...';
+
+      try {
+        const res = await fetch('/api/v1/dashboard/papers/' + currentModalPaper._id + '/approve', {
+          method: 'POST'
+        });
+
         const json = await res.json();
         if (json.success) {
           showToast(json.message);
+          closeMaterialModal();
           loadDashboardData();
+          loadTempFiles();
         } else {
           showToast(json.error || 'Approval failed', true);
         }
       } catch (err) {
         showToast('Approval error: ' + err.message, true);
+      } finally {
+        btn.disabled = false;
+        btn.innerText = '✨ Approve & Upload to Cloudinary';
       }
     }
 
-    async function rejectPaper(id) {
-      const reason = prompt('Enter rejection reason for the student:', 'Document quality is unclear or incomplete.');
+    async function rejectCurrentPaperFromModal() {
+      if (!currentModalPaper) return;
+      const reason = prompt('Enter rejection reason for student:', 'Document quality is unclear or incomplete.');
       if (reason === null) return;
 
+      const btn = document.getElementById('modal-btn-reject');
+      btn.disabled = true;
+      btn.innerText = '⏳ Rejecting & Cleaning...';
+
       try {
-        const res = await fetch(\`/api/v1/dashboard/papers/\${id}/reject\`, {
+        const res = await fetch('/api/v1/dashboard/papers/' + currentModalPaper._id + '/reject', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ reason })
         });
+
         const json = await res.json();
         if (json.success) {
           showToast(json.message);
+          closeMaterialModal();
           loadDashboardData();
+          loadTempFiles();
         } else {
           showToast(json.error || 'Rejection failed', true);
         }
       } catch (err) {
         showToast('Rejection error: ' + err.message, true);
+      } finally {
+        btn.disabled = false;
+        btn.innerText = '❌ Reject & Delete Temp File';
+      }
+    }
+
+    // SERVER MEDIA TEMP MANAGEMENT FUNCTIONS
+    async function loadTempFiles() {
+      const tbody = document.getElementById('temp-files-table-body');
+      if (!tbody) return;
+
+      try {
+        const res = await fetch('/api/v1/dashboard/temp-files');
+        const json = await res.json();
+        if (!json.success) throw new Error(json.error || 'Failed to fetch temp files');
+
+        tempFilesData = json.files || [];
+
+        const countElem = document.getElementById('temp-stat-count');
+        if (countElem) countElem.innerText = json.totalFiles || 0;
+        const sizeElem = document.getElementById('temp-stat-size');
+        if (sizeElem) sizeElem.innerText = json.totalSizeFormatted || '0 Bytes';
+
+        const tempBadge = document.getElementById('badge-temp-count');
+        if (json.totalFiles > 0) {
+          tempBadge.innerText = json.totalFiles;
+          tempBadge.classList.remove('hidden');
+        } else {
+          tempBadge.classList.add('hidden');
+        }
+
+        if (tempFilesData.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 36px; color: #94a3b8; font-size: 13px;">No temporary media files on server disk. Everything is clean! 🟢</td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = tempFilesData.map(f => {
+          const linked = f.associatedPaper;
+          return \`
+            <tr>
+              <td>
+                <input type="checkbox" class="temp-file-cb" data-filename="\${f.filename}" />
+              </td>
+              <td style="font-family: monospace; font-size: 12px; font-weight: 700; color: #0f172a;">
+                <div style="display: flex; align-items: center; gap: 6px;">
+                  <span>📄</span>
+                  <span title="\${f.filename}">\${f.filename}</span>
+                </div>
+              </td>
+              <td style="font-weight: 700; color: #475569;">\${f.sizeFormatted}</td>
+              <td style="color: #64748b; font-size: 12px;">\${new Date(f.modifiedAt).toLocaleString()}</td>
+              <td>
+                \${linked ? \`
+                  <span style="font-size: 11px; font-weight: 700; color: #15803d; background: #dcfce7; padding: 3px 8px; border-radius: 6px;">
+                    📌 \${linked.unitCode || 'Paper'}: \${linked.title || ''} (\${linked.status.toUpperCase()})
+                  </span>
+                \` : \`
+                  <span style="font-size: 11px; font-weight: 700; color: #b45309; background: #fef3c7; padding: 3px 8px; border-radius: 6px;">
+                    ⚠️ Unlinked / Orphaned
+                  </span>
+                \`}
+              </td>
+              <td style="text-align: right;">
+                <div style="display: inline-flex; gap: 6px;">
+                  <a href="\${f.fileUrl}" download="\${f.filename}" class="btn btn-tiny" style="background: #0284c7; color: #ffffff;">
+                    📥 Download
+                  </a>
+                  <button onclick="deleteSingleTemp('\${f.filename}')" class="btn btn-tiny" style="background: #fee2e2; color: #dc2626; border: 1px solid #fecaca;">
+                    🗑️ Delete
+                  </button>
+                </div>
+              </td>
+            </tr>
+          \`;
+        }).join('');
+      } catch (err) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 24px; color: #dc2626;">Error loading temporary files: ' + err.message + '</td></tr>';
+      }
+    }
+
+    function toggleSelectAllTemp(masterCheckbox) {
+      const checkboxes = document.querySelectorAll('.temp-file-cb');
+      checkboxes.forEach(cb => cb.checked = masterCheckbox.checked);
+    }
+
+    async function deleteSelectedTempFiles() {
+      const checkedBoxes = Array.from(document.querySelectorAll('.temp-file-cb:checked'));
+      if (checkedBoxes.length === 0) {
+        alert('Please select at least one file to clean.');
+        return;
+      }
+
+      const filenames = checkedBoxes.map(cb => cb.dataset.filename);
+      if (!confirm('Are you sure you want to permanently delete ' + filenames.length + ' temporary file(s) from the server disk?')) return;
+
+      try {
+        const res = await fetch('/api/v1/dashboard/temp-files/delete-batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filenames })
+        });
+
+        const json = await res.json();
+        if (json.success) {
+          showToast(json.message);
+          loadTempFiles();
+          loadDashboardData();
+        } else {
+          showToast(json.error || 'Failed to delete files', true);
+        }
+      } catch (err) {
+        showToast('Error during cleanup: ' + err.message, true);
+      }
+    }
+
+    async function deleteSingleTemp(filename) {
+      if (!confirm('Permanently delete temporary file "' + filename + '" from server disk?')) return;
+
+      try {
+        const res = await fetch('/api/v1/dashboard/temp-files/' + encodeURIComponent(filename), {
+          method: 'DELETE'
+        });
+
+        const json = await res.json();
+        if (json.success) {
+          showToast(json.message);
+          loadTempFiles();
+          loadDashboardData();
+        } else {
+          showToast(json.error || 'Failed to delete file', true);
+        }
+      } catch (err) {
+        showToast('Error deleting file: ' + err.message, true);
       }
     }
 

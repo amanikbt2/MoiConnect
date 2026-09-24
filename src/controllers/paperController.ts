@@ -58,8 +58,9 @@ export const getPaperById = async (req: AuthenticatedRequest, res: Response): Pr
 
     // Unapproved papers can only be viewed by submitter or admin
     if (paper.status !== 'approved') {
-      const isSubmitter = req.user && paper.submittedBy._id.toString() === req.user._id.toString();
-      const isAdmin = req.user && req.user.roles.includes('admin');
+      const submitterId = paper.submittedBy ? ((paper.submittedBy as any)._id || paper.submittedBy).toString() : null;
+      const isSubmitter = !!(req.user && submitterId && submitterId === req.user._id.toString());
+      const isAdmin = !!(req.user && req.user.roles.includes('admin'));
       if (!isSubmitter && !isAdmin) {
         res.status(403).json({ success: false, error: 'This academic resource is pending approval.' });
         return;
@@ -72,13 +73,48 @@ export const getPaperById = async (req: AuthenticatedRequest, res: Response): Pr
   }
 };
 
+export const uploadPaperFile = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.file) {
+      res.status(400).json({ success: false, error: 'No file uploaded' });
+      return;
+    }
+
+    const host = req.get('host') || 'localhost:5000';
+    const protocol = req.protocol || 'http';
+    const relativeUrl = `/uploads/temp/${req.file.filename}`;
+    const fullUrl = `${protocol}://${host}${relativeUrl}`;
+
+    res.status(201).json({
+      success: true,
+      message: 'File temporarily saved to server for admin verification.',
+      data: {
+        tempFilename: req.file.filename,
+        originalName: req.file.originalname,
+        fileUrl: fullUrl,
+        relativeUrl,
+        fileSize: req.file.size,
+        fileType: req.file.originalname.endsWith('.pdf') ? 'pdf' : (req.file.originalname.endsWith('.docx') || req.file.originalname.endsWith('.doc') ? 'doc' : 'image')
+      }
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'File upload failed' });
+  }
+};
+
 export const createPaper = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const input: CreatePaperInput = req.body;
     const userId = req.user ? req.user._id : undefined;
 
+    let tempFilename = (input as any).tempFilename;
+    if (!tempFilename && input.fileUrl && input.fileUrl.includes('/uploads/temp/')) {
+      tempFilename = input.fileUrl.split('/uploads/temp/')[1]?.split('?')[0];
+    }
+
     const newPaper = await Paper.create({
       ...input,
+      tempFilename,
       submittedBy: userId,
       status: 'pending',
       downloads: 0

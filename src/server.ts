@@ -20,6 +20,10 @@ app.use(express.static(path.join(__dirname, '../public')));
 app.use(express.static(path.join(__dirname, '../../public')));
 app.use(express.static(path.join(process.cwd(), 'public')));
 
+// Serve temporary and uploaded files
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+
 // Security & Utility Middlewares
 app.use(helmet({
   crossOriginResourcePolicy: false,

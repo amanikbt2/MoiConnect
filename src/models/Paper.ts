@@ -16,6 +16,7 @@ export interface IPaperDocument extends Document {
   examYear?: number;
   fileUrl: string;
   publicId?: string;
+  tempFilename?: string;
   fileType: string;
   fileSize?: number;
   submittedBy?: mongoose.Types.ObjectId;
@@ -47,6 +48,7 @@ const paperSchema = new Schema<IPaperDocument>(
     examYear: { type: Number },
     fileUrl: { type: String, required: true },
     publicId: { type: String },
+    tempFilename: { type: String, trim: true },
     fileType: { type: String, default: 'pdf' },
     fileSize: { type: Number },
     submittedBy: { type: Schema.Types.ObjectId, ref: 'User', required: false },
