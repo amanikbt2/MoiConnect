@@ -8,10 +8,10 @@ import { RegisterInput, LoginInput, RequestLandlordInput } from '@moi/shared';
 
 const generateTokens = (userId: string) => {
   const accessToken = jwt.sign({ userId }, config.jwtAccessSecret, {
-    expiresIn: 15 * 60 // 15 minutes
+    expiresIn: 30 * 24 * 60 * 60 // 30 days (1 month)
   });
   const refreshToken = jwt.sign({ userId }, config.jwtRefreshSecret, {
-    expiresIn: 7 * 24 * 60 * 60 // 7 days
+    expiresIn: 30 * 24 * 60 * 60 // 30 days (1 month)
   });
   return { accessToken, refreshToken };
 };
