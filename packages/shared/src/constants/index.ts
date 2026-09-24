@@ -12,7 +12,7 @@ export const MOI_SCHOOLS = [
   'School of Agriculture & Natural Resources'
 ] as const;
 
-export const PAPER_TYPES = ['past_paper', 'cat', 'revision', 'notes'] as const;
+export const PAPER_TYPES = ['past_paper', 'cat', 'revision', 'notes', 'solution', 'lecture_notes'] as const;
 
 export const PROPERTY_TYPES = ['bedsetter', 'single_room', 'hostel', 'apartment', 'other'] as const;
 

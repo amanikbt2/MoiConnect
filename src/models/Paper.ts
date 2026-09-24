@@ -18,7 +18,7 @@ export interface IPaperDocument extends Document {
   publicId?: string;
   fileType: string;
   fileSize?: number;
-  submittedBy: mongoose.Types.ObjectId;
+  submittedBy?: mongoose.Types.ObjectId;
   status: PaperStatus;
   rejectionReason?: string;
   reviewedBy?: mongoose.Types.ObjectId;
@@ -34,7 +34,7 @@ const paperSchema = new Schema<IPaperDocument>(
     description: { type: String, trim: true },
     type: {
       type: String,
-      enum: ['past_paper', 'cat', 'revision', 'notes'],
+      enum: ['past_paper', 'cat', 'revision', 'notes', 'solution', 'lecture_notes'],
       required: true
     },
     school: { type: String, required: true, trim: true },
@@ -49,7 +49,7 @@ const paperSchema = new Schema<IPaperDocument>(
     publicId: { type: String },
     fileType: { type: String, default: 'pdf' },
     fileSize: { type: Number },
-    submittedBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    submittedBy: { type: Schema.Types.ObjectId, ref: 'User', required: false },
     status: {
       type: String,
       enum: ['pending', 'approved', 'rejected'],

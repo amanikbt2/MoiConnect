@@ -75,16 +75,16 @@ export const getPaperById = async (req: AuthenticatedRequest, res: Response): Pr
 export const createPaper = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const input: CreatePaperInput = req.body;
-    const user = req.user!;
+    const userId = req.user ? req.user._id : undefined;
 
     const newPaper = await Paper.create({
       ...input,
-      submittedBy: user._id,
+      submittedBy: userId,
       status: 'pending',
       downloads: 0
     });
 
-    const populated = await newPaper.populate('submittedBy', 'name email avatarUrl');
+    const populated = userId ? await newPaper.populate('submittedBy', 'name email avatarUrl') : newPaper;
 
     res.status(201).json({
       success: true,

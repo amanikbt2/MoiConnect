@@ -41,6 +41,31 @@ export const authenticate = async (
   }
 };
 
+export const optionalAuthenticate = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      try {
+        const decoded = jwt.verify(token, config.jwtAccessSecret) as { userId: string };
+        const user = await User.findById(decoded.userId);
+        if (user && user.accountStatus !== 'suspended') {
+          req.user = user;
+        }
+      } catch (e) {
+        // ignore invalid token for optional auth
+      }
+    }
+    next();
+  } catch (error) {
+    next();
+  }
+};
+
 export const requireRole = (...roles: UserRole[]) => {
   return (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
     if (!req.user) {

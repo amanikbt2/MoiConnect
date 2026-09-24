@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { authenticate, requireRole, requireLandlordVerified } from '../middleware/auth';
+import { authenticate, optionalAuthenticate, requireRole, requireLandlordVerified } from '../middleware/auth';
 import { validateBody } from '../middleware/validate';
 import {
   registerSchema,
@@ -64,7 +64,7 @@ router.delete('/auth/delete-account', authenticate, authController.deleteAccount
 router.get('/papers', paperController.getPapers);
 router.get('/papers/my-submissions', authenticate, paperController.getMySubmissions);
 router.get('/papers/:id', paperController.getPaperById);
-router.post('/papers', authenticate, validateBody(createPaperSchema), paperController.createPaper);
+router.post('/papers', optionalAuthenticate, validateBody(createPaperSchema), paperController.createPaper);
 router.post('/papers/:id/download', paperController.downloadPaper);
 
 // Rental Marketplace Routes

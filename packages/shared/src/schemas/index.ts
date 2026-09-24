@@ -35,11 +35,11 @@ export const createPaperSchema = z.object({
   unitName: z.string().min(2, 'Unit name is required'),
   academicYear: z.string().optional(),
   semester: z.string().optional(),
-  examYear: z.number().int().min(2000).max(2030).optional(),
-  fileUrl: z.string().url('Valid file URL is required'),
+  examYear: z.union([z.number(), z.string()]).optional().transform((val) => typeof val === 'string' ? parseInt(val, 10) || 2025 : val),
+  fileUrl: z.string().min(1, 'Valid file URL is required'),
   publicId: z.string().optional(),
   fileType: z.string().default('pdf'),
-  fileSize: z.number().optional()
+  fileSize: z.union([z.number(), z.string()]).optional()
 });
 
 export const reviewPaperSchema = z.object({
