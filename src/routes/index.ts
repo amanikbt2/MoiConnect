@@ -50,6 +50,8 @@ router.post('/dashboard/papers/:id/replace-file', tempUpload.single('file'), das
 router.get('/dashboard/temp-files', dashboardController.getDashboardTempFiles);
 router.delete('/dashboard/temp-files/:filename', dashboardController.deleteDashboardTempFile);
 router.post('/dashboard/temp-files/delete-batch', dashboardController.deleteDashboardBatchTempFiles);
+router.get('/dashboard/community-messages', dashboardController.getDashboardCommunityMessages);
+router.delete('/dashboard/community-messages', dashboardController.deleteDashboardCommunityMessages);
 
 // Push Notification & Bell Inbox Routes
 router.post('/notifications/register-token', notificationController.registerDeviceToken);

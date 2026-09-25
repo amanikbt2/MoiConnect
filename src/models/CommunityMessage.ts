@@ -15,6 +15,7 @@ export interface IReplyTo {
 }
 
 export interface ICommunityMessage extends Document {
+  clientMsgId?: string;
   senderId: Types.ObjectId;
   senderName: string;
   senderFaculty: string;
@@ -29,6 +30,7 @@ export interface ICommunityMessage extends Document {
 
 const communityMessageSchema = new Schema<ICommunityMessage>(
   {
+    clientMsgId: { type: String, index: true },
     senderId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     senderName: { type: String, required: true },
     senderFaculty: { type: String, default: 'Moi University Student' },

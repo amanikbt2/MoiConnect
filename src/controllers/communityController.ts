@@ -37,7 +37,7 @@ export const getCommunityMessages = async (req: Request, res: Response): Promise
 // 2. Post Community Message via HTTP Fallback
 export const postCommunityMessage = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { text, fileAttachment, replyTo, senderName, senderFaculty, avatarBg } = req.body;
+    const { clientMsgId, text, fileAttachment, replyTo, senderName, senderFaculty, avatarBg, senderId } = req.body;
     const user = (req as any).user;
 
     if (!text?.trim() && !fileAttachment) {
@@ -45,30 +45,38 @@ export const postCommunityMessage = async (req: Request, res: Response): Promise
       return;
     }
 
-    const message = await CommunityMessage.create({
-      senderId: user?._id || '60d0fe4f5311236168a109ca',
-      senderName: senderName || user?.name || 'Moi Student',
-      senderFaculty: senderFaculty || 'School of Science & Computing',
-      avatarBg: avatarBg || '#15803d',
-      text: text?.trim() || '',
-      fileAttachment,
-      replyTo,
-      reactions: {}
-    });
-
-    // Broadcast via Socket.IO real-time channel
-    const io = getSocketIO();
-    if (io) {
-      io.to('community_room').emit('community:receive_message', message);
+    let message;
+    if (clientMsgId) {
+      message = await CommunityMessage.findOne({ clientMsgId });
     }
 
-    // Trigger Background Push Notifications to offline devices
-    dispatchPushNotification({
-      title: `💬 ${message.senderName}`,
-      body: message.text ? message.text.slice(0, 100) : `📎 Sent a file: ${message.fileAttachment?.name || 'Attachment'}`,
-      target: 'all',
-      data: { screen: 'community', channelId: 'community_chat' }
-    }).catch(() => {});
+    if (!message) {
+      message = await CommunityMessage.create({
+        clientMsgId,
+        senderId: user?._id || senderId || '60d0fe4f5311236168a109ca',
+        senderName: senderName || user?.name || 'Moi Student',
+        senderFaculty: senderFaculty || 'School of Science & Computing',
+        avatarBg: avatarBg || '#15803d',
+        text: text?.trim() || '',
+        fileAttachment,
+        replyTo,
+        reactions: {}
+      });
+
+      // Broadcast via Socket.IO real-time channel
+      const io = getSocketIO();
+      if (io) {
+        io.to('community_room').emit('community:receive_message', message);
+      }
+
+      // Trigger Background Push Notifications to offline devices
+      dispatchPushNotification({
+        title: `💬 ${message.senderName}`,
+        body: message.text ? message.text.slice(0, 100) : `📎 Sent a file: ${message.fileAttachment?.name || 'Attachment'}`,
+        target: 'all',
+        data: { screen: 'community', channelId: 'community_chat' }
+      }).catch(() => {});
+    }
 
     res.status(201).json({
       success: true,

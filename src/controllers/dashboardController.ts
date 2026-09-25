@@ -5,6 +5,8 @@ import { User } from '../models/User';
 import { Paper } from '../models/Paper';
 import { House } from '../models/House';
 import { Report } from '../models/Report';
+import { CommunityMessage } from '../models/CommunityMessage';
+import cloudinary from '../config/cloudinary';
 import { getOnlineStats } from '../socket';
 import {
   listTempFiles,
@@ -346,6 +348,86 @@ export const downloadPaperFile = async (req: Request, res: Response): Promise<vo
     res.redirect(paper.fileUrl);
   } catch (error: any) {
     res.status(500).send('Download error: ' + error.message);
+  }
+};
+
+// Helper to extract Cloudinary Public ID from URL
+const extractCloudinaryPublicId = (url: string): string | null => {
+  if (!url || !url.includes('res.cloudinary.com')) return null;
+  try {
+    const parts = url.split('/upload/');
+    if (parts.length < 2) return null;
+    let pathStr = parts[1];
+    if (/^v\d+\//.test(pathStr)) {
+      pathStr = pathStr.replace(/^v\d+\//, '');
+    }
+    const lastDot = pathStr.lastIndexOf('.');
+    if (lastDot !== -1) {
+      pathStr = pathStr.substring(0, lastDot);
+    }
+    return decodeURIComponent(pathStr);
+  } catch (e) {
+    return null;
+  }
+};
+
+// JSON API: Fetch all community messages for admin management
+export const getDashboardCommunityMessages = async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const messages = await CommunityMessage.find().sort({ createdAt: -1 }).limit(500);
+    const mediaCount = messages.filter(m => !!m.fileAttachment?.url).length;
+
+    res.json({
+      success: true,
+      count: messages.length,
+      mediaCount,
+      data: messages
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to fetch community messages' });
+  }
+};
+
+// JSON API: Delete single or batch community messages (wipes MongoDB + Cloudinary media)
+export const deleteDashboardCommunityMessages = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { ids } = req.body;
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      res.status(400).json({ success: false, error: 'No message IDs provided for deletion.' });
+      return;
+    }
+
+    const messages = await CommunityMessage.find({ _id: { $in: ids } });
+    let deletedMediaCount = 0;
+
+    // Wipe associated media attachments from Cloudinary storage
+    for (const msg of messages) {
+      if (msg.fileAttachment?.url) {
+        const publicId = extractCloudinaryPublicId(msg.fileAttachment.url);
+        if (publicId) {
+          try {
+            await cloudinary.uploader.destroy(publicId, { resource_type: 'raw' });
+            await cloudinary.uploader.destroy(publicId, { resource_type: 'image' });
+            await cloudinary.uploader.destroy(publicId, { resource_type: 'video' });
+            deletedMediaCount++;
+          } catch (cloudErr) {
+            console.error(`[Admin Community Delete] Cloudinary destroy failed for ${publicId}:`, cloudErr);
+          }
+        }
+      }
+    }
+
+    // Delete from MongoDB database completely with no trace
+    await CommunityMessage.deleteMany({ _id: { $in: ids } });
+
+    res.json({
+      success: true,
+      message: `Successfully deleted ${messages.length} message(s) and wiped ${deletedMediaCount} Cloudinary media file(s) with zero trace!`,
+      deletedCount: messages.length,
+      deletedMediaCount
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to delete community messages' });
   }
 };
 
@@ -996,6 +1078,12 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
         <span id="badge-temp-count" class="tab-badge hidden">0</span>
       </button>
 
+      <button id="tab-btn-community" onclick="switchTab('community')" class="tab-btn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        Community Chat
+        <span id="badge-community-count" class="tab-badge hidden">0</span>
+      </button>
+
       <button id="tab-btn-stats" onclick="switchTab('stats')" class="tab-btn">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>
         Stats & Registered Users
@@ -1103,6 +1191,70 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
             </thead>
             <tbody id="temp-files-table-body">
               <tr><td colspan="6" style="text-align: center; padding: 32px; color: #94a3b8;">Loading temporary server files...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB: COMMUNITY CHAT MESSAGES -->
+    <section id="tab-content-community" class="tab-content hidden">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#15803d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              Community Chat Messages Management
+            </h2>
+            <p class="card-sub">Inspect all community chat messages, search, and completely wipe unwanted messages and Cloudinary media attachments with zero trace.</p>
+          </div>
+          <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+            <div class="search-input-wrapper">
+              <svg class="search-input-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input type="text" id="community-search-input" oninput="filterCommunityMessages()" placeholder="Search sender, message, media..." class="form-control search-input" style="width: 220px;" />
+            </div>
+            <button onclick="loadCommunityMessagesAdmin()" class="btn btn-view">
+              🔄 Refresh Chat
+            </button>
+            <button onclick="deleteSelectedCommunityMessages()" class="btn btn-reject">
+              🗑️ Delete Selected Messages
+            </button>
+          </div>
+        </div>
+
+        <!-- Community KPI Stats Grid -->
+        <div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin-bottom: 20px;">
+          <div class="stat-card">
+            <div class="stat-label">Total Messages</div>
+            <div id="community-stat-total" class="stat-val">0</div>
+            <div class="stat-sub">Stored in MongoDB CommunityMessages</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Media Attachments</div>
+            <div id="community-stat-media" class="stat-val" style="color: #0284c7;">0</div>
+            <div class="stat-sub">Photos, PDFs, Docs on Cloudinary</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Cloudinary Media Folder</div>
+            <div style="font-family: monospace; font-size: 13px; font-weight: 700; color: #15803d; margin-top: 6px;">moiconnect/chat_media</div>
+            <div class="stat-sub">Zero-trace complete wipe option</div>
+          </div>
+        </div>
+
+        <div class="table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 36px;"><input type="checkbox" id="community-select-all" onchange="toggleSelectAllCommunity(this)" /></th>
+                <th>Sender</th>
+                <th>Message Content / System Notice</th>
+                <th>Attachment / Media</th>
+                <th>Sent Date & Time</th>
+                <th style="text-align: right;">Action</th>
+              </tr>
+            </thead>
+            <tbody id="community-messages-table-body">
+              <tr><td colspan="6" style="text-align: center; padding: 32px; color: #94a3b8;">Loading community messages...</td></tr>
             </tbody>
           </table>
         </div>
@@ -1740,6 +1892,8 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
     const SVG_CROSS = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
     const SVG_FILE = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>';
 
+    let globalCommunityMessages = [];
+
     function switchTab(tabId) {
       document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
       document.querySelectorAll('.tab-content').forEach(content => content.classList.add('hidden'));
@@ -1750,6 +1904,10 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
       if (tabId === 'push') {
         loadPopupHistory();
         loadPushHistory();
+      } else if (tabId === 'community') {
+        loadCommunityMessagesAdmin();
+      } else if (tabId === 'temp') {
+        loadTempFiles();
       }
     }
 
@@ -2902,6 +3060,160 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
         \`).join('');
       } catch (err) {
         console.error('Failed to load push history:', err);
+      }
+    }
+
+    async function loadCommunityMessagesAdmin() {
+      const tbody = document.getElementById('community-messages-table-body');
+      if (!tbody) return;
+
+      try {
+        const res = await fetch('/api/v1/dashboard/community-messages');
+        const json = await res.json();
+        if (!json.success || !json.data) {
+          tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 24px; color: #dc2626;">Failed to load community messages: ' + (json.error || 'Unknown error') + '</td></tr>';
+          return;
+        }
+
+        globalCommunityMessages = json.data || [];
+
+        const totalElem = document.getElementById('community-stat-total');
+        if (totalElem) totalElem.innerText = json.count || 0;
+        const mediaElem = document.getElementById('community-stat-media');
+        if (mediaElem) mediaElem.innerText = json.mediaCount || 0;
+
+        const badgeElem = document.getElementById('badge-community-count');
+        if (badgeElem) {
+          if (json.count > 0) {
+            badgeElem.innerText = json.count;
+            badgeElem.classList.remove('hidden');
+          } else {
+            badgeElem.classList.add('hidden');
+          }
+        }
+
+        renderCommunityMessagesTable(globalCommunityMessages);
+      } catch (err) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 24px; color: #dc2626;">Error loading community messages: ' + err.message + '</td></tr>';
+      }
+    }
+
+    function renderCommunityMessagesTable(messages) {
+      const tbody = document.getElementById('community-messages-table-body');
+      if (!tbody) return;
+
+      if (!messages || messages.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 36px; color: #94a3b8; font-size: 13px;">No community messages found.</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = messages.map(function(m) {
+        const isSystem = m.type === 'system_notice';
+        const senderName = isSystem ? 'System Notice' : (m.senderName || 'Anonymous');
+        const senderRole = isSystem ? 'SYSTEM' : (m.senderRole || 'student').toUpperCase();
+        
+        let senderHtml = '<div style="display: flex; align-items: center; gap: 8px;">' +
+          '<div style="width: 28px; height: 28px; border-radius: 50%; background: ' + (isSystem ? '#3b82f6' : '#15803d') + '; color: #ffffff; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 800;">' +
+            (isSystem ? '⚙️' : senderName[0].toUpperCase()) +
+          '</div>' +
+          '<div>' +
+            '<div style="font-weight: 700; color: #0f172a; font-size: 12px;">' + senderName + '</div>' +
+            '<div style="font-size: 10px; font-weight: 800; color: ' + (isSystem ? '#2563eb' : '#64748b') + ';">' + senderRole + '</div>' +
+          '</div>' +
+        '</div>';
+
+        let contentHtml = '<div style="color: #334155; font-size: 13px; font-weight: 600;">' + (m.message || '<em style="color:#94a3b8;">No text message</em>') + '</div>';
+        if (m.replyTo) {
+          contentHtml = '<div style="font-size: 11px; color: #64748b; background: #f1f5f9; padding: 3px 6px; border-radius: 4px; margin-bottom: 4px;">↩️ Replying to: ' + (m.replyTo.senderName || 'user') + '</div>' + contentHtml;
+        }
+
+        let mediaHtml = '<span style="color: #94a3b8; font-size: 11px;">None</span>';
+        if (m.fileAttachment && m.fileAttachment.url) {
+          const fileType = (m.fileAttachment.fileType || 'file').toUpperCase();
+          const fileName = m.fileAttachment.fileName || 'Attachment';
+          const isImg = ['IMAGE', 'JPG', 'PNG', 'WEBP', 'GIF'].includes(fileType);
+
+          mediaHtml = '<div style="display: flex; align-items: center; gap: 8px;">' +
+            (isImg ? '<img src="' + m.fileAttachment.url + '" style="width: 36px; height: 36px; border-radius: 6px; object-fit: cover; border: 1px solid #cbd5e1;" />' : '') +
+            '<div>' +
+              '<a href="' + m.fileAttachment.url + '" target="_blank" download style="font-weight: 700; font-size: 11px; color: #0284c7; text-decoration: none;">' +
+                '📎 ' + fileName +
+              '</a>' +
+              '<div style="font-size: 10px; font-weight: 800; color: #64748b;">' + fileType + ' • ' + formatBytes(m.fileAttachment.fileSize || 0) + '</div>' +
+            '</div>' +
+          '</div>';
+        }
+
+        return '<tr>' +
+          '<td><input type="checkbox" class="community-msg-cb" data-id="' + m._id + '" /></td>' +
+          '<td>' + senderHtml + '</td>' +
+          '<td style="max-width: 340px; word-break: break-word;">' + contentHtml + '</td>' +
+          '<td>' + mediaHtml + '</td>' +
+          '<td style="color: #64748b; font-size: 11px;">' + new Date(m.createdAt).toLocaleString() + '</td>' +
+          '<td style="text-align: right;">' +
+            '<button onclick="deleteSingleCommunityMessage(\'' + m._id + '\')" class="btn btn-tiny" style="background: #fee2e2; color: #dc2626; border: 1px solid #fecaca;">' +
+              '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>' +
+              ' Wipe' +
+            '</button>' +
+          '</td>' +
+        '</tr>';
+      }).join('');
+    }
+
+    function toggleSelectAllCommunity(masterCheckbox) {
+      const checkboxes = document.querySelectorAll('.community-msg-cb');
+      checkboxes.forEach(cb => cb.checked = masterCheckbox.checked);
+    }
+
+    function filterCommunityMessages() {
+      const q = (document.getElementById('community-search-input')?.value || '').toLowerCase().trim();
+      if (!q) {
+        renderCommunityMessagesTable(globalCommunityMessages);
+        return;
+      }
+
+      const filtered = globalCommunityMessages.filter(m =>
+        (m.senderName && m.senderName.toLowerCase().includes(q)) ||
+        (m.message && m.message.toLowerCase().includes(q)) ||
+        (m.fileAttachment?.fileName && m.fileAttachment.fileName.toLowerCase().includes(q))
+      );
+      renderCommunityMessagesTable(filtered);
+    }
+
+    function deleteSingleCommunityMessage(id) {
+      executeCommunityDelete([id]);
+    }
+
+    function deleteSelectedCommunityMessages() {
+      const checked = Array.from(document.querySelectorAll('.community-msg-cb:checked'));
+      if (checked.length === 0) {
+        alert('Please select at least one community message to delete.');
+        return;
+      }
+      const ids = checked.map(cb => cb.dataset.id);
+      executeCommunityDelete(ids);
+    }
+
+    async function executeCommunityDelete(ids) {
+      if (!ids || ids.length === 0) return;
+      if (!confirm('Completely delete and wipe ' + ids.length + ' community message(s) from MongoDB and Cloudinary storage? Zero trace will remain.')) return;
+
+      try {
+        const res = await fetch('/api/v1/dashboard/community-messages', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids })
+        });
+
+        const json = await res.json();
+        if (json.success) {
+          showToast(json.message);
+          loadCommunityMessagesAdmin();
+        } else {
+          showToast(json.error || 'Failed to delete community messages', true);
+        }
+      } catch (err) {
+        showToast('Delete error: ' + err.message, true);
       }
     }
 

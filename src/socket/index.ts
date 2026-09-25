@@ -1,4 +1,5 @@
 import { Server as SocketIOServer, Socket } from 'socket.io';
+import { Types } from 'mongoose';
 import jwt from 'jsonwebtoken';
 import { config } from '../config';
 import { User } from '../models/User';
@@ -118,6 +119,8 @@ export const setupSocketIO = (io: SocketIOServer): void => {
 
     // Real-Time Community Chat Socket Handler
     socket.on('community:send_message', async (data: {
+      clientMsgId?: string;
+      senderId?: string;
       text: string;
       fileAttachment?: any;
       replyTo?: any;
@@ -126,12 +129,25 @@ export const setupSocketIO = (io: SocketIOServer): void => {
       avatarBg?: string;
     }) => {
       try {
-        const { text, fileAttachment, replyTo, senderName, senderFaculty, avatarBg } = data;
+        const { clientMsgId, text, fileAttachment, replyTo, senderName, senderFaculty, avatarBg } = data;
         if (!text?.trim() && !fileAttachment) return;
+
+        if (clientMsgId) {
+          const existing = await CommunityMessage.findOne({ clientMsgId });
+          if (existing) {
+            socket.to('community_room').emit('community:receive_message', existing);
+            socket.emit('community:receive_message', existing);
+            return;
+          }
+        }
 
         let name = senderName || 'Moi Student';
         let faculty = senderFaculty || 'School of Science & Computing';
         let bg = avatarBg || '#15803d';
+
+        const sId = (userId && Types.ObjectId.isValid(userId))
+          ? userId
+          : ((data.senderId && Types.ObjectId.isValid(data.senderId)) ? data.senderId : new Types.ObjectId('60d0fe4f5311236168a109ca'));
 
         if (userId) {
           const u = await User.findById(userId).select('name');
@@ -141,7 +157,8 @@ export const setupSocketIO = (io: SocketIOServer): void => {
         }
 
         const newCommunityMsg = await CommunityMessage.create({
-          senderId: userId || '60d0fe4f5311236168a109ca',
+          clientMsgId,
+          senderId: sId,
           senderName: name,
           senderFaculty: faculty,
           avatarBg: bg,
@@ -151,8 +168,10 @@ export const setupSocketIO = (io: SocketIOServer): void => {
           reactions: {}
         });
 
-        // Broadcast to all other connected clients in community_room (excluding sender socket)
+        // Broadcast to all other connected clients in community_room
         socket.to('community_room').emit('community:receive_message', newCommunityMsg);
+        // Also emit back to sender socket so client receives official DB _id
+        socket.emit('community:receive_message', newCommunityMsg);
       } catch (err: any) {
         console.error('[Socket Community Message Error]:', err);
       }
