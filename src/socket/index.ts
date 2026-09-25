@@ -101,6 +101,21 @@ export const setupSocketIO = (io: SocketIOServer): void => {
     // Auto-join open community broadcast room
     socket.join('community_room');
 
+    // Broadcast system connection pill notice if user is authenticated
+    if (userId) {
+      User.findById(userId).select('name').then(u => {
+        if (u) {
+          socket.to('community_room').emit('community:system_event', {
+            id: `sys_conn_${socket.id}_${Date.now()}`,
+            event: 'user_connected',
+            userName: u.name,
+            text: `${u.name} logged into MoiConnect`,
+            timestamp: new Date().toISOString()
+          });
+        }
+      }).catch(() => {});
+    }
+
     // Real-Time Community Chat Socket Handler
     socket.on('community:send_message', async (data: {
       text: string;
@@ -232,6 +247,19 @@ export const setupSocketIO = (io: SocketIOServer): void => {
     socket.on('disconnect', () => {
       activeSockets.delete(socket.id);
       console.log(`[Socket Disconnected]: ${isGuest ? 'Guest (Unknown)' : `User ${userId}`} (Active: ${activeSockets.size})`);
+      if (userId) {
+        User.findById(userId).select('name').then(u => {
+          if (u) {
+            socket.to('community_room').emit('community:system_event', {
+              id: `sys_disc_${socket.id}_${Date.now()}`,
+              event: 'user_disconnected',
+              userName: u.name,
+              text: `${u.name} went offline`,
+              timestamp: new Date().toISOString()
+            });
+          }
+        }).catch(() => {});
+      }
     });
   });
 };
