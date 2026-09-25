@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { CommunityMessage } from '../models/CommunityMessage';
 import { getSocketIO } from '../socket';
 import { dispatchPushNotification } from '../services/pushNotificationService';
+import { uploadTempFileToCloudinary } from '../services/tempFileService';
 
 // 1. Get Community Messages (Support Incremental Delta Sync via ?since=)
 export const getCommunityMessages = async (req: Request, res: Response): Promise<void> => {
@@ -120,5 +121,46 @@ export const toggleCommunityReaction = async (req: Request, res: Response): Prom
     });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message || 'Failed to react to message' });
+  }
+};
+
+// 4. Upload Community Chat Media File to Cloudinary (folder: moiconnect/chat_media)
+export const uploadCommunityMedia = async (req: Request, res: Response): Promise<void> => {
+  try {
+    if (!req.file) {
+      res.status(400).json({ success: false, error: 'No media file provided.' });
+      return;
+    }
+
+    const file = req.file;
+    const mime = file.mimetype || '';
+    let fileType: 'pdf' | 'doc' | 'image' = 'pdf';
+    if (mime.includes('image')) {
+      fileType = 'image';
+    } else if (mime.includes('word') || file.originalname.endsWith('.doc') || file.originalname.endsWith('.docx')) {
+      fileType = 'doc';
+    }
+
+    const formattedSize = file.size
+      ? file.size > 1024 * 1024
+        ? `${(file.size / (1024 * 1024)).toFixed(1)} MB`
+        : `${Math.round(file.size / 1024)} KB`
+      : '1.0 MB';
+
+    // Upload to Cloudinary under folder 'moiconnect/chat_media'
+    const result = await uploadTempFileToCloudinary(file.filename, 'moiconnect/chat_media');
+
+    res.json({
+      success: true,
+      data: {
+        name: file.originalname,
+        url: result.secure_url,
+        size: formattedSize,
+        type: fileType,
+        publicId: result.public_id
+      }
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Media upload failed' });
   }
 };

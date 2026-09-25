@@ -38,6 +38,7 @@ const router = Router();
 router.get('/community/messages', communityController.getCommunityMessages);
 router.post('/community/messages', optionalAuthenticate, communityController.postCommunityMessage);
 router.post('/community/messages/:id/reaction', communityController.toggleCommunityReaction);
+router.post('/community/upload-media', tempUpload.single('file'), communityController.uploadCommunityMedia);
 
 // Web Dashboard API Routes
 router.get('/dashboard/overview', dashboardController.getDashboardOverview);
