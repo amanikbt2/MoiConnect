@@ -7,12 +7,16 @@ import { CreatePaperInput } from '@moi/shared';
 export const getPapers = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const page = parseInt(req.query.page as string || '1', 10);
-    const limit = parseInt(req.query.limit as string || '20', 10);
+    const limit = parseInt(req.query.limit as string || '50', 10);
     const skip = (page - 1) * limit;
 
-    const { school, courseCode, unitCode, type, semester, year, search } = req.query;
+    const { school, courseCode, unitCode, type, semester, year, search, includePending } = req.query;
 
-    const query: any = { status: 'approved' };
+    const query: any = {};
+
+    if (includePending !== 'true') {
+      query.status = { $in: ['approved', 'pending'] };
+    }
 
     if (school) query.school = school;
     if (courseCode) query.courseCode = (courseCode as string).toUpperCase();
@@ -22,7 +26,13 @@ export const getPapers = async (req: AuthenticatedRequest, res: Response): Promi
     if (year) query.examYear = parseInt(year as string, 10);
 
     if (search) {
-      query.$text = { $search: search as string };
+      const searchRegex = new RegExp(search as string, 'i');
+      query.$or = [
+        { title: searchRegex },
+        { unitCode: searchRegex },
+        { unitName: searchRegex },
+        { school: searchRegex }
+      ];
     }
 
     const total = await Paper.countDocuments(query);

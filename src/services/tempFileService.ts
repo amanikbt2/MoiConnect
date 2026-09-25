@@ -137,12 +137,31 @@ export const uploadTempFileToCloudinary = async (
     throw new Error(`Temporary file "${filename}" not found in server storage (${TEMP_UPLOADS_DIR}).`);
   }
 
-  const result = await cloudinary.uploader.upload(filePath, {
-    folder,
-    resource_type: 'auto',
-    use_filename: true,
-    unique_filename: true
-  });
+  const stats = fs.statSync(filePath);
+  if (stats.size === 0) {
+    try {
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    } catch (_) {}
+    throw new Error(`The uploaded file "${filename}" is empty (0 bytes). Please upload a valid document.`);
+  }
+
+  let result: any;
+  try {
+    result = await cloudinary.uploader.upload(filePath, {
+      folder,
+      resource_type: 'auto',
+      use_filename: true,
+      unique_filename: true
+    });
+  } catch (firstErr: any) {
+    // Fallback for raw non-image documents (PDFs, DOCX, etc.)
+    result = await cloudinary.uploader.upload(filePath, {
+      folder,
+      resource_type: 'raw',
+      use_filename: true,
+      unique_filename: true
+    });
+  }
 
   // After successful Cloudinary upload, remove file from local server disk
   try {
