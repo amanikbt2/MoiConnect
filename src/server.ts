@@ -19,6 +19,9 @@ import {
 const app = express();
 const server = http.createServer(app);
 
+// Enable trust proxy for Render / Cloudflare reverse proxies & express-rate-limit
+app.set('trust proxy', 1);
+
 // Static files for favicon and public assets
 app.use(express.static(path.join(__dirname, '../public')));
 app.use(express.static(path.join(__dirname, '../../public')));
