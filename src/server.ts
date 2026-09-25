@@ -114,15 +114,19 @@ setupSocketIO(io);
 
 // Start Server
 if (process.env.NODE_ENV !== 'test') {
-  connectDB().then(() => {
-    server.listen(config.port, () => {
-      console.log(`=================================`);
-      console.log(`[MoiConnect Server Running]`);
-      console.log(`Environment: ${config.nodeEnv}`);
-      console.log(`Port: ${config.port}`);
-      console.log(`API Base: http://localhost:${config.port}/api/v1`);
-      console.log(`=================================`);
-    });
+  const PORT = config.port;
+  server.listen(PORT, '0.0.0.0', () => {
+    console.log(`=================================`);
+    console.log(`[MoiConnect Server Running]`);
+    console.log(`Environment: ${config.nodeEnv}`);
+    console.log(`Port: ${PORT}`);
+    console.log(`Bound Interface: 0.0.0.0:${PORT}`);
+    console.log(`=================================`);
+  });
+
+  // Connect to MongoDB asynchronously
+  connectDB().catch((err: any) => {
+    console.error('[MongoDB Connection Failure]:', err?.message || err);
   });
 }
 
