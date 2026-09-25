@@ -37,7 +37,7 @@ export const getCommunityMessages = async (req: Request, res: Response): Promise
 // 2. Post Community Message via HTTP Fallback (Fast Non-Blocking Endpoint)
 export const postCommunityMessage = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { clientMsgId, text, fileAttachment, replyTo, senderName, senderFaculty, avatarBg, senderId } = req.body;
+    const { clientMsgId, text, fileAttachment, replyTo, senderName, senderEmail, senderFaculty, avatarBg, senderId } = req.body;
     const user = (req as any).user;
 
     if (!text?.trim() && !fileAttachment) {
@@ -55,6 +55,7 @@ export const postCommunityMessage = async (req: Request, res: Response): Promise
         clientMsgId,
         senderId: user?._id || senderId || '60d0fe4f5311236168a109ca',
         senderName: senderName || user?.name || 'Moi Student',
+        senderEmail: senderEmail || user?.email || '',
         senderFaculty: senderFaculty || 'School of Science & Computing',
         avatarBg: avatarBg || '#15803d',
         text: text?.trim() || '',

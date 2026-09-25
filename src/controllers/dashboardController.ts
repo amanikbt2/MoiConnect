@@ -3107,25 +3107,27 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
         const senderName = isSystem ? 'System Notice' : (m.senderName || 'Anonymous');
         const senderRole = isSystem ? 'SYSTEM' : (m.senderRole || 'student').toUpperCase();
         
+        const senderEmail = m.senderEmail || m.email || '';
         let senderHtml = '<div style="display: flex; align-items: center; gap: 8px;">' +
           '<div style="width: 28px; height: 28px; border-radius: 50%; background: ' + (isSystem ? '#3b82f6' : '#15803d') + '; color: #ffffff; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 800;">' +
             (isSystem ? '⚙️' : senderName[0].toUpperCase()) +
           '</div>' +
           '<div>' +
             '<div style="font-weight: 700; color: #0f172a; font-size: 12px;">' + senderName + '</div>' +
+            (senderEmail ? '<div style="font-size: 10px; color: #0284c7; font-weight: 600;">' + senderEmail + '</div>' : '') +
             '<div style="font-size: 10px; font-weight: 800; color: ' + (isSystem ? '#2563eb' : '#64748b') + ';">' + senderRole + '</div>' +
           '</div>' +
         '</div>';
 
-        let contentHtml = '<div style="color: #334155; font-size: 13px; font-weight: 600;">' + (m.message || '<em style="color:#94a3b8;">No text message</em>') + '</div>';
+        let contentHtml = '<div style="color: #334155; font-size: 13px; font-weight: 600;">' + (m.message || m.text || '<em style="color:#94a3b8;">No text message</em>') + '</div>';
         if (m.replyTo) {
-          contentHtml = '<div style="font-size: 11px; color: #64748b; background: #f1f5f9; padding: 3px 6px; border-radius: 4px; margin-bottom: 4px;">↩️ Replying to: ' + (m.replyTo.senderName || 'user') + '</div>' + contentHtml;
+          contentHtml = '<div style="font-size: 11px; color: #64748b; background: #f1f5f9; padding: 3px 6px; border-radius: 4px; margin-bottom: 4px;">↩️ Replying to: ' + (m.replyTo.senderName || 'user') + (m.replyTo.senderEmail ? ' (' + m.replyTo.senderEmail + ')' : '') + '</div>' + contentHtml;
         }
 
         let mediaHtml = '<span style="color: #94a3b8; font-size: 11px;">None</span>';
         if (m.fileAttachment && m.fileAttachment.url) {
-          const fileType = (m.fileAttachment.fileType || 'file').toUpperCase();
-          const fileName = m.fileAttachment.fileName || 'Attachment';
+          const fileType = (m.fileAttachment.fileType || m.fileAttachment.type || 'file').toUpperCase();
+          const fileName = m.fileAttachment.fileName || m.fileAttachment.name || 'Attachment';
           const isImg = ['IMAGE', 'JPG', 'PNG', 'WEBP', 'GIF'].includes(fileType);
 
           mediaHtml = '<div style="display: flex; align-items: center; gap: 8px;">' +
@@ -3134,7 +3136,7 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
               '<a href="' + m.fileAttachment.url + '" target="_blank" download style="font-weight: 700; font-size: 11px; color: #0284c7; text-decoration: none;">' +
                 '📎 ' + fileName +
               '</a>' +
-              '<div style="font-size: 10px; font-weight: 800; color: #64748b;">' + fileType + ' • ' + formatBytes(m.fileAttachment.fileSize || 0) + '</div>' +
+              '<div style="font-size: 10px; font-weight: 800; color: #64748b;">' + fileType + ' • ' + formatBytes(m.fileAttachment.fileSize || m.fileAttachment.size || 0) + '</div>' +
             '</div>' +
           '</div>';
         }
@@ -3169,9 +3171,13 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
 
       const filtered = globalCommunityMessages.filter(m =>
         (m.senderName && m.senderName.toLowerCase().includes(q)) ||
+        (m.senderEmail && m.senderEmail.toLowerCase().includes(q)) ||
         (m.message && m.message.toLowerCase().includes(q)) ||
-        (m.fileAttachment?.fileName && m.fileAttachment.fileName.toLowerCase().includes(q))
+        (m.text && m.text.toLowerCase().includes(q)) ||
+        (m.fileAttachment?.fileName && m.fileAttachment.fileName.toLowerCase().includes(q)) ||
+        (m.fileAttachment?.name && m.fileAttachment.name.toLowerCase().includes(q))
       );
+      renderCommunityMessagesTable(filtered);
       renderCommunityMessagesTable(filtered);
     }
 

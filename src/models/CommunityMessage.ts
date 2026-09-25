@@ -10,6 +10,7 @@ export interface IFileAttachment {
 export interface IReplyTo {
   id: string;
   senderName: string;
+  senderEmail?: string;
   text: string;
   fileAttachment?: IFileAttachment;
 }
@@ -18,6 +19,7 @@ export interface ICommunityMessage extends Document {
   clientMsgId?: string;
   senderId: Types.ObjectId;
   senderName: string;
+  senderEmail?: string;
   senderFaculty: string;
   avatarBg: string;
   text: string;
@@ -33,6 +35,7 @@ const communityMessageSchema = new Schema<ICommunityMessage>(
     clientMsgId: { type: String, index: true },
     senderId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     senderName: { type: String, required: true },
+    senderEmail: { type: String, index: true },
     senderFaculty: { type: String, default: 'Moi University Student' },
     avatarBg: { type: String, default: '#15803d' },
     text: { type: String, default: '' },
@@ -45,6 +48,7 @@ const communityMessageSchema = new Schema<ICommunityMessage>(
     replyTo: {
       id: { type: String },
       senderName: { type: String },
+      senderEmail: { type: String },
       text: { type: String },
       fileAttachment: Schema.Types.Mixed
     },

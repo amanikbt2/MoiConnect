@@ -140,17 +140,19 @@ export const setupSocketIO = (io: SocketIOServer): void => {
       fileAttachment?: any;
       replyTo?: any;
       senderName?: string;
+      senderEmail?: string;
       senderFaculty?: string;
       avatarBg?: string;
     }) => {
       try {
-        const { clientMsgId, text, fileAttachment, replyTo, senderName, senderFaculty, avatarBg } = data;
+        const { clientMsgId, text, fileAttachment, replyTo, senderName, senderEmail, senderFaculty, avatarBg } = data;
         if (!text?.trim() && !fileAttachment) return;
 
         const sId = (userId && Types.ObjectId.isValid(userId))
           ? userId
           : ((data.senderId && Types.ObjectId.isValid(data.senderId)) ? data.senderId : new Types.ObjectId().toString());
 
+        const sEmail = (socket as any).user?.email || senderEmail || '';
         const generatedId = new Types.ObjectId().toString();
         const nowISO = new Date().toISOString();
 
@@ -159,6 +161,7 @@ export const setupSocketIO = (io: SocketIOServer): void => {
           clientMsgId,
           senderId: sId,
           senderName: senderName || 'Moi Student',
+          senderEmail: sEmail,
           senderFaculty: senderFaculty || 'School of Science & Computing',
           avatarBg: avatarBg || '#15803d',
           text: text?.trim() || '',
@@ -192,6 +195,7 @@ export const setupSocketIO = (io: SocketIOServer): void => {
               clientMsgId,
               senderId: sId,
               senderName: messagePayload.senderName,
+              senderEmail: messagePayload.senderEmail,
               senderFaculty: messagePayload.senderFaculty,
               avatarBg: messagePayload.avatarBg,
               text: messagePayload.text,
