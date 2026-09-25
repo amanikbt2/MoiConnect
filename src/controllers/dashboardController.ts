@@ -2217,7 +2217,7 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
 
         const schoolName = paper.school ? (paper.school.split('School of ')[1] || paper.school) : '';
 
-        return '<div class="tiny-paper-row" onclick="openPaperModal(\'' + paper._id + '\')">' +
+        return '<div class="tiny-paper-row" data-id="' + paper._id + '" onclick="openPaperModal(this.dataset.id)">' +
           '<div style="display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0;">' +
             '<span class="badge-tag" style="font-size: 10px; padding: 2px 6px;">' + ((paper.type || 'DOCUMENT').toUpperCase()) + '</span>' +
             mtidBadge +
@@ -2232,7 +2232,7 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
             '<span style="color: #64748b;">' + schoolName + '</span>' +
             '<span class="size-pill">' + formatBytes(paper.fileSize || 0) + '</span>' +
             '<span style="color: #94a3b8;">' + (paper.submittedBy ? paper.submittedBy.name : 'Student') + '</span>' +
-            '<button class="btn btn-tiny" onclick="event.stopPropagation(); openPaperModal(\'' + paper._id + '\')" style="background: ' + (isApproved ? '#0284c7' : '#15803d') + '; color: #ffffff;">' +
+            '<button class="btn btn-tiny" data-id="' + paper._id + '" onclick="event.stopPropagation(); openPaperModal(this.dataset.id)" style="background: ' + (isApproved ? '#0284c7' : '#15803d') + '; color: #ffffff;">' +
               (isApproved ? 'Inspect & Edit' : 'Review & Action ⚡') +
             '</button>' +
           '</div>' +
@@ -2790,7 +2790,7 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
                   '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>' +
                   ' Download' +
                 '</a>' +
-                '<button onclick="deleteSingleTemp(\'' + f.filename + '\')" class="btn btn-tiny" style="background: #fee2e2; color: #dc2626; border: 1px solid #fecaca;">' +
+                '<button data-filename="' + f.filename + '" onclick="deleteSingleTemp(this.dataset.filename)" class="btn btn-tiny" style="background: #fee2e2; color: #dc2626; border: 1px solid #fecaca;">' +
                   '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>' +
                   ' Delete' +
                 '</button>' +
@@ -3143,7 +3143,7 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
           '<td>' + mediaHtml + '</td>' +
           '<td style="color: #64748b; font-size: 11px;">' + new Date(m.createdAt).toLocaleString() + '</td>' +
           '<td style="text-align: right;">' +
-            '<button onclick="deleteSingleCommunityMessage(\'' + m._id + '\')" class="btn btn-tiny" style="background: #fee2e2; color: #dc2626; border: 1px solid #fecaca;">' +
+            '<button data-id="' + m._id + '" onclick="deleteSingleCommunityMessage(this.dataset.id)" class="btn btn-tiny" style="background: #fee2e2; color: #dc2626; border: 1px solid #fecaca;">' +
               '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>' +
               ' Wipe' +
             '</button>' +
