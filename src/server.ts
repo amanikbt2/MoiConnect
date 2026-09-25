@@ -98,12 +98,17 @@ app.get('/health', (_req, res) => {
 // Global Error Handler
 app.use(errorHandler);
 
-// Setup Real-Time Socket.IO
+// Setup Real-Time Socket.IO (Supports WebSocket & Polling Fallback, Permissive CORS for Web & Mobile)
 const io = new SocketIOServer(server, {
   cors: {
-    origin: config.corsOrigins,
-    methods: ['GET', 'POST']
-  }
+    origin: (origin, callback) => callback(null, true),
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    credentials: true
+  },
+  transports: ['websocket', 'polling'],
+  allowEIO3: true,
+  pingTimeout: 60000,
+  pingInterval: 25000
 });
 setupSocketIO(io);
 
