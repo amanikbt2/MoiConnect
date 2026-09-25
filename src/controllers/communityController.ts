@@ -34,7 +34,7 @@ export const getCommunityMessages = async (req: Request, res: Response): Promise
   }
 };
 
-// 2. Post Community Message via HTTP Fallback
+// 2. Post Community Message via HTTP Fallback (Fast Non-Blocking Endpoint)
 export const postCommunityMessage = async (req: Request, res: Response): Promise<void> => {
   try {
     const { clientMsgId, text, fileAttachment, replyTo, senderName, senderFaculty, avatarBg, senderId } = req.body;
@@ -45,9 +45,9 @@ export const postCommunityMessage = async (req: Request, res: Response): Promise
       return;
     }
 
-    let message;
+    let message: any = null;
     if (clientMsgId) {
-      message = await CommunityMessage.findOne({ clientMsgId });
+      message = await CommunityMessage.findOne({ clientMsgId }).lean();
     }
 
     if (!message) {
@@ -69,13 +69,15 @@ export const postCommunityMessage = async (req: Request, res: Response): Promise
         io.to('community_room').emit('community:receive_message', message);
       }
 
-      // Trigger Background Push Notifications to offline devices
-      dispatchPushNotification({
-        title: `💬 ${message.senderName}`,
-        body: message.text ? message.text.slice(0, 100) : `📎 Sent a file: ${message.fileAttachment?.name || 'Attachment'}`,
-        target: 'all',
-        data: { screen: 'community', channelId: 'community_chat' }
-      }).catch(() => {});
+      // Asynchronous Push Notifications to offline devices (Non-blocking)
+      setImmediate(() => {
+        dispatchPushNotification({
+          title: `💬 ${message.senderName}`,
+          body: message.text ? message.text.slice(0, 100) : `📎 Sent a file: ${message.fileAttachment?.name || 'Attachment'}`,
+          target: 'all',
+          data: { screen: 'community', channelId: 'community_chat' }
+        }).catch(() => {});
+      });
     }
 
     res.status(201).json({
