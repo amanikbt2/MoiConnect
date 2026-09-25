@@ -2360,7 +2360,7 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
             '<a href="' + smartPreviewUrl + '" target="_blank" title="Click to view full image in tab">' +
               '<img src="' + paper.fileUrl + '" alt="Preview" style="max-height: 220px; max-width: 100%; border-radius: 6px; object-fit: contain; box-shadow: 0 2px 8px rgba(0,0,0,0.1); border: 1px solid #e2e8f0;" />' +
             '</a>' +
-            '<div style="font-size: 11px; color: #64748b; margin-top: 6px;">Click image or \\'Open & Preview in Tab\\' to zoom & rotate</div>' +
+            '<div style="font-size: 11px; color: #64748b; margin-top: 6px;">Click image or "Open & Preview in Tab" to zoom & rotate</div>' +
           '</div>';
         } else if (fmt.category === 'pdf') {
           previewBody.innerHTML = '<div style="display: flex; align-items: center; justify-content: space-between; width: 100%; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px;">' +
@@ -2432,6 +2432,9 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
       }
 
       // Unhide modal
+      document.getElementById('material-modal').classList.remove('hidden');
+    }
+
     function getRealFileExt(url, fallbackType) {
       var clean = (url || '').split('?')[0].toLowerCase();
       var parts = clean.split('.');
