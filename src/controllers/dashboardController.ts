@@ -2202,41 +2202,41 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
         : papers;
 
       if (!filtered || filtered.length === 0) {
-        container.innerHTML = \`
-          <div style="text-align: center; padding: 48px; background: #f8fafc; border-radius: 12px; border: 2px dashed #cbd5e1;">
-            <p style="color: #475569; font-weight: 700; font-size: 14px;">No \${filter} revision materials right now.</p>
-            <p style="font-size: 12px; color: #94a3b8; margin-top: 4px;">All student submissions are processed.</p>
-          </div>
-        \`;
+        container.innerHTML = '<div style="text-align: center; padding: 48px; background: #f8fafc; border-radius: 12px; border: 2px dashed #cbd5e1;">' +
+          '<p style="color: #475569; font-weight: 700; font-size: 14px;">No ' + filter + ' revision materials right now.</p>' +
+          '<p style="font-size: 12px; color: #94a3b8; margin-top: 4px;">All student submissions are processed.</p>' +
+        '</div>';
         return;
       }
 
-      container.innerHTML = filtered.map(paper => {
+      container.innerHTML = filtered.map(function(paper) {
         const isApproved = paper.status === 'approved';
-        return \`
-        <div class="tiny-paper-row" onclick="openPaperModal('\${paper._id}')">
-          <div style="display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0;">
-            <span class="badge-tag" style="font-size: 10px; padding: 2px 6px;">\${paper.type?.toUpperCase() || 'DOCUMENT'}</span>
-            \${paper.mtid 
-              ? \`<span class="mtid-tag" style="font-size: 10px; padding: 2px 6px;">\${paper.mtid}</span>\` 
-              : '<span style="font-size: 10px; background: #fef3c7; color: #92400e; padding: 2px 6px; border-radius: 4px; font-weight: 800;">PENDING</span>'}
-            <span style="font-weight: 800; color: #0f172a; font-size: 13px; font-family: monospace;">\${paper.unitCode || 'UNIT'}</span>
-            <span style="color: #cbd5e1;">•</span>
-            <span style="font-weight: 700; color: #1e293b; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-              \${paper.title}
-            </span>
-          </div>
+        const mtidBadge = paper.mtid
+          ? '<span class="mtid-tag" style="font-size: 10px; padding: 2px 6px;">' + paper.mtid + '</span>'
+          : '<span style="font-size: 10px; background: #fef3c7; color: #92400e; padding: 2px 6px; border-radius: 4px; font-weight: 800;">PENDING</span>';
 
-          <div style="display: flex; align-items: center; gap: 10px; font-size: 11px; color: #64748b;">
-            <span style="color: #64748b;">\${paper.school ? paper.school.split('School of ')[1] || paper.school : ''}</span>
-            <span class="size-pill">\${formatBytes(paper.fileSize || 0)}</span>
-            <span style="color: #94a3b8;">\${paper.submittedBy?.name || 'Student'}</span>
-            <button class="btn btn-tiny" onclick="event.stopPropagation(); openPaperModal('\${paper._id}')" style="background: \${isApproved ? '#0284c7' : '#15803d'}; color: #ffffff;">
-              \${isApproved ? 'Inspect & Edit' : 'Review & Action ⚡'}
-            </button>
-          </div>
-        </div>
-      \`;
+        const schoolName = paper.school ? (paper.school.split('School of ')[1] || paper.school) : '';
+
+        return '<div class="tiny-paper-row" onclick="openPaperModal(\'' + paper._id + '\')">' +
+          '<div style="display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0;">' +
+            '<span class="badge-tag" style="font-size: 10px; padding: 2px 6px;">' + ((paper.type || 'DOCUMENT').toUpperCase()) + '</span>' +
+            mtidBadge +
+            '<span style="font-weight: 800; color: #0f172a; font-size: 13px; font-family: monospace;">' + (paper.unitCode || 'UNIT') + '</span>' +
+            '<span style="color: #cbd5e1;">•</span>' +
+            '<span style="font-weight: 700; color: #1e293b; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">' +
+              paper.title +
+            '</span>' +
+          '</div>' +
+
+          '<div style="display: flex; align-items: center; gap: 10px; font-size: 11px; color: #64748b;">' +
+            '<span style="color: #64748b;">' + schoolName + '</span>' +
+            '<span class="size-pill">' + formatBytes(paper.fileSize || 0) + '</span>' +
+            '<span style="color: #94a3b8;">' + (paper.submittedBy ? paper.submittedBy.name : 'Student') + '</span>' +
+            '<button class="btn btn-tiny" onclick="event.stopPropagation(); openPaperModal(\'' + paper._id + '\')" style="background: ' + (isApproved ? '#0284c7' : '#15803d') + '; color: #ffffff;">' +
+              (isApproved ? 'Inspect & Edit' : 'Review & Action ⚡') +
+            '</button>' +
+          '</div>' +
+        '</div>';
       }).join('');
     }
 
@@ -2868,46 +2868,38 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
 
       const onlineIds = globalData?.stats?.onlineUserIds || [];
 
-      tbody.innerHTML = users.map(u => {
+      tbody.innerHTML = users.map(function(u) {
         const isOnline = onlineIds.includes(u._id);
-        return \`
-        <tr>
-          <td style="font-weight: 700; color: #0f172a; display: flex; align-items: center; gap: 8px;">
-            <div style="position: relative; width: 28px; height: 28px; border-radius: 50%; background: #15803d; color: #ffffff; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 800;">
-              \${(u.name || 'U')[0].toUpperCase()}
-              \${isOnline ? '<span title="User Online Now" style="position: absolute; bottom: -1px; right: -1px; width: 9px; height: 9px; background-color: #22c55e; border: 2px solid #ffffff; border-radius: 50%;"></span>' : ''}
-            </div>
-            \${u.name || 'Student'}
-          </td>
-          <td style="font-family: monospace; font-size: 12px;">\${u.email}</td>
-          <td>
-            <span style="font-size: 10px; font-weight: 800; text-transform: uppercase; background: #f1f5f9; color: #334155; padding: 3px 8px; border-radius: 6px; border: 1px solid #cbd5e1;">
-              \${(u.roles || ['student']).join(', ')}
-            </span>
-          </td>
-          <td>
-            <span style="font-size: 10px; font-weight: 800; padding: 3px 8px; border-radius: 6px; \${
-              u.landlordStatus === 'approved' ? 'background: #dcfce7; color: #166534;' : 'background: #f1f5f9; color: #64748b;'
-            }">
-              \${u.landlordStatus || 'none'}
-            </span>
-          </td>
-          <td>
-            \${isOnline ? \`
-              <span style="font-size: 10px; font-weight: 800; background: #dcfce7; color: #15803d; padding: 3px 8px; border-radius: 12px; border: 1px solid #bbf7d0; display: inline-flex; align-items: center; gap: 4px;">
-                <span style="width: 6px; height: 6px; background-color: #22c55e; border-radius: 50%;"></span> Online
-              </span>
-            \` : \`
-              <span style="font-size: 10px; font-weight: 600; color: #94a3b8; display: inline-flex; align-items: center; gap: 4px;">
-                <span style="width: 6px; height: 6px; background-color: #cbd5e1; border-radius: 50%;"></span> Offline
-              </span>
-            \`}
-          </td>
-          <td style="color: #94a3b8; font-size: 12px;">
-            \${new Date(u.createdAt).toLocaleDateString()}
-          </td>
-        </tr>
-      \`;
+        const initial = (u.name || 'U')[0].toUpperCase();
+        const roles = (u.roles || ['student']).join(', ');
+        const landlordBadge = u.landlordStatus === 'approved'
+          ? '<span style="font-size: 10px; font-weight: 800; padding: 3px 8px; border-radius: 6px; background: #dcfce7; color: #166534;">approved</span>'
+          : '<span style="font-size: 10px; font-weight: 800; padding: 3px 8px; border-radius: 6px; background: #f1f5f9; color: #64748b;">' + (u.landlordStatus || 'none') + '</span>';
+
+        const onlineBadge = isOnline
+          ? '<span style="font-size: 10px; font-weight: 800; background: #dcfce7; color: #15803d; padding: 3px 8px; border-radius: 12px; border: 1px solid #bbf7d0; display: inline-flex; align-items: center; gap: 4px;"><span style="width: 6px; height: 6px; background-color: #22c55e; border-radius: 50%;"></span> Online</span>'
+          : '<span style="font-size: 10px; font-weight: 600; color: #94a3b8; display: inline-flex; align-items: center; gap: 4px;"><span style="width: 6px; height: 6px; background-color: #cbd5e1; border-radius: 50%;"></span> Offline</span>';
+
+        return '<tr>' +
+          '<td style="font-weight: 700; color: #0f172a; display: flex; align-items: center; gap: 8px;">' +
+            '<div style="position: relative; width: 28px; height: 28px; border-radius: 50%; background: #15803d; color: #ffffff; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 800;">' +
+              initial +
+              (isOnline ? '<span title="User Online Now" style="position: absolute; bottom: -1px; right: -1px; width: 9px; height: 9px; background-color: #22c55e; border: 2px solid #ffffff; border-radius: 50%;"></span>' : '') +
+            '</div>' +
+            (u.name || 'Student') +
+          '</td>' +
+          '<td style="font-family: monospace; font-size: 12px;">' + u.email + '</td>' +
+          '<td>' +
+            '<span style="font-size: 10px; font-weight: 800; text-transform: uppercase; background: #f1f5f9; color: #334155; padding: 3px 8px; border-radius: 6px; border: 1px solid #cbd5e1;">' +
+              roles +
+            '</span>' +
+          '</td>' +
+          '<td>' + landlordBadge + '</td>' +
+          '<td>' + onlineBadge + '</td>' +
+          '<td style="color: #94a3b8; font-size: 12px;">' +
+            new Date(u.createdAt).toLocaleDateString() +
+          '</td>' +
+        '</tr>';
       }).join('');
     }
 
@@ -2925,34 +2917,30 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
     function renderHouses(houses) {
       const container = document.getElementById('houses-container');
       if (!houses || houses.length === 0) {
-        container.innerHTML = \`
-          <div style="grid-column: 1 / -1; text-align: center; padding: 48px; background: #f8fafc; border-radius: 12px; border: 2px dashed #cbd5e1; color: #94a3b8; font-size: 14px;">
-            No rental houses posted yet.
-          </div>
-        \`;
+        container.innerHTML = '<div style="grid-column: 1 / -1; text-align: center; padding: 48px; background: #f8fafc; border-radius: 12px; border: 2px dashed #cbd5e1; color: #94a3b8; font-size: 14px;">No rental houses posted yet.</div>';
         return;
       }
 
-      container.innerHTML = houses.map(h => \`
-        <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; display: flex; flex-direction: column; justify-content: space-between;">
-          <div>
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-              <span style="font-size: 12px; font-weight: 800; color: #15803d; background: #dcfce7; padding: 3px 8px; border-radius: 6px;">
-                KSh \${h.price?.toLocaleString() || 0} / mo
-              </span>
-              <span style="font-size: 10px; font-weight: 800; text-transform: uppercase; color: #64748b; background: #ffffff; padding: 2px 6px; border-radius: 4px; border: 1px solid #cbd5e1;">
-                \${h.status}
-              </span>
-            </div>
-            <h4 style="font-size: 14px; font-weight: 800; color: #0f172a; margin-bottom: 4px;">\${h.title}</h4>
-            <p style="font-size: 12px; color: #64748b;">\${h.location} • \${h.type}</p>
-          </div>
-          <div style="margin-top: 12px; padding-top: 10px; border-top: 1px solid #e2e8f0; font-size: 11px; color: #64748b; display: flex; justify-content: space-between;">
-            <span>Landlord: <strong>\${h.landlordId?.name || 'Owner'}</strong></span>
-            <span>Phone: \${h.landlordId?.phone || 'N/A'}</span>
-          </div>
-        </div>
-      \`).join('');
+      container.innerHTML = houses.map(function(h) {
+        return '<div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; display: flex; flex-direction: column; justify-content: space-between;">' +
+          '<div>' +
+            '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">' +
+              '<span style="font-size: 12px; font-weight: 800; color: #15803d; background: #dcfce7; padding: 3px 8px; border-radius: 6px;">' +
+                'KSh ' + (h.price ? h.price.toLocaleString() : 0) + ' / mo' +
+              '</span>' +
+              '<span style="font-size: 10px; font-weight: 800; text-transform: uppercase; color: #64748b; background: #ffffff; padding: 2px 6px; border-radius: 4px; border: 1px solid #cbd5e1;">' +
+                h.status +
+              '</span>' +
+            '</div>' +
+            '<h4 style="font-size: 14px; font-weight: 800; color: #0f172a; margin-bottom: 4px;">' + h.title + '</h4>' +
+            '<p style="font-size: 12px; color: #64748b;">' + h.location + ' • ' + h.type + '</p>' +
+          '</div>' +
+          '<div style="margin-top: 12px; padding-top: 10px; border-top: 1px solid #e2e8f0; font-size: 11px; color: #64748b; display: flex; justify-content: space-between;">' +
+            '<span>Landlord: <strong>' + (h.landlordId ? h.landlordId.name : 'Owner') + '</strong></span>' +
+            '<span>Phone: ' + (h.landlordId ? h.landlordId.phone : 'N/A') + '</span>' +
+          '</div>' +
+        '</div>';
+      }).join('');
     }
 
     function toggleEmailBox() {
@@ -3040,24 +3028,28 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
           alert: '⚡'
         };
 
-        container.innerHTML = json.history.map(item => \`
-          <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; font-size: 12px;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-              <span style="font-weight: 800; color: #0f172a; display: flex; align-items: center; gap: 6px;">
-                <span>\${ICON_MAP[item.icon] || '🔔'}</span> \${item.title}
-              </span>
-              <span style="font-size: 10px; font-weight: 800; text-transform: uppercase; background: #e0e7ff; color: #3730a3; padding: 2px 6px; border-radius: 4px;">
-                \${item.target}
-              </span>
-            </div>
-            \${item.subtitle ? \`<div style="font-size: 11px; font-weight: 700; color: #15803d; margin-bottom: 4px;">\${item.subtitle}</div>\` : ''}
-            <div style="color: #475569; margin-bottom: 6px; line-height: 1.4;">\${item.body}</div>
-            <div style="display: flex; justify-content: space-between; color: #94a3b8; font-size: 11px;">
-              <span>Target: \${item.target === 'emails' ? (item.recipientEmails || []).join(', ') : 'All Users & Guests'}</span>
-              <span>\${new Date(item.createdAt).toLocaleString()}</span>
-            </div>
-          </div>
-        \`).join('');
+        container.innerHTML = json.history.map(function(item) {
+          const iconSymbol = ICON_MAP[item.icon] || '🔔';
+          const subtitleHtml = item.subtitle ? '<div style="font-size: 11px; font-weight: 700; color: #15803d; margin-bottom: 4px;">' + item.subtitle + '</div>' : '';
+          const targetText = item.target === 'emails' ? (item.recipientEmails || []).join(', ') : 'All Users & Guests';
+
+          return '<div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; font-size: 12px;">' +
+            '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">' +
+              '<span style="font-weight: 800; color: #0f172a; display: flex; align-items: center; gap: 6px;">' +
+                '<span>' + iconSymbol + '</span> ' + item.title +
+              '</span>' +
+              '<span style="font-size: 10px; font-weight: 800; text-transform: uppercase; background: #e0e7ff; color: #3730a3; padding: 2px 6px; border-radius: 4px;">' +
+                item.target +
+              '</span>' +
+            '</div>' +
+            subtitleHtml +
+            '<div style="color: #475569; margin-bottom: 6px; line-height: 1.4;">' + item.body + '</div>' +
+            '<div style="display: flex; justify-content: space-between; color: #94a3b8; font-size: 11px;">' +
+              '<span>Target: ' + targetText + '</span>' +
+              '<span>' + new Date(item.createdAt).toLocaleString() + '</span>' +
+            '</div>' +
+          '</div>';
+        }).join('');
       } catch (err) {
         console.error('Failed to load push history:', err);
       }
