@@ -51,6 +51,7 @@ export interface IPaper {
   semester?: string;
   examYear?: number;
   fileUrl: string;
+  thumbnail?: string;
   publicId?: string;
   tempFilename?: string;
   fileType: string;

@@ -84,6 +84,153 @@ export const getDashboardOverview = async (_req: Request, res: Response): Promis
   }
 };
 
+// Material management is loaded only when the admin opens the tab.
+export const getDashboardMaterials = async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const materials = await Paper.find()
+      .populate('submittedBy', 'name email')
+      .sort({ createdAt: -1 })
+      .limit(5000)
+      .lean();
+
+    res.json({ success: true, count: materials.length, data: materials });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to fetch materials' });
+  }
+};
+
+const getMaterialIds = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return [];
+  return value.filter((id): id is string => typeof id === 'string' && /^[a-f\d]{24}$/i.test(id));
+};
+
+export const updateDashboardMaterialVisibility = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const isHidden = req.body?.isHidden;
+    if (typeof isHidden !== 'boolean') {
+      res.status(400).json({ success: false, error: 'isHidden must be a boolean.' });
+      return;
+    }
+
+    const paper = await Paper.findByIdAndUpdate(req.params.id, { isHidden }, { new: true });
+    if (!paper) {
+      res.status(404).json({ success: false, error: 'Material not found.' });
+      return;
+    }
+
+    res.json({ success: true, message: isHidden ? 'Material hidden from students.' : 'Material visible to students.', data: paper });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to update material visibility' });
+  }
+};
+
+export const updateDashboardMaterialsVisibility = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const ids = getMaterialIds(req.body?.ids);
+    const isHidden = req.body?.isHidden;
+    if (!ids.length || typeof isHidden !== 'boolean') {
+      res.status(400).json({ success: false, error: 'Provide material ids and an isHidden boolean.' });
+      return;
+    }
+
+    const result = await Paper.updateMany({ _id: { $in: ids } }, { $set: { isHidden } });
+    res.json({ success: true, message: `${result.modifiedCount} material(s) updated.`, updatedCount: result.modifiedCount });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to update material visibility' });
+  }
+};
+
+const destroyMaterialCloudinaryAsset = async (paper: any): Promise<boolean> => {
+  const publicId = paper.publicId || extractCloudinaryPublicId(paper.fileUrl);
+  if (!publicId) return false;
+
+  const preferredType = paper.fileType === 'image' || paper.fileUrl?.includes('/image/upload/') ? 'image' : 'raw';
+  const resourceTypes = preferredType === 'image' ? ['image', 'raw'] : ['raw', 'image'];
+  for (const resourceType of resourceTypes) {
+    try {
+      const result = await cloudinary.uploader.destroy(publicId, {
+        resource_type: resourceType,
+        type: 'upload',
+        invalidate: true
+      });
+      if (result.result === 'ok') return true;
+    } catch (error) {
+      console.warn(`[Dashboard Materials] Cloudinary ${resourceType} cleanup skipped:`, error);
+    }
+  }
+  return false;
+};
+
+export const deleteDashboardMaterials = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const ids = getMaterialIds(req.body?.ids);
+    if (!ids.length) {
+      res.status(400).json({ success: false, error: 'Select at least one material.' });
+      return;
+    }
+
+    const materials = await Paper.find({ _id: { $in: ids } });
+    let cloudinaryDeleted = 0;
+    for (const paper of materials) {
+      if (await destroyMaterialCloudinaryAsset(paper)) cloudinaryDeleted += 1;
+      if (paper.tempFilename || paper.fileUrl?.includes('/uploads/temp/')) {
+        deleteTempFile(paper.tempFilename || paper.fileUrl);
+      }
+    }
+
+    const deleted = await Paper.deleteMany({ _id: { $in: materials.map(material => material._id) } });
+    res.json({
+      success: true,
+      message: `Permanently deleted ${deleted.deletedCount} material(s) from the database and cleaned Cloudinary assets.`,
+      deletedCount: deleted.deletedCount,
+      cloudinaryDeleted
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to delete materials' });
+  }
+};
+const DEFAULT_MATERIAL_THUMBNAILS: Record<string, string> = {
+  past_paper: 'https://images.unsplash.com/photo-1434030216411-0b793f4b4173?auto=format&fit=crop&w=800&q=80',
+  cat: 'https://images.unsplash.com/photo-1509228468518-180dd4864904?auto=format&fit=crop&w=800&q=80',
+  revision: 'https://images.unsplash.com/photo-1456513080510-7bf3a84b82f8?auto=format&fit=crop&w=800&q=80',
+  notes: 'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&w=800&q=80'
+};
+
+// Admin: Upload an optional material thumbnail to Cloudinary
+export const uploadPaperThumbnail = async (req: Request, res: Response): Promise<void> => {
+  try {
+    if (!req.file) {
+      res.status(400).json({ success: false, error: 'Please choose a thumbnail image.' });
+      return;
+    }
+
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+    if (!allowedTypes.includes(req.file.mimetype)) {
+      deleteTempFile(req.file.filename);
+      res.status(400).json({ success: false, error: 'Only JPG, PNG, WEBP, and GIF images are supported.' });
+      return;
+    }
+
+    const paper = await Paper.findById(req.params.id);
+    if (!paper) {
+      deleteTempFile(req.file.filename);
+      res.status(404).json({ success: false, error: 'Paper not found.' });
+      return;
+    }
+
+    const upload = await uploadTempFileToCloudinary(req.file.filename, 'MoiConnect/material_thumbnails');
+    paper.thumbnail = upload.secure_url;
+    await paper.save();
+    res.status(201).json({
+      success: true,
+      message: 'Material thumbnail uploaded successfully.',
+      data: { thumbnail: paper.thumbnail, publicId: upload.public_id }
+    });
+  } catch (error: any) {
+    if (req.file) deleteTempFile(req.file.filename);
+    res.status(500).json({ success: false, error: error.message || 'Failed to upload thumbnail.' });
+  }
+};
 // 2. Quick Approve Paper Endpoint for Web Dashboard
 export const quickApprovePaper = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -943,7 +1090,7 @@ export const renderSmartPreviewPage = (req: Request, res: Response): void => {
 
         function copyTextContent() {
           navigator.clipboard.writeText(rawText).then(function() {
-            alert('Text copied to clipboard!');
+            showToast('Text copied to clipboard!');
           });
         }
       </script>
@@ -1021,7 +1168,24 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
     .item-meta { font-size: 12px; color: #475569; }
     .item-sub { font-size: 11px; color: #94a3b8; margin-top: 2px; }
 
-    /* Action Buttons */
+    .materials-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 14px; margin-bottom: 18px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; }
+    .materials-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 16px; }
+    .material-card { position: relative; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 14px; overflow: hidden; box-shadow: 0 3px 10px rgba(15,23,42,0.04); transition: transform .2s, box-shadow .2s; }
+    .material-card:hover { transform: translateY(-2px); box-shadow: 0 8px 18px rgba(15,23,42,0.08); }
+    .material-card.hidden-material { border-color: #f59e0b; background: #fffbeb; }
+    .material-cover { height: 84px; display: flex; align-items: center; justify-content: space-between; padding: 16px; background: linear-gradient(135deg, #064e3b, #15803d); color: #ffffff; }
+    .material-cover.pdf { background: linear-gradient(135deg, #1e293b, #475569); }
+    .material-cover-icon { font-size: 28px; font-weight: 900; opacity: .9; }
+    .material-check { width: 18px; height: 18px; accent-color: #15803d; cursor: pointer; }
+    .material-body { padding: 14px; }
+    .material-title { font-size: 15px; font-weight: 800; color: #0f172a; min-height: 38px; margin-bottom: 8px; }
+    .material-meta { color: #64748b; font-size: 11px; line-height: 1.6; }
+    .material-status { display: inline-flex; align-items: center; gap: 4px; margin-top: 10px; font-size: 10px; font-weight: 800; text-transform: uppercase; padding: 3px 7px; border-radius: 6px; background: #dcfce7; color: #166534; }
+    .material-status.hidden-status { background: #fef3c7; color: #92400e; }
+    .material-actions { display: flex; gap: 8px; padding: 0 14px 14px; }
+    .material-actions .btn { flex: 1; padding: 7px 8px; font-size: 11px; }
+    .fetch-start-card { text-align: center; padding: 48px 24px; border: 2px dashed #cbd5e1; border-radius: 14px; background: linear-gradient(180deg, #f8fafc, #ffffff); }
+    .fetch-start-icon { width: 54px; height: 54px; margin: 0 auto 14px; display: flex; align-items: center; justify-content: center; border-radius: 16px; background: #dcfce7; color: #15803d; font-size: 26px; }    /* Action Buttons */
     .btn-group { display: flex; align-items: center; gap: 8px; }
     .btn { padding: 8px 14px; border-radius: 8px; font-size: 12px; font-weight: 800; border: none; cursor: pointer; text-decoration: none; transition: all 0.2s; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
     .btn-view { background-color: #ffffff; color: #334155; border: 1px solid #cbd5e1; }
@@ -1113,6 +1277,10 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
         <span id="badge-pending-count" class="tab-badge hidden">0</span>
       </button>
 
+      <button id="tab-btn-materials" onclick="switchTab('materials')" class="tab-btn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+        Manage Materials
+      </button>
       <button id="tab-btn-temp" onclick="switchTab('temp')" class="tab-btn">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
         Server Media (Temp)
@@ -1178,6 +1346,29 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
       </div>
     </section>
 
+    <!-- TAB: MANAGE MATERIALS -->
+    <section id="tab-content-materials" class="tab-content hidden">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#15803d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+              Manage Materials
+            </h2>
+            <p class="card-sub">Fetch the catalogue only when needed. Hide materials from students or permanently remove their database and Cloudinary records.</p>
+          </div>
+          <button onclick="fetchMaterialsForManagement()" class="btn btn-view">↻ Refresh Materials</button>
+        </div>
+        <div id="materials-management-container">
+          <div class="fetch-start-card">
+            <div class="fetch-start-icon">↻</div>
+            <h3 style="font-size: 18px; color: #0f172a; margin-bottom: 6px;">Start fetch</h3>
+            <p style="font-size: 13px; color: #64748b; max-width: 460px; margin: 0 auto 18px;">Materials are not loaded while the dashboard opens. Fetch the catalogue when you are ready to manage it.</p>
+            <button onclick="fetchMaterialsForManagement()" class="btn btn-approve">Fetch available materials</button>
+          </div>
+        </div>
+      </div>
+    </section>
     <!-- TAB: SERVER MEDIA (TEMP) -->
     <section id="tab-content-temp" class="tab-content hidden">
       <div class="card">
@@ -1534,28 +1725,40 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
               </div>
 
               <div>
-                <label style="display: block; font-size: 12px; font-weight: 700; color: #334155; margin-bottom: 4px;">Banner Image URL (Optional)</label>
-                <input type="url" id="pop-normal-image" class="form-control" placeholder="https://example.com/banner.png" style="width: 100%;" />
+                <label style="display: block; font-size: 12px; font-weight: 700; color: #334155; margin-bottom: 4px;">Banner Image (Optional)</label>
+                <input type="file" id="pop-normal-image" class="form-control" accept="image/png,image/jpeg,image/webp,image/gif" style="width: 100%; padding: 8px;" />
+                <div style="font-size: 11px; color: #64748b; margin-top: 5px;">Choose an image from your computer. It will be stored in Cloudinary under <b>moiconnect/notify_media</b>.</div>
               </div>
 
               <div>
-                <label style="display: block; font-size: 12px; font-weight: 700; color: #334155; margin-bottom: 4px;">Smart Destination Target (When Clicked)</label>
-                <select id="pop-normal-target" class="form-control" style="width: 100%; font-weight: 700;">
-                  <option value="/community">🌐 Community Chat (/community)</option>
-                  <option value="/academics">📚 Notes PDF (/academics)</option>
-                  <option value="/past-papers">📄 Past Papers (/past-papers)</option>
-                  <option value="/cat-papers">📝 CAT Papers (/cat-papers)</option>
-                  <option value="/rentals">🏠 Rental Hostels (/rentals)</option>
-                  <option value="/contribute">📤 Contribute Materials (/contribute)</option>
-                  <option value="/(auth)/login">🔐 Sign In (/login)</option>
-                </select>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                  <label style="font-size: 12px; font-weight: 700; color: #334155;">Popup Actions</label>
+                  <button type="button" onclick="addPopupAction()" style="border: 1px solid #bae6fd; background: #f0f9ff; color: #0369a1; border-radius: 8px; padding: 6px 10px; font-size: 11px; font-weight: 800; cursor: pointer;">+ Add action</button>
+                </div>
+                <div id="pop-normal-actions" style="display: flex; flex-direction: column; gap: 10px;">
+                  <div class="popup-action-row" style="border: 1px solid #dbeafe; background: #f8fdff; border-radius: 12px; padding: 10px;">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                      <input type="text" class="form-control pop-action-label" placeholder="Button text e.g. Open Community" style="width: 100%;" value="Explore Now" />
+                      <div style="display: flex; align-items: center; gap: 10px; font-size: 11px; font-weight: 700; color: #475569;">
+                        <label><input type="radio" class="pop-action-kind" name="pop-action-kind-0" value="in_app" checked onchange="togglePopupActionTarget(this)" /> In-app</label>
+                        <label><input type="radio" class="pop-action-kind" name="pop-action-kind-0" value="external" onchange="togglePopupActionTarget(this)" /> External</label>
+                      </div>
+                    </div>
+                    <select class="form-control pop-action-target" style="width: 100%; margin-top: 8px; font-weight: 700;">
+                      <option value="/community">🌐 Community Chat</option>
+                      <option value="/academics">📚 Notes / PDF Section</option>
+                      <option value="/past-papers">📄 Past Papers</option>
+                      <option value="/cat-papers">📝 CAT Papers</option>
+                      <option value="/rentals">🏠 Rental Hostels</option>
+                      <option value="/contribute">📤 Contribute Materials</option>
+                      <option value="/(auth)/login">🔐 Sign In</option>
+                    </select>
+                    <input type="url" class="form-control pop-action-external" placeholder="https://example.com/page" style="width: 100%; margin-top: 8px; display: none;" />
+                    <button type="button" class="pop-action-remove" onclick="removePopupAction(this)" style="margin-top: 8px; border: 0; background: transparent; color: #dc2626; font-size: 11px; font-weight: 800; cursor: pointer;">Remove action</button>
+                  </div>
+                </div>
+                <div style="font-size: 11px; color: #64748b; margin-top: 6px;">Add as many buttons as needed. Each action can open an in-app section or an external URL.</div>
               </div>
-
-              <div>
-                <label style="display: block; font-size: 12px; font-weight: 700; color: #334155; margin-bottom: 4px;">Action Button Text</label>
-                <input type="text" id="pop-normal-btn-text" class="form-control" placeholder="e.g. Open Community" style="width: 100%; font-weight: 700;" value="Explore Now" />
-              </div>
-
               <div>
                 <label style="display: block; font-size: 12px; font-weight: 700; color: #334155; margin-bottom: 4px;">Target Audience</label>
                 <select id="pop-normal-audience" onchange="togglePopAudienceBox()" class="form-control" style="width: 100%; font-weight: 700;">
@@ -1935,6 +2138,106 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
 
     let globalCommunityMessages = [];
 
+    let materialsManagementData = [];
+
+    function escapeMaterialHtml(value) {
+      return String(value == null ? '' : value).replace(/[&<>'"]/g, function(char) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char];
+      });
+    }
+
+    async function fetchMaterialsForManagement() {
+      const container = document.getElementById('materials-management-container');
+      container.innerHTML = '<div style="text-align:center; padding:48px; color:#64748b;">Fetching materials catalogue...</div>';
+      try {
+        const res = await fetch('/api/v1/dashboard/materials');
+        const json = await res.json();
+        if (!json.success) throw new Error(json.error || 'Fetch failed');
+        materialsManagementData = json.data || [];
+        renderMaterialsManagement();
+        showToast(materialsManagementData.length + ' material(s) fetched for management.');
+      } catch (err) {
+        container.innerHTML = '<div class="fetch-start-card"><p style="color:#b91c1c; font-weight:700;">Could not fetch materials.</p><button onclick="fetchMaterialsForManagement()" class="btn btn-view" style="margin-top:14px;">Try again</button></div>';
+        showToast('Error fetching materials: ' + err.message, true);
+      }
+    }
+
+    function renderMaterialsManagement() {
+      const container = document.getElementById('materials-management-container');
+      if (!materialsManagementData.length) {
+        container.innerHTML = '<div class="fetch-start-card"><div class="fetch-start-icon">✓</div><h3 style="font-size:18px; color:#0f172a; margin-bottom:6px;">No materials found</h3><p style="font-size:13px; color:#64748b;">The material catalogue is empty.</p></div>';
+        return;
+      }
+
+      const selectedCount = document.querySelectorAll('.material-select:checked').length;
+      container.innerHTML = '<div class="materials-toolbar">' +
+        '<label style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:800; color:#334155;"><input id="materials-select-all" type="checkbox" class="material-check" onchange="toggleAllMaterials(this.checked)"> Select all <span style="font-weight:600; color:#64748b;">(' + materialsManagementData.length + ')</span></label>' +
+        '<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;"><span id="materials-selected-count" style="font-size:12px; color:#64748b;">' + selectedCount + ' selected</span><button onclick="setSelectedMaterialsVisibility(false)" class="btn btn-view">Show selected</button><button onclick="setSelectedMaterialsVisibility(true)" class="btn btn-view">Hide selected</button><button onclick="deleteSelectedMaterials()" class="btn btn-reject">Delete selected</button></div>' +
+        '</div><div class="materials-grid">' + materialsManagementData.map(function(material) {
+          const hidden = material.isHidden === true;
+          const type = escapeMaterialHtml((material.fileType || material.type || 'file').toUpperCase());
+          const title = escapeMaterialHtml(material.title || 'Untitled material');
+          const unit = escapeMaterialHtml(material.unitCode || 'No unit code');
+          const school = escapeMaterialHtml(material.school || 'No school');
+          const status = escapeMaterialHtml(material.status || 'unknown');
+          const id = escapeMaterialHtml(material._id);
+          return '<article class="material-card ' + (hidden ? 'hidden-material' : '') + '">' +
+            '<div class="material-cover ' + (material.fileType === 'pdf' ? 'pdf' : '') + '"><span class="material-cover-icon">' + (material.fileType === 'pdf' ? 'PDF' : 'DOC') + '</span><input type="checkbox" class="material-check material-select" data-id="' + id + '" onchange="updateMaterialsSelection()" aria-label="Select ' + title + '"></div>' +
+            '<div class="material-body"><div class="material-title">' + title + '</div><div class="material-meta"><strong>' + unit + '</strong> &middot; ' + school + '<br>' + type + ' &middot; ' + status + (material.mtid ? ' &middot; ' + escapeMaterialHtml(material.mtid) : '') + '</div><span class="material-status ' + (hidden ? 'hidden-status' : '') + '">' + (hidden ? 'Hidden from students' : 'Visible to students') + '</span></div>' +
+            '<div class="material-actions"><button onclick="toggleMaterialVisibility(\\'' + id + '\\',' + (!hidden) + ')" class="btn btn-view">' + (hidden ? 'Show' : 'Hide') + '</button><button onclick="deleteMaterials([' + "'" + id + "'" + '])" class="btn btn-reject">Delete</button></div>' +
+          '</article>';
+        }).join('') + '</div>';
+    }
+
+    function updateMaterialsSelection() {
+      const selected = document.querySelectorAll('.material-select:checked').length;
+      const count = document.getElementById('materials-selected-count');
+      if (count) count.innerText = selected + ' selected';
+      const all = document.getElementById('materials-select-all');
+      if (all) all.checked = selected > 0 && selected === document.querySelectorAll('.material-select').length;
+    }
+
+    function toggleAllMaterials(checked) {
+      document.querySelectorAll('.material-select').forEach(function(input) { input.checked = checked; });
+      updateMaterialsSelection();
+    }
+
+    async function toggleMaterialVisibility(id, isHidden) {
+      try {
+        const res = await fetch('/api/v1/dashboard/materials/' + id + '/visibility', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ isHidden: isHidden }) });
+        const json = await res.json();
+        if (!json.success) throw new Error(json.error || 'Update failed');
+        const material = materialsManagementData.find(function(item) { return item._id === id; });
+        if (material) material.isHidden = isHidden;
+        renderMaterialsManagement();
+        showToast(json.message);
+      } catch (err) { showToast('Visibility update failed: ' + err.message, true); }
+    }
+
+    function setSelectedMaterialsVisibility(isHidden) {
+      const ids = Array.from(document.querySelectorAll('.material-select:checked')).map(function(input) { return input.dataset.id; });
+      if (!ids.length) { showToast('Select at least one material first.', true); return; }
+      fetch('/api/v1/dashboard/materials/visibility', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: ids, isHidden: isHidden }) }).then(function(res) { return res.json(); }).then(function(json) {
+        if (!json.success) throw new Error(json.error || 'Update failed');
+        materialsManagementData.forEach(function(material) { if (ids.indexOf(material._id) !== -1) material.isHidden = isHidden; });
+        renderMaterialsManagement(); showToast(json.message);
+      }).catch(function(err) { showToast('Visibility update failed: ' + err.message, true); });
+    }
+
+    function deleteSelectedMaterials() {
+      const ids = Array.from(document.querySelectorAll('.material-select:checked')).map(function(input) { return input.dataset.id; });
+      deleteMaterials(ids);
+    }
+
+    function deleteMaterials(ids) {
+      if (!ids.length) { showToast('Select at least one material first.', true); return; }
+      if (!confirm('Permanently delete ' + ids.length + ' material(s) from the database and Cloudinary? This cannot be undone.')) return;
+      fetch('/api/v1/dashboard/materials', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: ids }) }).then(function(res) { return res.json(); }).then(function(json) {
+        if (!json.success) throw new Error(json.error || 'Delete failed');
+        materialsManagementData = materialsManagementData.filter(function(material) { return ids.indexOf(material._id) === -1; });
+        renderMaterialsManagement(); showToast(json.message);
+      }).catch(function(err) { showToast('Delete failed: ' + err.message, true); });
+    }
     function switchTab(tabId) {
       document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
       document.querySelectorAll('.tab-content').forEach(content => content.classList.add('hidden'));
@@ -2018,14 +2321,88 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
       }
     }
 
+    function togglePopupActionTarget(input) {
+      const row = input.closest('.popup-action-row');
+      if (!row) return;
+      const external = row.querySelector('.pop-action-external');
+      const target = row.querySelector('.pop-action-target');
+      const isExternal = input.value === 'external' && input.checked;
+      external.style.display = isExternal ? 'block' : 'none';
+      target.style.display = isExternal ? 'none' : 'block';
+    }
+
+    function refreshPopupActionRows() {
+      document.querySelectorAll('#pop-normal-actions .popup-action-row').forEach(function(row, index) {
+        row.querySelectorAll('.pop-action-kind').forEach(function(input) {
+          input.name = 'pop-action-kind-' + index;
+        });
+        row.querySelector('.pop-action-remove').style.display = index === 0 ? 'none' : 'block';
+      });
+    }
+
+    function addPopupAction() {
+      const container = document.getElementById('pop-normal-actions');
+      const row = document.createElement('div');
+      row.className = 'popup-action-row';
+      row.style.cssText = 'border: 1px solid #dbeafe; background: #f8fdff; border-radius: 12px; padding: 10px;';
+      row.innerHTML = '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">' +
+        '<input type="text" class="form-control pop-action-label" placeholder="Button text" style="width: 100%;" />' +
+        '<div style="display: flex; align-items: center; gap: 10px; font-size: 11px; font-weight: 700; color: #475569;">' +
+          '<label><input type="radio" class="pop-action-kind" value="in_app" checked onchange="togglePopupActionTarget(this)" /> In-app</label>' +
+          '<label><input type="radio" class="pop-action-kind" value="external" onchange="togglePopupActionTarget(this)" /> External</label>' +
+        '</div></div>' +
+        '<select class="form-control pop-action-target" style="width: 100%; margin-top: 8px; font-weight: 700;">' +
+          '<option value="/community">🌐 Community Chat</option><option value="/academics">📚 Notes / PDF Section</option>' +
+          '<option value="/past-papers">📄 Past Papers</option><option value="/cat-papers">📝 CAT Papers</option>' +
+          '<option value="/rentals">🏠 Rental Hostels</option><option value="/contribute">📤 Contribute Materials</option>' +
+          '<option value="/(auth)/login">🔐 Sign In</option></select>' +
+        '<input type="url" class="form-control pop-action-external" placeholder="https://example.com/page" style="width: 100%; margin-top: 8px; display: none;" />' +
+        '<button type="button" class="pop-action-remove" onclick="removePopupAction(this)" style="margin-top: 8px; border: 0; background: transparent; color: #dc2626; font-size: 11px; font-weight: 800; cursor: pointer;">Remove action</button>';
+      container.appendChild(row);
+      refreshPopupActionRows();
+    }
+
+    function removePopupAction(button) {
+      const rows = document.querySelectorAll('#pop-normal-actions .popup-action-row');
+      if (rows.length <= 1) return;
+      button.closest('.popup-action-row').remove();
+      refreshPopupActionRows();
+    }
+
+    function collectPopupActions() {
+      return Array.from(document.querySelectorAll('#pop-normal-actions .popup-action-row')).map(function(row) {
+        const kind = row.querySelector('.pop-action-kind:checked')?.value || 'in_app';
+        const target = kind === 'external'
+          ? row.querySelector('.pop-action-external')?.value.trim()
+          : row.querySelector('.pop-action-target')?.value;
+        return {
+          label: row.querySelector('.pop-action-label')?.value.trim(),
+          target,
+          type: kind
+        };
+      }).filter(function(action) { return action.label && action.target; });
+    }
     async function handleCreateNormalPopup(e) {
       e.preventDefault();
       const title = document.getElementById('pop-normal-title').value;
       const subtitle = document.getElementById('pop-normal-subtitle').value;
       const body = document.getElementById('pop-normal-body').value;
-      const imageUrl = document.getElementById('pop-normal-image').value;
-      const actionTarget = document.getElementById('pop-normal-target').value;
-      const actionButtonText = document.getElementById('pop-normal-btn-text').value;
+      const imageFile = document.getElementById('pop-normal-image').files[0];
+      let imageUrl = '';
+      const actions = collectPopupActions();
+      if (!actions.length) {
+        showToast('Add at least one action with button text and a destination.', true);
+        return;
+      }
+      const invalidExternal = actions.find(function(action) {
+        return action.type === 'external' && !/^https?:\\/\\//i.test(action.target);
+      });
+      if (invalidExternal) {
+        showToast('External actions must use a valid http:// or https:// URL.', true);
+        return;
+      }
+      const actionTarget = actions[0].target;
+      const actionButtonText = actions[0].label;
       const targetAudience = document.getElementById('pop-normal-audience').value;
       const targetEmails = document.getElementById('pop-normal-emails')?.value || '';
       const hasCancelButton = document.getElementById('pop-normal-cancel').checked;
@@ -2035,6 +2412,22 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
       btn.innerText = '⏳ Broadcasting...';
 
       try {
+        if (imageFile) {
+          btn.innerText = '⏳ Uploading banner...';
+          const imageForm = new FormData();
+          imageForm.append('file', imageFile);
+          const imageRes = await fetch('/api/v1/notify/upload-media', {
+            method: 'POST',
+            body: imageForm
+          });
+          const imageJson = await imageRes.json();
+          if (!imageRes.ok || !imageJson.success) {
+            throw new Error(imageJson.error || 'Failed to upload banner image.');
+          }
+          imageUrl = imageJson.data.imageUrl;
+        }
+
+        btn.innerText = '⏳ Broadcasting...';
         const res = await fetch('/api/v1/notify/popups', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -2046,6 +2439,7 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
             imageUrl,
             actionTarget,
             actionButtonText,
+            actions,
             targetAudience,
             targetEmails,
             hasCancelButton
@@ -2081,6 +2475,22 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
       btn.innerText = '⏳ Broadcasting...';
 
       try {
+        if (imageFile) {
+          btn.innerText = '⏳ Uploading banner...';
+          const imageForm = new FormData();
+          imageForm.append('file', imageFile);
+          const imageRes = await fetch('/api/v1/notify/upload-media', {
+            method: 'POST',
+            body: imageForm
+          });
+          const imageJson = await imageRes.json();
+          if (!imageRes.ok || !imageJson.success) {
+            throw new Error(imageJson.error || 'Failed to upload banner image.');
+          }
+          imageUrl = imageJson.data.imageUrl;
+        }
+
+        btn.innerText = '⏳ Broadcasting...';
         const res = await fetch('/api/v1/notify/popups', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -2639,7 +3049,7 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
       if (!currentModalPaper) return;
       const fileInput = document.getElementById('modal-replace-input');
       if (!fileInput.files || fileInput.files.length === 0) {
-        alert('Please choose a replacement file (.pdf, .doc, image) from your device first.');
+        showToast('Please choose a replacement file (.pdf, .doc, image) from your device first.', true);
         return;
       }
 
@@ -2855,7 +3265,7 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
     async function deleteSelectedTempFiles() {
       const checkedBoxes = Array.from(document.querySelectorAll('.temp-file-cb:checked'));
       if (checkedBoxes.length === 0) {
-        alert('Please select at least one file to clean.');
+        showToast('Please select at least one file to clean.', true);
         return;
       }
 
@@ -3229,7 +3639,7 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
     function deleteSelectedCommunityMessages() {
       const checked = Array.from(document.querySelectorAll('.community-msg-cb:checked'));
       if (checked.length === 0) {
-        alert('Please select at least one community message to delete.');
+        showToast('Please select at least one community message to delete.', true);
         return;
       }
       const ids = checked.map(cb => cb.dataset.id);

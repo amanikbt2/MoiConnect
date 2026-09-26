@@ -42,7 +42,12 @@ router.post('/community/upload-media', tempUpload.single('file'), communityContr
 
 // Web Dashboard API Routes
 router.get('/dashboard/overview', dashboardController.getDashboardOverview);
+router.get('/dashboard/materials', dashboardController.getDashboardMaterials);
+router.patch('/dashboard/materials/visibility', dashboardController.updateDashboardMaterialsVisibility);
+router.patch('/dashboard/materials/:id/visibility', dashboardController.updateDashboardMaterialVisibility);
+router.delete('/dashboard/materials', dashboardController.deleteDashboardMaterials);
 router.get('/dashboard/papers/:id/download-file', dashboardController.downloadPaperFile);
+router.post('/dashboard/papers/:id/upload-thumbnail', tempUpload.single('file'), dashboardController.uploadPaperThumbnail);
 router.post('/dashboard/papers/:id/approve', dashboardController.quickApprovePaper);
 router.post('/dashboard/papers/:id/reject', dashboardController.quickRejectPaper);
 router.patch('/dashboard/papers/:id', dashboardController.quickEditPaper);
@@ -54,13 +59,14 @@ router.get('/dashboard/community-messages', dashboardController.getDashboardComm
 router.delete('/dashboard/community-messages', dashboardController.deleteDashboardCommunityMessages);
 
 // Push Notification & Bell Inbox Routes
-router.post('/notifications/register-token', notificationController.registerDeviceToken);
+router.post('/notifications/register-token', authenticate, notificationController.registerDeviceToken);
 router.get('/notifications', notificationController.getNotifications);
 router.post('/notifications/:id/read', notificationController.markNotificationRead);
 router.post('/admin/push-notify', notificationController.sendAdminPushNotification);
 router.get('/admin/push-history', notificationController.getAdminNotificationHistory);
 
 // Notify & Popup API Routes
+router.post('/notify/upload-media', tempUpload.single('file'), popupController.uploadPopupMedia);
 router.get('/notify/popups', popupController.getAdminPopups);
 router.post('/notify/popups', popupController.createPopup);
 router.delete('/notify/popups/:id', popupController.deletePopup);

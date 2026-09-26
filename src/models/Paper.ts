@@ -15,10 +15,12 @@ export interface IPaperDocument extends Document {
   semester?: string;
   examYear?: number;
   fileUrl: string;
+  thumbnail?: string;
   publicId?: string;
   tempFilename?: string;
   fileType: string;
   fileSize?: number;
+  isHidden: boolean;
   submittedBy?: mongoose.Types.ObjectId;
   status: PaperStatus;
   rejectionReason?: string;
@@ -47,10 +49,12 @@ const paperSchema = new Schema<IPaperDocument>(
     semester: { type: String, trim: true },
     examYear: { type: Number },
     fileUrl: { type: String, required: true },
+    thumbnail: { type: String, trim: true },
     publicId: { type: String },
     tempFilename: { type: String, trim: true },
     fileType: { type: String, default: 'pdf' },
     fileSize: { type: Number },
+    isHidden: { type: Boolean, default: false, index: true },
     submittedBy: { type: Schema.Types.ObjectId, ref: 'User', required: false },
     status: {
       type: String,

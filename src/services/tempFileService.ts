@@ -126,6 +126,35 @@ export const deleteBatchTempFiles = (filenames: string[]): { deletedCount: numbe
   return { deletedCount, errors };
 };
 
+export const getSignedCloudinaryUrl = (publicId?: string, fileUrl?: string, fileType?: string): string => {
+  if (!fileUrl?.includes('res.cloudinary.com')) return fileUrl || '';
+
+  if (!publicId) return fileUrl;
+
+  const resourceType = fileUrl.includes('/raw/upload/')
+    ? 'raw'
+    : fileUrl.includes('/image/upload/')
+      ? 'image'
+      : fileType && fileType !== 'image'
+        ? 'raw'
+        : 'image';
+
+  if (resourceType === 'raw') {
+    const format = path.extname(publicId).replace('.', '') || 'pdf';
+    return cloudinary.utils.private_download_url(publicId, format, {
+      resource_type: 'raw',
+      type: 'upload',
+      attachment: false
+    });
+  }
+
+  return cloudinary.url(publicId, {
+    resource_type: resourceType,
+    type: 'upload',
+    secure: true,
+    sign_url: true
+  });
+};
 export const uploadTempFileToCloudinary = async (
   filenameOrUrl: string,
   folder: string = 'MoiConnect/pdf'
@@ -145,23 +174,18 @@ export const uploadTempFileToCloudinary = async (
     throw new Error(`The uploaded file "${filename}" is empty (0 bytes). Please upload a valid document.`);
   }
 
-  let result: any;
-  try {
-    result = await cloudinary.uploader.upload(filePath, {
-      folder,
-      resource_type: 'auto',
-      use_filename: true,
-      unique_filename: true
-    });
-  } catch (firstErr: any) {
-    // Fallback for raw non-image documents (PDFs, DOCX, etc.)
-    result = await cloudinary.uploader.upload(filePath, {
-      folder,
-      resource_type: 'raw',
-      use_filename: true,
-      unique_filename: true
-    });
-  }
+  const extension = path.extname(filename).toLowerCase();
+  const imageExtensions = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.svg', '.ico', '.tif', '.tiff']);
+  const resourceType = imageExtensions.has(extension) ? 'image' : 'raw';
+
+  const result: any = await cloudinary.uploader.upload(filePath, {
+    folder,
+    resource_type: resourceType,
+    type: 'upload',
+    access_mode: 'public',
+    use_filename: true,
+    unique_filename: true
+  });
 
   // After successful Cloudinary upload, remove file from local server disk
   try {
@@ -173,7 +197,7 @@ export const uploadTempFileToCloudinary = async (
   }
 
   return {
-    secure_url: result.secure_url,
+    secure_url: getSignedCloudinaryUrl(result.public_id, result.secure_url, resourceType === 'raw' ? 'pdf' : 'image'),
     public_id: result.public_id
   };
 };

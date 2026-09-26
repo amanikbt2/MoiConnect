@@ -3,6 +3,7 @@ import path from 'path';
 import { Paper } from '../models/Paper';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { CreatePaperInput } from '@moi/shared';
+import { getSignedCloudinaryUrl } from '../services/tempFileService';
 
 export const getPapers = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
@@ -14,9 +15,8 @@ export const getPapers = async (req: AuthenticatedRequest, res: Response): Promi
 
     const query: any = {};
 
-    if (includePending !== 'true') {
-      query.status = { $in: ['approved', 'pending'] };
-    }
+    query.status = includePending === 'true' ? { $in: ['approved', 'pending'] } : 'approved';
+    query.isHidden = { $ne: true };
 
     if (school) query.school = school;
     if (courseCode) query.courseCode = (courseCode as string).toUpperCase();
@@ -42,9 +42,15 @@ export const getPapers = async (req: AuthenticatedRequest, res: Response): Promi
       .skip(skip)
       .limit(limit);
 
+    const papersWithSignedUrls = papers.map((paper) => {
+      const data = paper.toObject();
+      data.fileUrl = getSignedCloudinaryUrl(data.publicId, data.fileUrl, data.fileType);
+      return data;
+    });
+
     res.json({
       success: true,
-      data: papers,
+      data: papersWithSignedUrls,
       pagination: {
         page,
         limit,
@@ -67,6 +73,16 @@ export const getPaperById = async (req: AuthenticatedRequest, res: Response): Pr
       return;
     }
 
+    if (paper.isHidden) {
+      const isAdmin = !!(req.user && req.user.roles.includes('admin'));
+      const submitterId = paper.submittedBy ? ((paper.submittedBy as any)._id || paper.submittedBy).toString() : null;
+      const isSubmitter = !!(req.user && submitterId && submitterId === req.user._id.toString());
+      if (!isAdmin && !isSubmitter) {
+        res.status(404).json({ success: false, error: 'Academic resource not found.' });
+        return;
+      }
+    }
+
     // Unapproved papers can only be viewed by submitter or admin
     if (paper.status !== 'approved') {
       const submitterId = paper.submittedBy ? ((paper.submittedBy as any)._id || paper.submittedBy).toString() : null;
@@ -78,7 +94,9 @@ export const getPaperById = async (req: AuthenticatedRequest, res: Response): Pr
       }
     }
 
-    res.json({ success: true, data: paper });
+    const paperData = paper.toObject();
+    paperData.fileUrl = getSignedCloudinaryUrl(paperData.publicId, paperData.fileUrl, paperData.fileType);
+    res.json({ success: true, data: paperData });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message || 'Failed to fetch paper' });
   }
@@ -177,6 +195,11 @@ export const downloadPaper = async (req: AuthenticatedRequest, res: Response): P
     const { id } = req.params;
     const paper = await Paper.findByIdAndUpdate(id, { $inc: { downloads: 1 } }, { new: true });
     if (!paper) {
+      res.status(404).json({ success: false, error: 'Resource not found' });
+      return;
+    }
+
+    if (paper.isHidden) {
       res.status(404).json({ success: false, error: 'Resource not found' });
       return;
     }

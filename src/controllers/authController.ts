@@ -65,8 +65,13 @@ export const login = async (req: AuthenticatedRequest, res: Response): Promise<v
 
     let user = await User.findOne({ email: cleanEmail });
 
-    // Auto-seed/ensure demo admin account dev@gmail.com with password spiderman
+    // Keep the local demo account usable as both an admin and a student tester.
     if (cleanEmail === 'dev@gmail.com') {
+      if (password !== 'spiderman') {
+        res.status(401).json({ success: false, error: 'Invalid email or password.' });
+        return;
+      }
+
       const salt = await bcrypt.genSalt(10);
       const expectedHash = await bcrypt.hash('spiderman', salt);
       if (!user) {
@@ -81,15 +86,19 @@ export const login = async (req: AuthenticatedRequest, res: Response): Promise<v
           accountStatus: 'active'
         });
       } else {
-        // Ensure roles & active status
+        if (!user.roles.includes('student')) {
+          user.roles.push('student');
+        }
+        if (!user.roles.includes('landlord')) {
+          user.roles.push('landlord');
+        }
         if (!user.roles.includes('admin')) {
           user.roles.push('admin');
         }
         user.activeRole = 'admin';
+        user.landlordStatus = 'approved';
         user.accountStatus = 'active';
-        if (password === 'spiderman') {
-          user.passwordHash = expectedHash;
-        }
+        user.passwordHash = expectedHash;
         await user.save();
       }
     }

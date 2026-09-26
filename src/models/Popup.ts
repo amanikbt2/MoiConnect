@@ -1,5 +1,11 @@
 import mongoose, { Schema, Document } from 'mongoose';
 
+export interface IPopupAction {
+  label: string;
+  target: string;
+  type: 'in_app' | 'external';
+}
+
 export interface IPopup extends Document {
   popupId: string;
   type: 'normal' | 'update';
@@ -10,6 +16,7 @@ export interface IPopup extends Document {
   hasCancelButton: boolean;
   actionTarget?: string;
   actionButtonText?: string;
+  actions?: IPopupAction[];
   targetAudience: 'all' | 'unauthenticated' | 'emails';
   targetEmails?: string[];
   minAppVersion?: string;
@@ -30,6 +37,14 @@ const PopupSchema: Schema = new Schema(
     hasCancelButton: { type: Boolean, default: true },
     actionTarget: { type: String, default: '/community' },
     actionButtonText: { type: String, default: 'Explore' },
+    actions: {
+      type: [{
+        label: { type: String, required: true },
+        target: { type: String, required: true },
+        type: { type: String, enum: ['in_app', 'external'], required: true }
+      }],
+      default: []
+    },
     targetAudience: { type: String, enum: ['all', 'unauthenticated', 'emails'], default: 'all' },
     targetEmails: [{ type: String }],
     minAppVersion: { type: String, default: '1.0.0' },

@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { Popup } from '../models/Popup';
+import { uploadTempFileToCloudinary, deleteTempFile } from '../services/tempFileService';
 
 // Helper to format incrementing popupId e.g. POPUP-0001
 const getNextPopupId = async (): Promise<string> => {
@@ -8,6 +9,32 @@ const getNextPopupId = async (): Promise<string> => {
   return `POPUP-${String(nextNum).padStart(4, '0')}`;
 };
 
+// 1. Admin: Upload popup banner image to Cloudinary
+export const uploadPopupMedia = async (req: Request, res: Response): Promise<void> => {
+  try {
+    if (!req.file) {
+      res.status(400).json({ success: false, error: 'Please choose an image file.' });
+      return;
+    }
+
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+    if (!allowedTypes.includes(req.file.mimetype)) {
+      deleteTempFile(req.file.filename);
+      res.status(400).json({ success: false, error: 'Only JPG, PNG, WEBP, and GIF images are supported.' });
+      return;
+    }
+
+    const upload = await uploadTempFileToCloudinary(req.file.filename, 'moiconnect/notify_media');
+    res.status(201).json({
+      success: true,
+      message: 'Popup image uploaded successfully.',
+      data: { imageUrl: upload.secure_url, publicId: upload.public_id }
+    });
+  } catch (error: any) {
+    if (req.file) deleteTempFile(req.file.filename);
+    res.status(500).json({ success: false, error: error.message || 'Failed to upload popup image.' });
+  }
+};
 // 1. Admin: Create a new Normal or Update Popup
 export const createPopup = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -20,6 +47,7 @@ export const createPopup = async (req: Request, res: Response): Promise<void> =>
       hasCancelButton = true,
       actionTarget = '/community',
       actionButtonText = 'Explore',
+      actions = [],
       targetAudience = 'all',
       targetEmails = [],
       minAppVersion = '1.0.0',
@@ -33,6 +61,20 @@ export const createPopup = async (req: Request, res: Response): Promise<void> =>
       return;
     }
 
+    const parsedActions = Array.isArray(actions)
+      ? actions
+          .map((action: any) => ({
+            label: String(action?.label || '').trim(),
+            target: String(action?.target || '').trim(),
+            type: action?.type === 'external' ? 'external' : 'in_app'
+          }))
+          .filter((action: { label: string; target: string }) => action.label && action.target)
+      : [];
+    const normalizedActions = parsedActions.length
+      ? parsedActions
+      : title
+        ? [{ label: actionButtonText || 'Explore', target: actionTarget || '/community', type: 'in_app' as const }]
+        : [];
     const popupId = await getNextPopupId();
 
     let parsedEmails: string[] = [];
@@ -55,6 +97,7 @@ export const createPopup = async (req: Request, res: Response): Promise<void> =>
       hasCancelButton: Boolean(hasCancelButton),
       actionTarget,
       actionButtonText,
+      actions: normalizedActions,
       targetAudience,
       targetEmails: parsedEmails,
       minAppVersion,

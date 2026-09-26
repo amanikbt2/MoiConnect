@@ -94,6 +94,14 @@ export const setupSocketIO = (io: SocketIOServer): void => {
 
     console.log(`[Socket Connected]: ${isGuest ? 'Guest (Unknown)' : `User ${userId}`} (Active: ${activeSockets.size})`);
 
+    const broadcastOnlineCount = () => {
+      io.to('community_room').emit('community:online_count', getOnlineStats());
+    };
+
+    socket.on('community:request_online_count', () => {
+      socket.emit('community:online_count', getOnlineStats());
+    });
+
     // Join personal notification room if authenticated
     if (userId) {
       socket.join(`user:${userId}`);
@@ -101,6 +109,7 @@ export const setupSocketIO = (io: SocketIOServer): void => {
 
     // Auto-join open community broadcast room
     socket.join('community_room');
+    broadcastOnlineCount();
 
     // Broadcast system connection pill notice if user is authenticated
     if (userId) {
@@ -300,6 +309,7 @@ export const setupSocketIO = (io: SocketIOServer): void => {
     // Clean up on disconnect instantly with zero delay or intervals
     socket.on('disconnect', () => {
       activeSockets.delete(socket.id);
+      broadcastOnlineCount();
       console.log(`[Socket Disconnected]: ${isGuest ? 'Guest (Unknown)' : `User ${userId}`} (Active: ${activeSockets.size})`);
       if (userId) {
         User.findById(userId).select('name').then(u => {
