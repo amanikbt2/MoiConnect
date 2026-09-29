@@ -3029,7 +3029,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
           return '<article class="material-card ' + (hidden ? 'hidden-material' : '') + '">' +
             '<div class="material-cover ' + (material.fileType === 'pdf' ? 'pdf' : '') + '"><span class="material-cover-icon">' + (material.fileType === 'pdf' ? 'PDF' : 'DOC') + '</span><input type="checkbox" class="material-check material-select" data-id="' + id + '" onchange="updateMaterialsSelection()" aria-label="Select ' + title + '"></div>' +
             '<div class="material-body"><div class="material-title">' + title + '</div><div class="material-meta"><strong>' + unit + '</strong> &middot; ' + school + '<br>' + type + ' &middot; ' + status + (material.mtid ? ' &middot; ' + escapeMaterialHtml(material.mtid) : '') + '</div><span class="material-status ' + (hidden ? 'hidden-status' : '') + '">' + (hidden ? 'Hidden from students' : 'Visible to students') + '</span></div>' +
-            '<div class="material-actions"><button data-material-id="' + id + '" data-hidden="' + (!hidden) + '" onclick="toggleMaterialVisibility(this.dataset.materialId, this.dataset.hidden === &quot;true&quot;)" class="btn btn-view">' + (hidden ? 'Show' : 'Hide') + '</button><button onclick="deleteMaterials([\'' + id + '\'])" class="btn btn-reject">Delete</button></div>' +
+            '<div class="material-actions"><button data-material-id="' + id + '" data-hidden="' + (!hidden) + '" onclick="toggleMaterialVisibility(this.dataset.materialId, this.dataset.hidden === &quot;true&quot;)" class="btn btn-view">' + (hidden ? 'Show' : 'Hide') + '</button><button onclick="deleteMaterials([&quot;' + id + '&quot;])" class="btn btn-reject">Delete</button></div>' +
           '</article>';
         }).join('') + '</div>';
     }
@@ -4719,7 +4719,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
             '<div style="color: #475569; margin-bottom: 6px; line-height: 1.4;">' + item.body + '</div>' +
             '<div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; color: #94a3b8; font-size: 11px;">' +
               '<span>Target: ' + targetText + '</span>' +
-              '<span style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;"><span>' + new Date(item.createdAt).toLocaleString() + '</span><button type="button" onclick="deletePushHistoryItem(\'' + item._id + '\')" class="btn" style="background:#fee2e2;color:#dc2626;padding:3px 8px;font-size:10px;font-weight:800;border:1px solid #fca5a5;border-radius:6px;cursor:pointer;">🗑️ Delete</button></span>' +
+              '<span style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;"><span>' + new Date(item.createdAt).toLocaleString() + '</span><button type="button" onclick="deletePushHistoryItem(&quot;' + item._id + '&quot;)" class="btn" style="background:#fee2e2;color:#dc2626;padding:3px 8px;font-size:10px;font-weight:800;border:1px solid #fca5a5;border-radius:6px;cursor:pointer;">🗑️ Delete</button></span>' +
             '</div>' +
           '</div>';
         }).join('');
