@@ -12,6 +12,7 @@ import {
   uploadTempFileToCloudinary
 } from '../services/tempFileService';
 import { dispatchPushNotification } from '../services/pushNotificationService';
+import { awardPaperApprovalPoints } from '../services/rewardService';
 
 export const getStats = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
@@ -79,6 +80,14 @@ export const reviewPaper = async (req: AuthenticatedRequest, res: Response): Pro
         deleteTempFile(paper.tempFilename || paper.fileUrl);
         paper.tempFilename = undefined;
       }
+      if (Array.isArray(paper.attachments)) {
+        for (const att of paper.attachments) {
+          if (att.tempFilename || att.fileUrl?.includes('/uploads/temp/')) {
+            deleteTempFile(att.tempFilename || att.fileUrl);
+            att.tempFilename = undefined;
+          }
+        }
+      }
     } else {
       paper.rejectionReason = undefined;
 
@@ -96,6 +105,36 @@ export const reviewPaper = async (req: AuthenticatedRequest, res: Response): Pro
             paper.fileUrl = 'https://res.cloudinary.com/demo/image/upload/sample.pdf';
           }
           paper.tempFilename = undefined;
+        }
+      }
+      // Handle attachments Cloudinary uploads
+      if (Array.isArray(paper.attachments)) {
+        for (let i = 0; i < paper.attachments.length; i++) {
+          const att = paper.attachments[i];
+          if (att.tempFilename || att.fileUrl?.includes('/uploads/temp/')) {
+            try {
+              const fileTarget = att.tempFilename || att.fileUrl;
+              const folder = att.fileType === 'image' ? 'MoiConnect/images' : 'MoiConnect/pdf';
+              const uploadRes = await uploadTempFileToCloudinary(fileTarget, folder);
+              att.fileUrl = uploadRes.secure_url;
+              att.publicId = uploadRes.public_id;
+              att.tempFilename = undefined;
+            } catch (attCloudErr) {
+              console.error('[Admin Review Paper] Attachment Cloudinary notice:', attCloudErr);
+              att.tempFilename = undefined;
+            }
+          }
+        }
+      }
+
+      if (!paper.thumbnail) {
+        if (paper.fileType === 'image' || paper.fileUrl?.match(/\.(jpg|jpeg|png|webp|gif)/i)) {
+          paper.thumbnail = paper.fileUrl;
+        } else if (Array.isArray(paper.attachments)) {
+          const imgAtt = paper.attachments.find(att => att.fileType === 'image' || att.fileUrl?.match(/\.(jpg|jpeg|png|webp|gif)/i));
+          if (imgAtt && imgAtt.fileUrl) {
+            paper.thumbnail = imgAtt.fileUrl;
+          }
         }
       }
 
@@ -122,6 +161,8 @@ export const reviewPaper = async (req: AuthenticatedRequest, res: Response): Pro
     paper.reviewedAt = new Date();
     await paper.save();
 
+    const awardedPoints = status === 'approved' ? await awardPaperApprovalPoints(paper) : 0;
+
     if (paper.submittedBy) {
       try {
         const submitter = await User.findById(paper.submittedBy);
@@ -130,7 +171,7 @@ export const reviewPaper = async (req: AuthenticatedRequest, res: Response): Pro
             await dispatchPushNotification({
               title: 'Paper Submission Approved 🎉',
               subtitle: 'Resource Published',
-              body: `Your paper submission "${paper.title}" (${paper.unitCode}) has been approved and published to MoiConnect!`,
+              body: `Your paper submission "${paper.title}" (${paper.unitCode}) has been approved and published to MoiConnect! You earned +${awardedPoints} reward points.`,
               icon: 'academic',
               target: 'emails',
               recipientEmails: [submitter.email],

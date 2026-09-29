@@ -36,13 +36,24 @@ const router = Router();
 
 // Community Real-Time Chat API Routes
 router.get('/community/messages', communityController.getCommunityMessages);
+router.get('/community/mention-users', communityController.getMentionUsers);
 router.post('/community/messages', optionalAuthenticate, communityController.postCommunityMessage);
-router.post('/community/messages/:id/reaction', communityController.toggleCommunityReaction);
+router.post('/community/messages/:id/reaction', optionalAuthenticate, communityController.toggleCommunityReaction);
 router.post('/community/upload-media', tempUpload.single('file'), communityController.uploadCommunityMedia);
+
+// App Settings API Routes
+router.get('/settings', dashboardController.getAppSettings);
+router.get('/dashboard/settings', dashboardController.getAppSettings);
+router.post('/dashboard/settings', dashboardController.updateDashboardSettings);
+router.get('/dashboard/backup', dashboardController.backupDatabase);
+router.post('/dashboard/restore', tempUpload.single('backup'), dashboardController.restoreDatabase);
 
 // Web Dashboard API Routes
 router.get('/dashboard/overview', dashboardController.getDashboardOverview);
+router.get('/dashboard/ai-overages', dashboardController.getAiOverages);
+router.delete('/dashboard/ai-overages', dashboardController.clearAiOverages);
 router.get('/dashboard/materials', dashboardController.getDashboardMaterials);
+router.post('/dashboard/materials/publish', tempUpload.fields([{ name: 'file', maxCount: 1 }, { name: 'thumbnail', maxCount: 1 }]), dashboardController.publishAdminMaterial);
 router.patch('/dashboard/materials/visibility', dashboardController.updateDashboardMaterialsVisibility);
 router.patch('/dashboard/materials/:id/visibility', dashboardController.updateDashboardMaterialVisibility);
 router.delete('/dashboard/materials', dashboardController.deleteDashboardMaterials);
@@ -59,18 +70,22 @@ router.get('/dashboard/community-messages', dashboardController.getDashboardComm
 router.delete('/dashboard/community-messages', dashboardController.deleteDashboardCommunityMessages);
 
 // Push Notification & Bell Inbox Routes
-router.post('/notifications/register-token', authenticate, notificationController.registerDeviceToken);
-router.get('/notifications', notificationController.getNotifications);
-router.post('/notifications/:id/read', notificationController.markNotificationRead);
+router.post('/notifications/register-token', optionalAuthenticate, notificationController.registerDeviceToken);
+router.get('/notifications', authenticate, notificationController.getNotifications);
+router.post('/notifications/read-all', authenticate, notificationController.markAllNotificationsRead);
+router.post('/notifications/:id/read', authenticate, notificationController.markNotificationRead);
 router.post('/admin/push-notify', notificationController.sendAdminPushNotification);
 router.get('/admin/push-history', notificationController.getAdminNotificationHistory);
+router.get('/admin/registered-devices', notificationController.getRegisteredDeviceCount);
 
 // Notify & Popup API Routes
 router.post('/notify/upload-media', tempUpload.single('file'), popupController.uploadPopupMedia);
 router.get('/notify/popups', popupController.getAdminPopups);
 router.post('/notify/popups', popupController.createPopup);
 router.delete('/notify/popups/:id', popupController.deletePopup);
-router.post('/notify/check-popup', popupController.checkClientPopup);
+router.post('/notify/check-popup', optionalAuthenticate, popupController.checkClientPopup);
+router.post('/notify/popups/:id/responses', optionalAuthenticate, popupController.submitPopupResponse);
+router.get('/notify/popups/:id/responses', popupController.getPopupResponses);
 
 // Auth Routes
 router.post('/auth/register', validateBody(registerSchema), authController.register);

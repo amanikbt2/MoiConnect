@@ -101,6 +101,30 @@ export const markNotificationRead = async (req: Request, res: Response): Promise
   }
 };
 
+// 4. Mark all notifications visible to the current user as read
+export const markAllNotificationsRead = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userEmail = (req as any).user?.email?.toLowerCase();
+    const userId = (req as any).user?._id?.toString();
+
+    if (!userId) {
+      res.status(401).json({ success: false, error: 'Authentication required.' });
+      return;
+    }
+
+    const query: any = {
+      $or: [
+        { target: 'all' },
+        ...(userEmail ? [{ target: 'emails', recipientEmails: userEmail }] : [])
+      ]
+    };
+
+    await Notification.updateMany(query, { $addToSet: { readBy: userId } });
+    res.json({ success: true, message: 'All notifications marked as read.' });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to mark notifications as read' });
+  }
+};
 // 4. Admin Push Notify Endpoint (called by Admin Web Portal)
 export const sendAdminPushNotification = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -144,6 +168,20 @@ export const sendAdminPushNotification = async (req: Request, res: Response): Pr
 };
 
 // 5. Get admin notification broadcast history
+export const getRegisteredDeviceCount = async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const [total, android, ios, web] = await Promise.all([
+      DeviceToken.countDocuments(),
+      DeviceToken.countDocuments({ platform: 'android' }),
+      DeviceToken.countDocuments({ platform: 'ios' }),
+      DeviceToken.countDocuments({ platform: 'web' })
+    ]);
+    res.json({ success: true, total, byPlatform: { android, ios, web } });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to count registered devices' });
+  }
+};
+
 export const getAdminNotificationHistory = async (_req: Request, res: Response): Promise<void> => {
   try {
     const history = await Notification.find().sort({ createdAt: -1 }).limit(30);

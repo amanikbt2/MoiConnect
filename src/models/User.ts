@@ -11,6 +11,7 @@ export interface IUserDocument extends Document {
   activeRole: UserRole;
   landlordStatus: LandlordStatus;
   accountStatus: AccountStatus;
+  points: number;
   landlordRequestDetails?: {
     idNumber: string;
     proofDetails: string;
@@ -47,6 +48,11 @@ const userSchema = new Schema<IUserDocument>(
       type: String,
       enum: ['active', 'suspended'],
       default: 'active'
+    },
+    points: {
+      type: Number,
+      default: 5,
+      min: 0
     },
     landlordRequestDetails: {
       idNumber: String,

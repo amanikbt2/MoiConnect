@@ -1,8 +1,10 @@
 import { Request, Response } from 'express';
 import { CommunityMessage } from '../models/CommunityMessage';
+import { User } from '../models/User';
 import { getSocketIO } from '../socket';
 import { dispatchPushNotification } from '../services/pushNotificationService';
 import { uploadTempFileToCloudinary } from '../services/tempFileService';
+import { getCampusBotsGeneration, isBotStopCommand, runCampusBotConversation, shouldCampusBotRespond, stopCampusBots } from '../services/campusBotService';
 
 // 1. Get Community Messages (Support Incremental Delta Sync via ?since=)
 export const getCommunityMessages = async (req: Request, res: Response): Promise<void> => {
@@ -13,13 +15,13 @@ export const getCommunityMessages = async (req: Request, res: Response): Promise
     if (since) {
       const sinceDate = new Date(since as string);
       if (!isNaN(sinceDate.getTime())) {
-        query.createdAt = { $gt: sinceDate };
+        query.updatedAt = { $gt: sinceDate };
       }
     }
 
     const maxLimit = Math.min(parseInt(limit as string, 10) || 100, 200);
 
-    const messages = await CommunityMessage.find(query)
+    const messages = await CommunityMessage.find(query).select('-reactionUsers')
       .sort({ createdAt: 1 }) // Chronological order
       .limit(maxLimit);
 
@@ -34,13 +36,46 @@ export const getCommunityMessages = async (req: Request, res: Response): Promise
   }
 };
 
+// Lightweight directory used by the mobile mention picker. The client caches this
+// locally and only sends a search request when its cached directory cannot match.
+export const getMentionUsers = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const query = String(req.query.q || '').trim();
+    const filter: Record<string, any> = { accountStatus: { $ne: 'suspended' } };
+    if (query) {
+      const safeQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      filter.name = { $regex: safeQuery, $options: 'i' };
+    }
+
+    const users = await User.find(filter)
+      .select('_id name avatarUrl')
+      .sort({ name: 1 })
+      .limit(query ? 25 : 5000)
+      .lean();
+
+    res.json({
+      success: true,
+      data: users.map((user: any) => ({ id: String(user._id), name: user.name, avatarUrl: user.avatarUrl }))
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to load mention users' });
+  }
+};
+
 // 2. Post Community Message via HTTP Fallback (Fast Non-Blocking Endpoint)
 export const postCommunityMessage = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { clientMsgId, text, fileAttachment, replyTo, senderName, senderEmail, senderFaculty, avatarBg, senderId } = req.body;
+    const { clientMsgId, text, fileAttachment, stickerId, replyTo, senderName, senderEmail, senderFaculty, senderCourse, senderPhone, senderAvatarUrl, avatarBg, senderId } = req.body;
     const user = (req as any).user;
 
-    if (!text?.trim() && !fileAttachment) {
+    if (isBotStopCommand(text)) {
+      stopCampusBots();
+      getSocketIO()?.to('community_room').emit('community:user_stop_typing', { userId: 'campus-bot' });
+      getSocketIO()?.to('community_room').emit('community:user_stop_typing', { userId: 'campus-ai' });
+    }
+    const botGeneration = getCampusBotsGeneration();
+
+    if (!text?.trim() && !fileAttachment && !stickerId) {
       res.status(400).json({ success: false, error: 'Message text or attachment is required.' });
       return;
     }
@@ -51,14 +86,20 @@ export const postCommunityMessage = async (req: Request, res: Response): Promise
     }
 
     if (!message) {
+      const isCampusBot = (user?.email || senderEmail || '').trim().toLowerCase() === 'dev@gmail.com';
+      const effectiveSenderName = isCampusBot ? 'Campus bot' : (senderName || user?.name || 'Moi Student');
       message = await CommunityMessage.create({
         clientMsgId,
         senderId: user?._id || senderId || '60d0fe4f5311236168a109ca',
-        senderName: senderName || user?.name || 'Moi Student',
+        senderName: effectiveSenderName,
         senderEmail: senderEmail || user?.email || '',
         senderFaculty: senderFaculty || 'School of Science & Computing',
+        senderCourse,
+        senderPhone,
+        senderAvatarUrl,
         avatarBg: avatarBg || '#15803d',
         text: text?.trim() || '',
+        stickerId,
         fileAttachment,
         replyTo,
         reactions: {}
@@ -73,14 +114,25 @@ export const postCommunityMessage = async (req: Request, res: Response): Promise
       // Asynchronous Push Notifications to offline devices (Non-blocking)
       setImmediate(() => {
         dispatchPushNotification({
-          title: `💬 ${message.senderName}`,
-          body: message.text ? message.text.slice(0, 100) : `📎 Sent a file: ${message.fileAttachment?.name || 'Attachment'}`,
+          title: `Ã°Å¸â€™Â¬ ${message.senderName}`,
+          body: message.text ? message.text.slice(0, 100) : `Ã°Å¸â€œÅ½ Sent a file: ${message.fileAttachment?.name || 'Attachment'}`,
           target: 'all',
           data: { screen: 'community', channelId: 'community_chat' }
         }).catch(() => {});
       });
     }
 
+    if (message && !isBotStopCommand(message.text) && shouldCampusBotRespond(message.text, message.replyTo)) {
+      setImmediate(() => {
+        void runCampusBotConversation(message, {
+          onTyping: (assistant, typing) => getSocketIO()?.to('community_room').emit(
+            typing ? 'community:user_typing' : 'community:user_stop_typing',
+            { userId: assistant.kind === 'bot' ? 'campus-bot' : 'campus-ai', userName: assistant.name }
+          ),
+          onReply: (assistantMessage) => getSocketIO()?.to('community_room').emit('community:receive_message', assistantMessage)
+        }, botGeneration).catch((botError) => console.error('[Campus assistants] Reply error:', botError));
+      });
+    }
     res.status(201).json({
       success: true,
       message: 'Message sent successfully',
@@ -95,10 +147,12 @@ export const postCommunityMessage = async (req: Request, res: Response): Promise
 export const toggleCommunityReaction = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
-    const { emoji } = req.body;
+    const { emoji, reactorId } = req.body;
+    const user = (req as any).user;
+    const actorId = user?._id?.toString() || (typeof reactorId === 'string' ? reactorId.trim() : '');
 
-    if (!emoji) {
-      res.status(400).json({ success: false, error: 'Emoji is required.' });
+    if (!emoji || !actorId) {
+      res.status(400).json({ success: false, error: 'Emoji and reactor identity are required.' });
       return;
     }
 
@@ -108,33 +162,58 @@ export const toggleCommunityReaction = async (req: Request, res: Response): Prom
       return;
     }
 
-    if (!message.reactions) {
-      message.reactions = new Map();
+    if (!message.reactions) message.reactions = new Map();
+    if (!message.reactionUsers) message.reactionUsers = new Map();
+
+    let previousEmoji: string | undefined;
+    for (const [reactionEmoji, users] of message.reactionUsers.entries()) {
+      if (users.includes(actorId)) {
+        previousEmoji = reactionEmoji;
+        break;
+      }
     }
 
-    const currentCount = message.reactions.get(emoji) || 0;
-    message.reactions.set(emoji, currentCount + 1);
+    const removeUserFromReaction = (reactionEmoji: string) => {
+      const users = message.reactionUsers!.get(reactionEmoji) || [];
+      const nextUsers = users.filter((id) => id !== actorId);
+      if (nextUsers.length === 0) {
+        message.reactionUsers!.delete(reactionEmoji);
+        message.reactions!.delete(reactionEmoji);
+      } else {
+        message.reactionUsers!.set(reactionEmoji, nextUsers);
+        message.reactions!.set(reactionEmoji, nextUsers.length);
+      }
+    };
+
+    let myReaction: string | undefined;
+    if (previousEmoji === emoji) {
+      removeUserFromReaction(emoji);
+    } else {
+      if (previousEmoji) removeUserFromReaction(previousEmoji);
+      const users = message.reactionUsers.get(emoji) || [];
+      if (!users.includes(actorId)) users.push(actorId);
+      message.reactionUsers.set(emoji, users);
+      message.reactions.set(emoji, users.length);
+      myReaction = emoji;
+    }
 
     await message.save();
-
-    // Broadcast reaction update live via sockets
+    const reactions = Object.fromEntries(message.reactions);
     const io = getSocketIO();
     if (io) {
       io.to('community_room').emit('community:reaction_updated', {
         messageId: id,
-        reactions: Object.fromEntries(message.reactions)
+        reactions,
+        actorId,
+        myReaction
       });
     }
 
-    res.json({
-      success: true,
-      data: message
-    });
+    res.json({ success: true, data: { messageId: id, reactions, myReaction } });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message || 'Failed to react to message' });
   }
 };
-
 // 4. Upload Community Chat Media File to Cloudinary (folder: moiconnect/chat_media)
 export const uploadCommunityMedia = async (req: Request, res: Response): Promise<void> => {
   try {

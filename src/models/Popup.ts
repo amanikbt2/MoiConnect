@@ -6,9 +6,18 @@ export interface IPopupAction {
   type: 'in_app' | 'external';
 }
 
+export interface IPopupInput {
+  id: string;
+  label: string;
+  type: 'text' | 'radio' | 'toggle' | 'checkbox';
+  required: boolean;
+  options?: string[];
+  placeholder?: string;
+}
+
 export interface IPopup extends Document {
   popupId: string;
-  type: 'normal' | 'update';
+  type: 'normal' | 'update' | 'interactive';
   title: string;
   subtitle?: string;
   body?: string;
@@ -17,6 +26,7 @@ export interface IPopup extends Document {
   actionTarget?: string;
   actionButtonText?: string;
   actions?: IPopupAction[];
+  inputs?: IPopupInput[];
   targetAudience: 'all' | 'unauthenticated' | 'emails';
   targetEmails?: string[];
   minAppVersion?: string;
@@ -29,7 +39,7 @@ export interface IPopup extends Document {
 const PopupSchema: Schema = new Schema(
   {
     popupId: { type: String, required: true, unique: true },
-    type: { type: String, enum: ['normal', 'update'], default: 'normal', required: true },
+    type: { type: String, enum: ['normal', 'update', 'interactive'], default: 'normal', required: true },
     title: { type: String, required: true },
     subtitle: { type: String, default: '' },
     body: { type: String, default: '' },
@@ -42,6 +52,17 @@ const PopupSchema: Schema = new Schema(
         label: { type: String, required: true },
         target: { type: String, required: true },
         type: { type: String, enum: ['in_app', 'external'], required: true }
+      }],
+      default: []
+    },
+    inputs: {
+      type: [{
+        id: { type: String, required: true },
+        label: { type: String, required: true },
+        type: { type: String, enum: ['text', 'radio', 'toggle', 'checkbox'], required: true },
+        required: { type: Boolean, default: false },
+        options: { type: [String], default: [] },
+        placeholder: { type: String, default: '' }
       }],
       default: []
     },

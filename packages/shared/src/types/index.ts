@@ -29,12 +29,23 @@ export interface IUser {
   activeRole: UserRole;
   landlordStatus: LandlordStatus;
   accountStatus: AccountStatus;
+  points?: number;
   createdAt: string;
   updatedAt: string;
 }
 
 export type PaperType = 'past_paper' | 'cat' | 'revision' | 'notes';
 export type PaperStatus = 'pending' | 'approved' | 'rejected';
+
+export interface IPaperAttachment {
+  _id?: string;
+  fileUrl: string;
+  tempFilename?: string;
+  fileType: string;
+  fileSize?: number;
+  originalName?: string;
+  publicId?: string;
+}
 
 export interface IPaper {
   _id: string;
@@ -56,12 +67,14 @@ export interface IPaper {
   tempFilename?: string;
   fileType: string;
   fileSize?: number;
+  attachments?: IPaperAttachment[];
   submittedBy: IUser | string;
   status: PaperStatus;
   rejectionReason?: string;
   reviewedBy?: IUser | string;
   reviewedAt?: string;
   downloads: number;
+  ratingScore?: string;
   createdAt: string;
   updatedAt: string;
 }

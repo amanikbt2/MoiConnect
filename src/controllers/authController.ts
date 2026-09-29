@@ -76,7 +76,7 @@ export const login = async (req: AuthenticatedRequest, res: Response): Promise<v
       const expectedHash = await bcrypt.hash('spiderman', salt);
       if (!user) {
         user = await User.create({
-          name: 'Moi System Admin',
+          name: 'Campus bot',
           email: 'dev@gmail.com',
           passwordHash: expectedHash,
           phone: '+254700000000',
@@ -96,6 +96,7 @@ export const login = async (req: AuthenticatedRequest, res: Response): Promise<v
           user.roles.push('admin');
         }
         user.activeRole = 'admin';
+        user.name = 'Campus bot';
         user.landlordStatus = 'approved';
         user.accountStatus = 'active';
         user.passwordHash = expectedHash;

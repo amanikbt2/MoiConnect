@@ -11,11 +11,20 @@ build/
 
 # Environment variables & secrets
 .env
+.env.*
 .env.local
 .env.production
 .env.development
 *.env
 !.env.example
+
+# Signing keys and certificates
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+*.jks
 
 # Uploads & temporary files
 uploads/

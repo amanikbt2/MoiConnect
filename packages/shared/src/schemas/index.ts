@@ -23,6 +23,15 @@ export const refreshTokenSchema = z.object({
   refreshToken: z.string().min(1, 'Refresh token is required')
 });
 
+export const paperAttachmentSchema = z.object({
+  fileUrl: z.string().min(1, 'Valid file URL is required'),
+  tempFilename: z.string().optional(),
+  fileType: z.string().default('pdf'),
+  fileSize: z.union([z.number(), z.string()]).optional().transform((val) => typeof val === 'string' ? parseInt(val, 10) || 0 : val),
+  originalName: z.string().optional(),
+  publicId: z.string().optional()
+});
+
 // Academic Paper Schemas
 export const createPaperSchema = z.object({
   title: z.string().min(3, 'Title must be at least 3 characters'),
@@ -40,7 +49,8 @@ export const createPaperSchema = z.object({
   publicId: z.string().optional(),
   tempFilename: z.string().optional(),
   fileType: z.string().default('pdf'),
-  fileSize: z.union([z.number(), z.string()]).optional()
+  fileSize: z.union([z.number(), z.string()]).optional(),
+  attachments: z.array(paperAttachmentSchema).optional()
 });
 
 export const updatePaperSchema = z.object({
@@ -58,7 +68,8 @@ export const updatePaperSchema = z.object({
   publicId: z.string().optional(),
   tempFilename: z.string().optional(),
   fileType: z.string().optional(),
-  fileSize: z.union([z.number(), z.string()]).optional()
+  fileSize: z.union([z.number(), z.string()]).optional(),
+  attachments: z.array(paperAttachmentSchema).optional()
 });
 
 export type UpdatePaperInput = z.infer<typeof updatePaperSchema>;

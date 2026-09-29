@@ -1,5 +1,7 @@
 import { Request, Response } from 'express';
+import mongoose from 'mongoose';
 import { Popup } from '../models/Popup';
+import { PopupResponse } from '../models/PopupResponse';
 import { uploadTempFileToCloudinary, deleteTempFile } from '../services/tempFileService';
 
 // Helper to format incrementing popupId e.g. POPUP-0001
@@ -48,6 +50,7 @@ export const createPopup = async (req: Request, res: Response): Promise<void> =>
       actionTarget = '/community',
       actionButtonText = 'Explore',
       actions = [],
+      inputs = [],
       targetAudience = 'all',
       targetEmails = [],
       minAppVersion = '1.0.0',
@@ -75,7 +78,20 @@ export const createPopup = async (req: Request, res: Response): Promise<void> =>
       : title
         ? [{ label: actionButtonText || 'Explore', target: actionTarget || '/community', type: 'in_app' as const }]
         : [];
-    const popupId = await getNextPopupId();
+    const normalizedInputs = Array.isArray(inputs)
+      ? inputs.map((input: any, index: number) => ({
+          id: String(input?.id || `field_${index + 1}`).trim(),
+          label: String(input?.label || '').trim(),
+          type: ['text', 'radio', 'toggle', 'checkbox'].includes(input?.type) ? input.type : 'text',
+          required: Boolean(input?.required),
+          options: Array.isArray(input?.options) ? input.options.map((option: any) => String(option).trim()).filter(Boolean) : [],
+          placeholder: String(input?.placeholder || '').trim()
+        })).filter((input: any) => input.id && input.label)
+      : [];
+    if (type === 'interactive' && normalizedInputs.length === 0) {
+      res.status(400).json({ success: false, error: 'Add at least one interactive input.' });
+      return;
+    }    const popupId = await getNextPopupId();
 
     let parsedEmails: string[] = [];
     if (Array.isArray(targetEmails)) {
@@ -98,6 +114,7 @@ export const createPopup = async (req: Request, res: Response): Promise<void> =>
       actionTarget,
       actionButtonText,
       actions: normalizedActions,
+      inputs: normalizedInputs,
       targetAudience,
       targetEmails: parsedEmails,
       minAppVersion,
@@ -167,11 +184,13 @@ export const checkClientPopup = async (req: Request, res: Response): Promise<voi
     // Check 1: Update Popups
     const updatePopups = await Popup.find({ type: 'update' }).sort({ createdAt: -1 });
     for (const item of updatePopups) {
+      if (dismissedList.includes(item.popupId)) {
+        continue;
+      }
       if (item.minAppVersion && isVersionLower(version, item.minAppVersion)) {
         res.json({
-          hasPopup: true,
-          type: 'update',
-          popup: item
+          success: true,
+          data: { hasPopup: true, type: 'update', popup: item }
         });
         return;
       }
@@ -180,7 +199,7 @@ export const checkClientPopup = async (req: Request, res: Response): Promise<voi
     // Check 2: Active Normal Popups
     const now = new Date();
     const normalPopups = await Popup.find({
-      type: 'normal',
+      type: { $in: ['normal', 'interactive'] },
       $or: [{ expiresAt: { $exists: false } }, { expiresAt: null }, { expiresAt: { $gt: now } }]
     }).sort({ createdAt: -1 });
 
@@ -191,12 +210,12 @@ export const checkClientPopup = async (req: Request, res: Response): Promise<voi
 
       // Check audience targeting
       if (item.targetAudience === 'all') {
-        res.json({ hasPopup: true, type: 'normal', popup: item });
+        res.json({ success: true, data: { hasPopup: true, type: item.type, popup: item } });
         return;
       }
 
       if (item.targetAudience === 'unauthenticated' && !userEmail) {
-        res.json({ hasPopup: true, type: 'normal', popup: item });
+        res.json({ success: true, data: { hasPopup: true, type: item.type, popup: item } });
         return;
       }
 
@@ -206,14 +225,69 @@ export const checkClientPopup = async (req: Request, res: Response): Promise<voi
         item.targetEmails &&
         item.targetEmails.includes(userEmail)
       ) {
-        res.json({ hasPopup: true, type: 'normal', popup: item });
+        res.json({ success: true, data: { hasPopup: true, type: item.type, popup: item } });
         return;
       }
     }
 
-    res.json({ hasPopup: false });
+    res.json({ success: true, data: { hasPopup: false } });
   } catch (error: any) {
     // Zero-lag fallback: return hasPopup false so app continues without error
-    res.json({ hasPopup: false });
+    res.json({ success: true, data: { hasPopup: false } });
+  }
+};
+export const submitPopupResponse = async (req: any, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { responses } = req.body;
+    if (!responses || typeof responses !== 'object' || Array.isArray(responses)) {
+      res.status(400).json({ success: false, error: 'Responses are required.' });
+      return;
+    }
+    const popupLookup = mongoose.isValidObjectId(id) ? { $or: [{ _id: id }, { popupId: id }] } : { popupId: id };
+    const popup = await Popup.findOne({ ...popupLookup, type: 'interactive' });
+    if (!popup) {
+      res.status(404).json({ success: false, error: 'Interactive popup not found.' });
+      return;
+    }
+    const user = req.user;
+    const cleanResponses: Record<string, string | boolean> = {};
+    for (const input of popup.inputs || []) {
+      const value = responses[input.id];
+      if (input.required && (value === undefined || value === null || value === '')) {
+        res.status(400).json({ success: false, error: `${input.label} is required.` });
+        return;
+      }
+      if (value !== undefined) {
+        cleanResponses[input.id] = input.type === 'toggle' || input.type === 'checkbox' ? Boolean(value) : String(value).trim();
+      }
+    }
+    const existingQuery = user?._id
+      ? { popupId: popup._id, userId: user._id }
+      : { popupId: popup._id, email: String(req.body.email || '').trim().toLowerCase(), userId: { $exists: false } };
+    await PopupResponse.findOneAndUpdate(
+      existingQuery,
+      { popupId: popup._id, popupCode: popup.popupId, userId: user?._id, email: user?.email || req.body.email || '', name: user?.name || req.body.name || 'Guest', responses: cleanResponses },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+    res.json({ success: true, message: 'Response submitted successfully.' });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to submit response.' });
+  }
+};
+
+export const getPopupResponses = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const responseId = req.params.id;
+    const popupLookup = mongoose.isValidObjectId(responseId) ? { $or: [{ _id: responseId }, { popupId: responseId }] } : { popupId: responseId };
+    const popup = await Popup.findOne(popupLookup).select('_id popupId title type inputs');
+    if (!popup) {
+      res.status(404).json({ success: false, error: 'Popup not found.' });
+      return;
+    }
+    const responses = await PopupResponse.find({ popupId: popup._id }).sort({ createdAt: -1 }).lean();
+    res.json({ success: true, data: { popup, responses } });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to load popup responses.' });
   }
 };

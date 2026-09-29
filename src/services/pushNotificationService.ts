@@ -97,7 +97,7 @@ export const dispatchPushNotification = async (payload: IPushNotificationPayload
       body: resolvedBody,
       data: {
         ...data,
-        notificationId: notificationRecord._id,
+        notificationId: notificationRecord._id.toString(),
         icon
       },
       priority: 'high',
@@ -122,9 +122,24 @@ export const dispatchPushNotification = async (payload: IPushNotificationPayload
         body: JSON.stringify(chunk)
       });
       const resData = await res.json();
-      if (resData && resData.data) {
-        sentCount += chunk.length;
+      const tickets = Array.isArray(resData?.data) ? resData.data : [];
+      if (!res.ok || tickets.length !== chunk.length) {
+        console.error('[Push Notification]: Expo rejected the batch.', {
+          status: res.status,
+          response: resData
+        });
       }
+      tickets.forEach((ticket: any, index: number) => {
+        if (ticket?.status === 'ok') {
+          sentCount += 1;
+          return;
+        }
+
+        console.error('[Push Notification]: Expo ticket failed.', {
+          token: chunk[index]?.to,
+          error: ticket?.details?.error || ticket?.message || 'Unknown Expo push error'
+        });
+      });
     } catch (err) {
       console.error(`[Push Notification Batch Error]:`, err);
     }

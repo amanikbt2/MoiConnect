@@ -17,15 +17,21 @@ export interface IReplyTo {
 
 export interface ICommunityMessage extends Document {
   clientMsgId?: string;
+  botReplyFor?: string;
   senderId: Types.ObjectId;
   senderName: string;
   senderEmail?: string;
   senderFaculty: string;
+  senderCourse?: string;
+  senderPhone?: string;
+  senderAvatarUrl?: string;
   avatarBg: string;
   text: string;
+  stickerId?: string;
   fileAttachment?: IFileAttachment;
   replyTo?: IReplyTo;
   reactions?: Map<string, number>;
+  reactionUsers?: Map<string, string[]>;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -33,12 +39,17 @@ export interface ICommunityMessage extends Document {
 const communityMessageSchema = new Schema<ICommunityMessage>(
   {
     clientMsgId: { type: String, index: true },
+    botReplyFor: { type: String, unique: true, sparse: true, index: true },
     senderId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     senderName: { type: String, required: true },
     senderEmail: { type: String, index: true },
     senderFaculty: { type: String, default: 'Moi University Student' },
+    senderCourse: { type: String, trim: true },
+    senderPhone: { type: String, trim: true },
+    senderAvatarUrl: { type: String, trim: true },
     avatarBg: { type: String, default: '#15803d' },
     text: { type: String, default: '' },
+    stickerId: { type: String, trim: true },
     fileAttachment: {
       name: { type: String },
       url: { type: String },
@@ -56,6 +67,11 @@ const communityMessageSchema = new Schema<ICommunityMessage>(
       type: Map,
       of: Number,
       default: {}
+    },
+    reactionUsers: {
+      type: Map,
+      of: [String],
+      default: {}
     }
   },
   {
@@ -64,6 +80,7 @@ const communityMessageSchema = new Schema<ICommunityMessage>(
 );
 
 // High Performance Compound Index for 1ms Delta Sync Queries
+communityMessageSchema.index({ updatedAt: -1 });
 communityMessageSchema.index({ createdAt: -1 });
 
 export const CommunityMessage = model<ICommunityMessage>('CommunityMessage', communityMessageSchema);

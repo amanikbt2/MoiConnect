@@ -1,4 +1,6 @@
 import { Request, Response } from 'express';
+import mongoose from 'mongoose';
+import { EJSON } from 'bson';
 import path from 'path';
 import fs from 'fs';
 import { User } from '../models/User';
@@ -6,6 +8,7 @@ import { Paper } from '../models/Paper';
 import { House } from '../models/House';
 import { Report } from '../models/Report';
 import { CommunityMessage } from '../models/CommunityMessage';
+import { getAppSettingValue, setAppSettingValue } from '../models/AppSetting';
 import cloudinary from '../config/cloudinary';
 import { getOnlineStats } from '../socket';
 import {
@@ -15,6 +18,27 @@ import {
   uploadTempFileToCloudinary
 } from '../services/tempFileService';
 import { dispatchPushNotification } from '../services/pushNotificationService';
+import { awardPaperApprovalPoints } from '../services/rewardService';
+import { randomDownloadCount, randomRatingScore } from '../utils/materialStats';
+import { clearAiTelemetry, getAiTelemetry } from '../services/campusBotService';
+
+// Secret-safe AI pool telemetry for the admin dashboard. API keys themselves are never returned.
+export const getAiOverages = async (_req: Request, res: Response): Promise<void> => {
+  try {
+    res.json({ success: true, data: await getAiTelemetry() });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to load AI telemetry.' });
+  }
+};
+
+export const clearAiOverages = async (_req: Request, res: Response): Promise<void> => {
+  try {
+    await clearAiTelemetry();
+    res.json({ success: true, message: 'AI overages, counters, cooldowns, and logs cleared.' });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to clear AI telemetry.' });
+  }
+};
 
 // 1. JSON API: Get full dashboard data
 export const getDashboardOverview = async (_req: Request, res: Response): Promise<void> => {
@@ -53,6 +77,7 @@ export const getDashboardOverview = async (_req: Request, res: Response): Promis
       .limit(30);
 
     const tempFilesSummary = await listTempFiles();
+    const showDemoMaterials = await getAppSettingValue('showDemoMaterials', false);
 
     res.json({
       success: true,
@@ -66,6 +91,7 @@ export const getDashboardOverview = async (_req: Request, res: Response): Promis
         approvedHouses,
         pendingReports,
         totalDepartments,
+        showDemoMaterials,
         totalOnline: onlineStats.totalOnline,
         authenticatedOnline: onlineStats.authenticatedCount,
         guestOnline: onlineStats.guestCount,
@@ -73,6 +99,9 @@ export const getDashboardOverview = async (_req: Request, res: Response): Promis
         totalTempFiles: tempFilesSummary.totalFiles,
         totalTempSizeBytes: tempFilesSummary.totalSizeBytes,
         totalTempSizeFormatted: tempFilesSummary.totalSizeFormatted
+      },
+      settings: {
+        showDemoMaterials
       },
       pendingPapers: pendingPaperList,
       approvedPapers: approvedPaperList,
@@ -84,6 +113,140 @@ export const getDashboardOverview = async (_req: Request, res: Response): Promis
   }
 };
 
+// 1b. JSON API: Get & Update App Settings
+export const getAppSettings = async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const showDemoMaterials = await getAppSettingValue('showDemoMaterials', false);
+    res.json({
+      success: true,
+      settings: { showDemoMaterials }
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const updateDashboardSettings = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { key, value, showDemoMaterials } = req.body;
+    let targetKey = key || 'showDemoMaterials';
+    let targetVal = value !== undefined ? value : showDemoMaterials;
+
+    if (typeof targetVal !== 'boolean') {
+      res.status(400).json({ success: false, message: 'Setting value must be a boolean.' });
+      return;
+    }
+
+    const updatedVal = await setAppSettingValue(targetKey, targetVal, (req as any).user?._id);
+    const currentShowDemo = await getAppSettingValue('showDemoMaterials', false);
+
+    res.json({
+      success: true,
+      message: `Demo materials ${currentShowDemo ? 'enabled' : 'disabled'} successfully.`,
+      settings: { showDemoMaterials: currentShowDemo }
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Full database backup and restore tools for the admin dashboard.
+export const backupDatabase = async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const db = mongoose.connection.db;
+    if (!db) {
+      res.status(503).json({ success: false, error: 'Database connection is not ready.' });
+      return;
+    }
+
+    const collections: Record<string, unknown[]> = {};
+    const collectionInfos = await db.listCollections({}, { nameOnly: true }).toArray();
+    for (const info of collectionInfos) {
+      collections[info.name] = await db.collection(info.name).find({}).toArray();
+    }
+
+    const backup = {
+      format: 'moiconnect-database-backup',
+      version: 1,
+      database: db.databaseName,
+      exportedAt: new Date().toISOString(),
+      collections
+    };
+
+    const filename = `moiconnect-backup-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(EJSON.stringify(backup, undefined, 2));
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to create database backup.' });
+  }
+};
+
+export const restoreDatabase = async (req: Request, res: Response): Promise<void> => {
+  const uploadedPath = req.file?.path;
+  try {
+    if (req.body?.confirmRestore !== 'RESTORE_DATABASE') {
+      res.status(400).json({ success: false, error: 'Restore confirmation is required.' });
+      return;
+    }
+    if (!uploadedPath) {
+      res.status(400).json({ success: false, error: 'Please select a backup JSON file.' });
+      return;
+    }
+
+    const db = mongoose.connection.db;
+    if (!db) {
+      res.status(503).json({ success: false, error: 'Database connection is not ready.' });
+      return;
+    }
+
+    const parsed = EJSON.parse(fs.readFileSync(uploadedPath, 'utf8')) as any;
+    if (parsed?.format !== 'moiconnect-database-backup' || parsed?.version !== 1 || !parsed?.collections || typeof parsed.collections !== 'object') {
+      res.status(400).json({ success: false, error: 'Invalid MoiConnect backup file.' });
+      return;
+    }
+
+    const collectionNames = Object.keys(parsed.collections);
+    if (collectionNames.length === 0 || collectionNames.some((name) => !/^[a-zA-Z0-9_-]+$/.test(name) || name.startsWith('system.'))) {
+      res.status(400).json({ success: false, error: 'Backup contains invalid collection names.' });
+      return;
+    }
+
+    const restored: Record<string, number> = {};
+        const existingCollections = await db.listCollections({}, { nameOnly: true }).toArray();
+    for (const existing of existingCollections) {
+      if (!collectionNames.includes(existing.name) && !existing.name.startsWith('system.')) {
+        await db.collection(existing.name).drop();
+      }
+    }
+
+    for (const name of collectionNames) {
+      const documents = parsed.collections[name];
+      if (!Array.isArray(documents)) {
+        res.status(400).json({ success: false, error: `Collection "${name}" is not a valid document list.` });
+        return;
+      }
+      const collection = db.collection(name);
+      await collection.deleteMany({});
+      if (documents.length > 0) {
+        await collection.insertMany(documents, { ordered: false });
+      }
+      restored[name] = documents.length;
+    }
+
+    res.json({
+      success: true,
+      message: `Database restored successfully across ${collectionNames.length} collections.`,
+      restored
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to restore database backup.' });
+  } finally {
+    if (uploadedPath) {
+      try { fs.unlinkSync(uploadedPath); } catch { /* temporary file cleanup is best effort */ }
+    }
+  }
+};
 // Material management is loaded only when the admin opens the tab.
 export const getDashboardMaterials = async (_req: Request, res: Response): Promise<void> => {
   try {
@@ -189,11 +352,131 @@ export const deleteDashboardMaterials = async (req: Request, res: Response): Pro
     res.status(500).json({ success: false, error: error.message || 'Failed to delete materials' });
   }
 };
+
 const DEFAULT_MATERIAL_THUMBNAILS: Record<string, string> = {
   past_paper: 'https://images.unsplash.com/photo-1434030216411-0b793f4b4173?auto=format&fit=crop&w=800&q=80',
   cat: 'https://images.unsplash.com/photo-1509228468518-180dd4864904?auto=format&fit=crop&w=800&q=80',
   revision: 'https://images.unsplash.com/photo-1456513080510-7bf3a84b82f8?auto=format&fit=crop&w=800&q=80',
   notes: 'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&w=800&q=80'
+};
+
+export const publishAdminMaterial = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const {
+      title,
+      type,
+      school,
+      department,
+      courseCode,
+      unitCode,
+      unitName,
+      academicYear,
+      semester,
+      examYear,
+      description
+    } = req.body;
+
+    if (!title || !type || !school || !department || !unitCode || !unitName) {
+      res.status(400).json({
+        success: false,
+        error: 'Missing required fields. Title, Type, School, Department, Unit Code, and Unit Name are required.'
+      });
+      return;
+    }
+
+    const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+    const documentFile = files?.['file']?.[0] || (req as any).file;
+    const thumbnailFile = files?.['thumbnail']?.[0];
+
+    if (!documentFile) {
+      res.status(400).json({ success: false, error: 'Please attach a document file (PDF, Word, or Image).' });
+      return;
+    }
+
+    // 1. Upload main document directly to Cloudinary
+    const cloudRes = await uploadTempFileToCloudinary(documentFile.filename, 'MoiConnect/pdf');
+
+    // 2. Upload thumbnail to Cloudinary if provided
+    let thumbnailUrl: string | undefined;
+    if (thumbnailFile) {
+      try {
+        const thumbRes = await uploadTempFileToCloudinary(thumbnailFile.filename, 'MoiConnect/thumbnails');
+        thumbnailUrl = thumbRes.secure_url;
+      } catch (thumbErr) {
+        console.warn('[Admin Publish Material] Thumbnail upload warning:', thumbErr);
+      }
+    }
+
+    if (!thumbnailUrl) {
+      thumbnailUrl = DEFAULT_MATERIAL_THUMBNAILS[type] || DEFAULT_MATERIAL_THUMBNAILS['notes'];
+    }
+
+    // 3. Detect file type
+    const cleanOrig = documentFile.originalname.toLowerCase();
+    const ext = path.extname(cleanOrig).replace('.', '');
+    let detectedType = 'pdf';
+    if (['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'svg'].includes(ext)) {
+      detectedType = 'image';
+    } else if (['doc', 'docx', 'odt'].includes(ext)) {
+      detectedType = 'doc';
+    } else if (['txt', 'text', 'md', 'csv', 'json'].includes(ext)) {
+      detectedType = 'text';
+    } else {
+      detectedType = ext || 'pdf';
+    }
+
+    // 4. Auto-generate MTID (N0001 for notes/revision, C0001 for cat, P0001 for past_paper)
+    let prefix = 'N';
+    let typesToCount = ['notes', 'revision'];
+    if (type === 'cat') {
+      prefix = 'C';
+      typesToCount = ['cat'];
+    } else if (type === 'past_paper') {
+      prefix = 'P';
+      typesToCount = ['past_paper'];
+    }
+
+    const approvedCount = await Paper.countDocuments({
+      status: 'approved',
+      type: { $in: typesToCount }
+    });
+    const mtid = `${prefix}${String(approvedCount + 1).padStart(4, '0')}`;
+
+    // 5. Create Paper record in MongoDB directly with approved status
+    const newPaper = await Paper.create({
+      title: title.trim(),
+      description: description ? description.trim() : undefined,
+      type,
+      school: school.trim(),
+      department: department.trim(),
+      courseCode: (courseCode || unitCode).trim().toUpperCase(),
+      unitCode: unitCode.trim().toUpperCase(),
+      unitName: unitName.trim(),
+      academicYear: academicYear ? academicYear.trim() : undefined,
+      semester: semester ? semester.trim() : undefined,
+      examYear: examYear ? parseInt(examYear, 10) : undefined,
+      fileUrl: cloudRes.secure_url,
+      publicId: cloudRes.public_id,
+      thumbnail: thumbnailUrl,
+      fileType: detectedType,
+      fileSize: documentFile.size,
+      status: 'approved',
+      isHidden: false,
+      downloads: randomDownloadCount(),
+      ratingScore: randomRatingScore(),
+      mtid,
+      reviewedAt: new Date()
+    });
+
+    res.status(201).json({
+      success: true,
+      message: `Material "${newPaper.title}" (${newPaper.unitCode}) published directly to Cloudinary & Database!`,
+      data: newPaper
+    });
+  } catch (error: any) {
+    console.error('[Admin Direct Publish Material Error]:', error);
+    res.status(500).json({ success: false, error: error.message || 'Failed to publish material' });
+  }
 };
 
 // Admin: Upload an optional material thumbnail to Cloudinary
@@ -262,6 +545,37 @@ export const quickApprovePaper = async (req: Request, res: Response): Promise<vo
       }
     }
 
+    // Cloudinary upload pipeline for attached documents
+    if (Array.isArray(paper.attachments)) {
+      for (let i = 0; i < paper.attachments.length; i++) {
+        const att = paper.attachments[i];
+        if (att.tempFilename || att.fileUrl?.includes('/uploads/temp/')) {
+          try {
+            const fileTarget = att.tempFilename || att.fileUrl;
+            const folder = att.fileType === 'image' ? 'MoiConnect/images' : 'MoiConnect/pdf';
+            const uploadRes = await uploadTempFileToCloudinary(fileTarget, folder);
+            att.fileUrl = uploadRes.secure_url;
+            att.publicId = uploadRes.public_id;
+            att.tempFilename = undefined;
+          } catch (attErr: any) {
+            console.error('[Dashboard Quick Approve] Attachment Cloudinary notice:', attErr);
+            att.tempFilename = undefined;
+          }
+        }
+      }
+    }
+
+    if (!paper.thumbnail) {
+      if (paper.fileType === 'image' || paper.fileUrl?.match(/\.(jpg|jpeg|png|webp|gif)/i)) {
+        paper.thumbnail = paper.fileUrl;
+      } else if (Array.isArray(paper.attachments)) {
+        const imgAtt = paper.attachments.find(att => att.fileType === 'image' || att.fileUrl?.match(/\.(jpg|jpeg|png|webp|gif)/i));
+        if (imgAtt && imgAtt.fileUrl) {
+          paper.thumbnail = imgAtt.fileUrl;
+        }
+      }
+    }
+
     if (!paper.mtid) {
       let prefix = 'N';
       let typesToCount = ['notes', 'revision'];
@@ -283,6 +597,8 @@ export const quickApprovePaper = async (req: Request, res: Response): Promise<vo
     paper.reviewedAt = new Date();
     await paper.save();
 
+    const awardedPoints = await awardPaperApprovalPoints(paper);
+
     // Send in-app and push notification to the student submitter
     if (paper.submittedBy) {
       try {
@@ -291,7 +607,7 @@ export const quickApprovePaper = async (req: Request, res: Response): Promise<vo
           await dispatchPushNotification({
             title: 'Paper Submission Approved 🎉',
             subtitle: 'Resource Published',
-            body: `Your paper submission "${paper.title}" (${paper.unitCode}) has been approved and published to MoiConnect!`,
+            body: `Your paper submission "${paper.title}" (${paper.unitCode}) has been approved and published to MoiConnect! You earned +${awardedPoints} reward points.`,
             icon: 'academic',
             target: 'emails',
             recipientEmails: [submitter.email],
@@ -332,6 +648,14 @@ export const quickRejectPaper = async (req: Request, res: Response): Promise<voi
     if (paper.tempFilename || paper.fileUrl?.includes('/uploads/temp/')) {
       deleteTempFile(paper.tempFilename || paper.fileUrl);
       paper.tempFilename = undefined;
+    }
+    if (Array.isArray(paper.attachments)) {
+      for (const att of paper.attachments) {
+        if (att.tempFilename || att.fileUrl?.includes('/uploads/temp/')) {
+          deleteTempFile(att.tempFilename || att.fileUrl);
+          att.tempFilename = undefined;
+        }
+      }
     }
 
     paper.reviewedAt = new Date();
@@ -387,6 +711,9 @@ export const quickEditPaper = async (req: Request, res: Response): Promise<void>
     if (updates.department !== undefined) paper.department = updates.department;
     if (updates.type !== undefined) paper.type = updates.type;
     if (updates.examYear !== undefined) paper.examYear = updates.examYear;
+    if (updates.academicYear !== undefined) paper.academicYear = updates.academicYear;
+    if (updates.semester !== undefined) paper.semester = updates.semester;
+    if (updates.description !== undefined) paper.description = updates.description;
 
     await paper.save();
 
@@ -853,7 +1180,7 @@ export const renderPublicTempFolder = async (_req: Request, res: Response): Prom
 </body>
 </html>`;
 
-    res.setHeader('Content-Type', 'text/html');
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(html);
   } catch (error: any) {
     res.status(500).send('Error rendering public temp folder: ' + error.message);
@@ -1099,12 +1426,23 @@ export const renderSmartPreviewPage = (req: Request, res: Response): void => {
 </body>
 </html>`;
 
-  res.setHeader('Content-Type', 'text/html');
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(html);
 };
 
 // 4. Render HTML Admin Dashboard Page for GET / and GET /admin
-export const renderAdminDashboard = (_req: Request, res: Response): void => {
+export const renderAdminDashboard = async (_req: Request, res: Response): Promise<void> => {
+  const initialShowDemo = await getAppSettingValue('showDemoMaterials', false);
+  const isCheckedAttr = initialShowDemo ? 'checked' : '';
+  const badgeText = initialShowDemo ? 'ENABLED' : 'DISABLED';
+  const badgeBg = initialShowDemo ? '#dcfce7' : '#f1f5f9';
+  const badgeColor = initialShowDemo ? '#15803d' : '#64748b';
+  const sliderBg = initialShowDemo ? '#22c55e' : '#cbd5e1';
+  const knobLeft = initialShowDemo ? '29px' : '3px';
+  const labelText = initialShowDemo
+    ? 'Saved in Database (Showing Demo & Real)'
+    : 'Saved in Database (Real Materials Only)';
+
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1281,6 +1619,11 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
         Manage Materials
       </button>
+
+      <button id="tab-btn-publish" onclick="switchTab('publish')" class="tab-btn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        Upload Admin Materials
+      </button>
       <button id="tab-btn-temp" onclick="switchTab('temp')" class="tab-btn">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
         Server Media (Temp)
@@ -1311,6 +1654,16 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
       <button id="tab-btn-push" onclick="switchTab('push')" class="tab-btn">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
         Notify (In-App & Push)
+      </button>
+
+      <button id="tab-btn-ai-overages" onclick="switchTab('ai-overages')" class="tab-btn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 12h18"/><circle cx="12" cy="12" r="9"/><path d="M8 8h8v8H8z"/></svg>
+        AI Overages
+      </button>
+
+      <button id="tab-btn-settings" onclick="switchTab('settings')" class="tab-btn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        App Settings
       </button>
     </div>
 
@@ -1369,6 +1722,149 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
         </div>
       </div>
     </section>
+
+    <!-- TAB: UPLOAD ADMIN MATERIALS (DIRECT PUBLISH) -->
+    <section id="tab-content-publish" class="tab-content hidden">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#15803d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              Upload & Publish Admin Materials
+            </h2>
+            <p class="card-sub">Direct Admin Publisher. Upload academic revision papers, CATs, and modules straight to Cloudinary & Database with instant approval.</p>
+          </div>
+          <span class="brand-badge" style="font-size: 12px; padding: 4px 10px;">Direct Cloudinary + DB</span>
+        </div>
+
+        <form id="admin-publish-form" onsubmit="publishAdminMaterialDirect(event)" style="display: flex; flex-direction: column; gap: 20px;">
+          
+          <!-- Grid section for form fields -->
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px;">
+            
+            <!-- Title -->
+            <div style="grid-column: 1 / -1;">
+              <label style="display: block; font-size: 13px; font-weight: 700; color: #334155; margin-bottom: 6px;">Material Title <span style="color: #dc2626;">*</span></label>
+              <input type="text" id="pub-title" name="title" class="form-control" style="width: 100%; font-size: 14px; padding: 10px 14px;" placeholder="e.g., COM 310 Data Structures & Algorithms Complete Revision Pack" required />
+            </div>
+
+            <!-- Material Type -->
+            <div>
+              <label style="display: block; font-size: 13px; font-weight: 700; color: #334155; margin-bottom: 6px;">Material Category / Type <span style="color: #dc2626;">*</span></label>
+              <select id="pub-type" name="type" class="form-control" style="width: 100%; font-size: 14px; padding: 10px 14px; font-weight: 600;" required>
+                <option value="past_paper">📄 Past Paper</option>
+                <option value="cat">📝 Continuous Assessment Test (CAT)</option>
+                <option value="revision">📚 Revision Pack / Exam Prep</option>
+                <option value="notes">📖 Lecture Notes / Summary</option>
+                <option value="solution">✅ Marking Scheme / Solution</option>
+                <option value="lecture_notes">🎓 Module / Course Material</option>
+              </select>
+            </div>
+
+            <!-- School / Faculty -->
+            <div>
+              <label style="display: block; font-size: 13px; font-weight: 700; color: #334155; margin-bottom: 6px;">School / Faculty <span style="color: #dc2626;">*</span></label>
+              <select id="pub-school-select" name="school" onchange="handleSchoolSelectChange(this)" class="form-control" style="width: 100%; font-size: 14px; padding: 10px 14px;" required>
+                <option value="School of Information Sciences">School of Information Sciences</option>
+                <option value="School of Science & Aerospace Studies">School of Science & Aerospace Studies</option>
+                <option value="School of Business & Economics">School of Business & Economics</option>
+                <option value="School of Engineering">School of Engineering</option>
+                <option value="School of Education">School of Education</option>
+                <option value="School of Law">School of Law</option>
+                <option value="School of Medicine">School of Medicine</option>
+                <option value="School of Arts & Social Sciences">School of Arts & Social Sciences</option>
+                <option value="School of Nursing">School of Nursing</option>
+                <option value="School of Public Health">School of Public Health</option>
+                <option value="School of Agriculture & Natural Resources">School of Agriculture & Natural Resources</option>
+                <option value="custom">✍️ Other / Custom School...</option>
+              </select>
+              <input type="text" id="pub-school-custom" class="form-control hidden" placeholder="Enter custom school name..." style="width: 100%; margin-top: 8px;" />
+            </div>
+
+            <!-- Department -->
+            <div>
+              <label style="display: block; font-size: 13px; font-weight: 700; color: #334155; margin-bottom: 6px;">Department <span style="color: #dc2626;">*</span></label>
+              <input type="text" id="pub-department" name="department" class="form-control" style="width: 100%;" placeholder="e.g., Computer Science, IT, Mathematics" required />
+            </div>
+<!-- Unit Code -->
+            <div>
+              <label style="display: block; font-size: 13px; font-weight: 700; color: #334155; margin-bottom: 6px;">Unit Code <span style="color: #dc2626;">*</span></label>
+              <input type="text" id="pub-unitCode" name="unitCode" class="form-control" style="width: 100%; text-transform: uppercase;" placeholder="e.g., COM 310" required />
+            </div>
+
+            <!-- Unit Name -->
+            <div>
+              <label style="display: block; font-size: 13px; font-weight: 700; color: #334155; margin-bottom: 6px;">Unit Name <span style="color: #dc2626;">*</span></label>
+              <input type="text" id="pub-unitName" name="unitName" class="form-control" style="width: 100%;" placeholder="e.g., Data Structures & Algorithms" required />
+            </div>
+
+            <!-- Academic Year -->
+            <div>
+              <label style="display: block; font-size: 13px; font-weight: 700; color: #334155; margin-bottom: 6px;">Academic Level / Year</label>
+              <input type="text" id="pub-academicYear" name="academicYear" class="form-control" style="width: 100%;" placeholder="e.g., Year 3 or 2024/2025" />
+            </div>
+
+            <!-- Semester -->
+            <div>
+              <label style="display: block; font-size: 13px; font-weight: 700; color: #334155; margin-bottom: 6px;">Semester</label>
+              <select id="pub-semester" name="semester" class="form-control" style="width: 100%;">
+                <option value="">Select Semester (Optional)</option>
+                <option value="Semester 1">Semester 1</option>
+                <option value="Semester 2">Semester 2</option>
+                <option value="Trimester 1">Trimester 1</option>
+                <option value="Trimester 2">Trimester 2</option>
+              </select>
+            </div>
+
+            <!-- Exam / Resource Year -->
+            <div>
+              <label style="display: block; font-size: 13px; font-weight: 700; color: #334155; margin-bottom: 6px;">Exam / Resource Year</label>
+              <input type="number" id="pub-examYear" name="examYear" class="form-control" style="width: 100%;" placeholder="e.g., 2024" value="2024" />
+            </div>
+
+            <!-- Description -->
+            <div style="grid-column: 1 / -1;">
+              <label style="display: block; font-size: 13px; font-weight: 700; color: #334155; margin-bottom: 6px;">Description / Overview (Optional)</label>
+              <textarea id="pub-description" name="description" class="form-control" style="width: 100%; font-family: inherit;" rows="3" placeholder="Provide topic outlines, lecturer notes, or extra instructions for students..."></textarea>
+            </div>
+
+            <!-- Main File Upload Dropzone -->
+            <div style="grid-column: 1 / -1;">
+              <label style="display: block; font-size: 13px; font-weight: 700; color: #334155; margin-bottom: 6px;">Main Document File <span style="color: #dc2626;">*</span></label>
+              <div id="pub-file-dropzone" style="border: 2px dashed #cbd5e1; background-color: #f8fafc; border-radius: 14px; padding: 24px; text-align: center; cursor: pointer; transition: all 0.2s;" onclick="document.getElementById('pub-file-input').click()">
+                <input type="file" id="pub-file-input" name="file" onchange="handleAdminPubFileSelect(this)" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,.txt" style="display: none;" required />
+                <div style="width: 48px; height: 48px; border-radius: 50%; background-color: #dcfce7; color: #15803d; display: flex; align-items: center; justify-content: center; margin: 0 auto 12px;">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                </div>
+                <div id="pub-file-label" style="font-size: 15px; font-weight: 800; color: #0f172a;">Click to select or drop document file</div>
+                <div id="pub-file-sub" style="font-size: 12px; color: #64748b; margin-top: 4px;">Supports PDF, Word (.doc/.docx), Images (.png/.jpg), Text files up to 50MB</div>
+              </div>
+            </div>
+
+            <!-- Thumbnail Upload (Optional) -->
+            <div style="grid-column: 1 / -1;">
+              <label style="display: block; font-size: 13px; font-weight: 700; color: #334155; margin-bottom: 6px;">Custom Cover Thumbnail (Optional)</label>
+              <input type="file" id="pub-thumbnail-input" name="thumbnail" accept="image/*" class="form-control" style="width: 100%;" />
+              <div style="font-size: 11px; color: #94a3b8; margin-top: 4px;">If omitted, a high-quality default thumbnail based on material type will be automatically assigned.</div>
+            </div>
+
+          </div>
+
+          <!-- Progress / Upload Message -->
+          <div id="pub-status-box" class="hidden" style="padding: 14px 18px; border-radius: 12px; font-size: 14px; font-weight: 700;"></div>
+
+          <!-- Buttons -->
+          <div style="display: flex; gap: 12px; align-items: center; margin-top: 8px;">
+            <button type="submit" id="btn-pub-submit" class="btn btn-approve" style="padding: 12px 24px; font-size: 14px; gap: 8px;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              Publish Material Now (Cloudinary + DB)
+            </button>
+            <button type="button" onclick="resetAdminPublishForm()" class="btn btn-view" style="padding: 12px 18px; font-size: 14px;">Clear Form</button>
+          </div>
+        </form>
+      </div>
+    </section>
+
     <!-- TAB: SERVER MEDIA (TEMP) -->
     <section id="tab-content-temp" class="tab-content hidden">
       <div class="card">
@@ -1695,7 +2191,7 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
               <button type="button" id="pop-type-btn-normal" onclick="setPopupType('normal')" style="flex: 1; padding: 8px; font-weight: 800; border-radius: 8px; border: none; background: #ffffff; color: #15803d; cursor: pointer; font-size: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.1);">
                 📢 Normal Popup
               </button>
-              <button type="button" id="pop-type-btn-update" onclick="setPopupType('update')" style="flex: 1; padding: 8px; font-weight: 800; border-radius: 8px; border: none; background: transparent; color: #64748b; cursor: pointer; font-size: 12px;">
+                            <button type="button" id="pop-type-btn-interactive" onclick="setPopupType('interactive')" style="flex: 1; padding: 8px; font-weight: 800; border-radius: 8px; border: none; background: transparent; color: #64748b; cursor: pointer; font-size: 12px;">Interactive Popup</button><button type="button" id="pop-type-btn-update" onclick="setPopupType('update')" style="flex: 1; padding: 8px; font-weight: 800; border-radius: 8px; border: none; background: transparent; color: #64748b; cursor: pointer; font-size: 12px;">
                 🚀 App Update Popup
               </button>
             </div>
@@ -1781,6 +2277,17 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
               </button>
             </form>
 
+            <form id="popup-interactive-form" onsubmit="handleCreateInteractivePopup(event)" class="hidden" style="display: flex; flex-direction: column; gap: 14px;">
+              <div><label>Popup Title *</label><input type="text" id="pop-interactive-title" class="form-control" required /></div>
+              <div><label>Banner Image</label><input type="file" id="pop-interactive-image" accept="image/jpeg,image/png,image/webp,image/gif" class="form-control" /></div>
+              <div><label>Subtitle</label><input type="text" id="pop-interactive-subtitle" class="form-control" /></div>
+              <div><label>Body</label><textarea id="pop-interactive-body" class="form-control" rows="3"></textarea></div>
+              <div><label>Questions / Inputs</label><div id="interactive-inputs"></div><button type="button" onclick="addInteractiveInput()">+ Add input</button></div>
+              <div><label>Target Audience</label><select id="pop-interactive-audience" class="form-control"><option value="all">All Users and Guests</option><option value="unauthenticated">Guests Only</option><option value="emails">Specific Email List</option></select></div>
+              <textarea id="pop-interactive-emails" class="form-control" rows="2" placeholder="student@example.com, ..." style="display: none;"></textarea>
+              <label><input type="checkbox" id="pop-interactive-cancel" checked /> Allow dismissing without submitting</label>
+              <button type="submit" id="btn-submit-pop-interactive" class="btn btn-approve">Broadcast Interactive Popup</button>
+            </form>
             <!-- Update Popup Form -->
             <form id="popup-update-form" onsubmit="handleCreateUpdatePopup(event)" class="hidden" style="display: flex; flex-direction: column; gap: 14px;">
               <div>
@@ -1835,6 +2342,17 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
       <div id="notify-sub-push" class="hidden">
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 24px;">
           
+          <!-- Registered Push Devices -->
+          <div class="card" style="grid-column: 1 / -1; padding: 18px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+              <div style="display: flex; align-items: center; gap: 14px;">
+                <div style="width: 48px; height: 48px; border-radius: 14px; background: #dcfce7; color: #15803d; display: grid; place-items: center; font-size: 24px;">📱</div>
+                <div><div style="font-size: 12px; color: #64748b; font-weight: 700;">Registered Push Devices</div><div id="registered-push-device-count" style="font-size: 26px; color: #0f172a; font-weight: 900;">—</div><div id="registered-push-device-breakdown" style="font-size: 11px; color: #64748b;">Loading device tokens...</div></div>
+              </div>
+              <button type="button" onclick="loadRegisteredPushDevices()" class="btn btn-view" style="font-size: 11px;">Refresh Devices</button>
+            </div>
+          </div>
+
           <!-- Push Notify Form -->
           <div class="card">
             <div class="card-header">
@@ -1936,7 +2454,7 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
               <button onclick="loadPushHistory()" class="btn btn-view" style="font-size: 11px;">Refresh History</button>
             </div>
 
-            <div id="push-history-container" style="display: flex; flex-direction: column; gap: 10px;">
+            <div id="push-history-container" style="display: flex; flex-direction: column; gap: 10px; height: 900px; max-height: 900px; overflow-y: auto; overscroll-behavior: contain; padding-right: 6px;">
               <div style="text-align: center; padding: 32px; color: #94a3b8; font-size: 13px;">Loading broadcast history...</div>
             </div>
           </div>
@@ -1944,6 +2462,103 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
         </div>
       </div>
     </section>
+
+    <!-- TAB: AI OVERAGES & DEBUG LOGS -->
+    <section id="tab-content-ai-overages" class="tab-content hidden">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">AI API Pool & Overages</h2>
+            <p class="card-sub">Secret-safe runtime usage for Campus Bot and Campus AI. API keys are never shown.</p>
+          </div>
+          <div class="btn-group">
+            <button onclick="loadAiOverages()" class="btn btn-view">Refresh AI Status</button>
+            <button onclick="clearAiOverages()" class="btn btn-reject">Clear Overages Data</button>
+          </div>
+        </div>
+        <div id="ai-overages-summary" class="stats-grid" style="margin-bottom: 18px;"></div>
+        <div class="table-responsive">
+          <table>
+            <thead><tr><th>API</th><th>Model</th><th>Used in pool</th><th>Configured limit</th><th>Remaining</th><th>Success</th><th>Failures</th><th>Cooldown</th></tr></thead>
+            <tbody id="ai-overages-table-body"><tr><td colspan="8" style="text-align:center; padding:28px; color:#94a3b8;">Open this tab to load AI telemetry.</td></tr></tbody>
+          </table>
+        </div>
+        <p id="ai-overages-note" style="font-size:11px; color:#64748b; margin-top:14px; line-height:1.5;"></p>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">Campus AI Failure Log</h2>
+            <p class="card-sub">Recent in-memory request, quota, timeout, and fallback events.</p>
+          </div>
+          <button onclick="loadAiOverages()" class="btn btn-view">Refresh Logs</button>
+        </div>
+        <div id="ai-logs-container" style="display:flex; flex-direction:column; gap:8px; max-height:520px; overflow-y:auto;">
+          <div style="text-align:center; padding:28px; color:#94a3b8;">No AI logs loaded.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 10: APP SETTINGS -->
+    <section id="tab-content-settings" class="tab-content hidden">
+      <div style="max-width: 850px; margin: 0 auto; display: flex; flex-direction: column; gap: 24px;">
+        <div class="card" style="padding: 24px; border-radius: 16px;">
+          <div style="display: flex; align-items: center; justify-content: space-between; padding-bottom: 16px; border-bottom: 1px solid #e2e8f0; margin-bottom: 24px;">
+            <div>
+              <h2 style="margin: 0; font-size: 20px; font-weight: 800; color: #0f172a; display: flex; align-items: center; gap: 10px;">
+                <span>⚙️</span> Application Global Settings
+              </h2>
+              <p style="margin: 4px 0 0 0; font-size: 13px; color: #64748b;">Manage global system features & persistent database configurations.</p>
+            </div>
+            <div style="background: #f0fdf4; border: 1px solid #bbf7d0; padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: 700; color: #15803d; display: flex; align-items: center; gap: 6px;">
+              <span style="width: 8px; height: 8px; border-radius: 50%; background: #22c55e;"></span> MongoDB Synced
+            </div>
+          </div>
+
+          <!-- Setting Card 1: Demo Materials Toggle -->
+          <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 14px; padding: 22px; display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap;">
+            <div style="flex: 1; min-width: 280px;">
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+                <span style="font-size: 18px;">📚</span>
+                <h3 style="margin: 0; font-size: 16px; font-weight: 800; color: #0f172a;">Show Demo & Sample Materials</h3>
+              </div>
+              <p style="margin: 0; font-size: 13px; color: #475569; line-height: 1.5;">
+                When <b>ON</b>, sample/demo academic materials are included in mobile app listings.<br/>
+                When <b>OFF</b>, demo materials are hidden completely across the entire app so students only see real uploaded materials.
+              </p>
+            </div>
+
+            <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 8px;">
+              <div style="display: flex; align-items: center; gap: 12px;">
+                <span id="demo-status-badge" style="font-size: 11px; font-weight: 800; padding: 4px 10px; border-radius: 20px; background: ${badgeBg}; color: ${badgeColor}; text-transform: uppercase;">${badgeText}</span>
+                <label style="position: relative; display: inline-block; width: 54px; height: 28px; cursor: pointer;">
+                  <input type="checkbox" id="toggle-demo-materials" ${isCheckedAttr} onchange="handleDemoMaterialsToggle(this.checked)" style="opacity: 0; width: 0; height: 0;">
+                  <span id="toggle-slider" style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: ${sliderBg}; transition: .3s; border-radius: 34px;"></span>
+                  <span id="toggle-knob" style="position: absolute; height: 22px; width: 22px; left: ${knobLeft}; bottom: 3px; background-color: white; transition: .3s; border-radius: 50%; box-shadow: 0 2px 4px rgba(0,0,0,0.2);"></span>
+                </label>
+              </div>
+              <span id="demo-toggle-status-label" style="font-size: 11px; font-weight: 700; color: ${badgeColor};">${labelText}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    
+          <!-- Database Backup & Restore -->
+          <div style="background: #fff7ed; border: 1px solid #fed7aa; border-radius: 14px; padding: 22px; display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap;">
+            <div style="flex: 1; min-width: 280px;">
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+                <span style="font-size: 18px;">🗄️</span>
+                <h3 style="margin: 0; font-size: 16px; font-weight: 800; color: #7c2d12;">Database Backup & Restore</h3>
+              </div>
+              <p style="margin: 0; font-size: 13px; color: #9a3412; line-height: 1.5;">Download every MongoDB collection as one complete JSON backup, or restore the database from a previous backup.</p>
+            </div>
+            <div style="display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px;">
+              <button type="button" class="btn" onclick="downloadDatabaseBackup()" style="background: #0f766e; color: #ffffff;">Download Full Backup</button>
+              <input type="file" id="database-backup-input" accept="application/json,.json" style="display: none;" onchange="restoreDatabaseBackup(this)" />
+              <button type="button" class="btn" onclick="document.getElementById('database-backup-input').click()" style="background: #b45309; color: #ffffff;">Restore JSON Backup</button>
+            </div>
+            <div id="database-backup-status" style="width: 100%; font-size: 12px; color: #92400e;"></div>
+          </div></section>
 
     <!-- MATERIAL REVIEW, EDIT & APPROVAL MODAL -->
     <div id="material-modal" class="modal-backdrop hidden" onclick="if(event.target === this) closeMaterialModal()">
@@ -2073,11 +2688,37 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
 
           <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
             <div>
-              <label style="display: block; font-size: 11px; font-weight: 700; color: #475569; margin-bottom: 4px;">Course Code *</label>
+              <label style="display: block; font-size: 11px; font-weight: 700; color: #475569; margin-bottom: 4px;">Unit Code *</label>
               <input type="text" id="modal-input-code" class="form-control" style="width: 100%; font-weight: 700; text-transform: uppercase;" required />
             </div>
             <div>
-              <label style="display: block; font-size: 11px; font-weight: 700; color: #475569; margin-bottom: 4px;">Exam Year</label>
+              <label style="display: block; font-size: 11px; font-weight: 700; color: #475569; margin-bottom: 4px;">Department</label>
+              <input type="text" id="modal-input-department" class="form-control" style="width: 100%;" />
+            </div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+            <div>
+              <label style="display: block; font-size: 11px; font-weight: 700; color: #475569; margin-bottom: 4px;">Academic Level / Year</label>
+              <input type="text" id="modal-input-academic-year" class="form-control" style="width: 100%;" placeholder="e.g. Year 2" />
+            </div>
+            <div>
+              <label style="display: block; font-size: 11px; font-weight: 700; color: #475569; margin-bottom: 4px;">School / Faculty</label>
+              <input type="text" id="modal-input-school" class="form-control" style="width: 100%;" />
+            </div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+            <div>
+              <label style="display: block; font-size: 11px; font-weight: 700; color: #475569; margin-bottom: 4px;">Semester</label>
+              <select id="modal-input-semester" class="form-control" style="width: 100%;">
+                <option value="">Select semester</option>
+                <option value="Semester 1">Semester 1</option>
+                <option value="Semester 2">Semester 2</option>
+              </select>
+            </div>
+            <div>
+              <label style="display: block; font-size: 11px; font-weight: 700; color: #475569; margin-bottom: 4px;">Exam / Resource Year</label>
               <input type="number" id="modal-input-year" class="form-control" style="width: 100%;" />
             </div>
           </div>
@@ -2095,8 +2736,8 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
               </select>
             </div>
             <div>
-              <label style="display: block; font-size: 11px; font-weight: 700; color: #475569; margin-bottom: 4px;">School / Faculty</label>
-              <input type="text" id="modal-input-school" class="form-control" style="width: 100%;" />
+              <label style="display: block; font-size: 11px; font-weight: 700; color: #475569; margin-bottom: 4px;">Description / Overview</label>
+              <input type="text" id="modal-input-description" class="form-control" style="width: 100%;" placeholder="Optional details about this material" />
             </div>
           </div>
 
@@ -2139,6 +2780,150 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
     let globalCommunityMessages = [];
 
     let materialsManagementData = [];
+
+    function handleSchoolSelectChange(selectElem) {
+      const customInput = document.getElementById('pub-school-custom');
+      if (selectElem.value === 'custom') {
+        customInput.classList.remove('hidden');
+        customInput.required = true;
+        customInput.focus();
+      } else {
+        customInput.classList.add('hidden');
+        customInput.required = false;
+        customInput.value = '';
+      }
+    }
+
+    function handleAdminPubFileSelect(inputElem) {
+      const dropzone = document.getElementById('pub-file-dropzone');
+      const label = document.getElementById('pub-file-label');
+      const sub = document.getElementById('pub-file-sub');
+
+      if (inputElem.files && inputElem.files[0]) {
+        const file = inputElem.files[0];
+        const sizeFormatted = formatBytesJS(file.size);
+        label.innerText = 'Selected: ' + file.name;
+        sub.innerText = 'Size: ' + sizeFormatted + ' | Ready for direct Cloudinary upload';
+        dropzone.style.borderColor = '#15803d';
+        dropzone.style.backgroundColor = '#f0fdf4';
+      } else {
+        label.innerText = 'Click to select or drop document file';
+        sub.innerText = 'Supports PDF, Word (.doc/.docx), Images (.png/.jpg), Text files up to 50MB';
+        dropzone.style.borderColor = '#cbd5e1';
+        dropzone.style.backgroundColor = '#f8fafc';
+      }
+    }
+
+    function resetAdminPublishForm() {
+      const form = document.getElementById('admin-publish-form');
+      if (form) form.reset();
+      const customInput = document.getElementById('pub-school-custom');
+      if (customInput) { customInput.classList.add('hidden'); customInput.required = false; }
+      handleAdminPubFileSelect(document.getElementById('pub-file-input'));
+      const statusBox = document.getElementById('pub-status-box');
+      if (statusBox) { statusBox.className = 'hidden'; statusBox.innerHTML = ''; }
+      const btn = document.getElementById('btn-pub-submit');
+      if (btn) { btn.disabled = false; btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Publish Material Now (Cloudinary + DB)'; }
+    }
+
+    function formatBytesJS(bytes) {
+      if (!bytes || bytes === 0) return '0 Bytes';
+      const k = 1024;
+      const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+
+    function publishAdminMaterialDirect(event) {
+      event.preventDefault();
+      const title = document.getElementById('pub-title').value.trim();
+      const type = document.getElementById('pub-type').value;
+      const schoolSelect = document.getElementById('pub-school-select').value;
+      const schoolCustom = document.getElementById('pub-school-custom').value.trim();
+      const school = schoolSelect === 'custom' ? schoolCustom : schoolSelect;
+      const department = document.getElementById('pub-department').value.trim();
+      const unitCode = document.getElementById('pub-unitCode').value.trim();
+      const unitName = document.getElementById('pub-unitName').value.trim();
+      const academicYear = document.getElementById('pub-academicYear').value.trim();
+      const semester = document.getElementById('pub-semester').value;
+      const examYear = document.getElementById('pub-examYear').value;
+      const description = document.getElementById('pub-description').value.trim();
+      const fileInput = document.getElementById('pub-file-input');
+      const thumbnailInput = document.getElementById('pub-thumbnail-input');
+
+      if (!title || !school || !department || !unitCode || !unitName) {
+        showToast('Please fill out all required fields marked with *', true);
+        return;
+      }
+
+      if (!fileInput.files || !fileInput.files[0]) {
+        showToast('Please attach a document file (PDF/Word/Image)', true);
+        return;
+      }
+
+      const btn = document.getElementById('btn-pub-submit');
+      const statusBox = document.getElementById('pub-status-box');
+
+      btn.disabled = true;
+      btn.innerHTML = '⏳ Uploading to Cloudinary...';
+
+      statusBox.className = '';
+      statusBox.style.backgroundColor = '#eff6ff';
+      statusBox.style.color = '#1e40af';
+      statusBox.style.border = '1px solid #bfdbfe';
+      statusBox.innerHTML = '⏳ Uploading document directly to Cloudinary and registering database record... Please wait.';
+
+      const formData = new FormData();
+      formData.append('title', title);
+      formData.append('type', type);
+      formData.append('school', school);
+      formData.append('department', department);
+      formData.append('courseCode', unitCode);
+      formData.append('unitCode', unitCode);
+      formData.append('unitName', unitName);
+      if (academicYear) formData.append('academicYear', academicYear);
+      if (semester) formData.append('semester', semester);
+      if (examYear) formData.append('examYear', examYear);
+      if (description) formData.append('description', description);
+      formData.append('file', fileInput.files[0]);
+      if (thumbnailInput.files && thumbnailInput.files[0]) {
+        formData.append('thumbnail', thumbnailInput.files[0]);
+      }
+
+      fetch('/api/v1/dashboard/materials/publish', {
+        method: 'POST',
+        body: formData
+      })
+      .then(res => res.json())
+      .then(json => {
+        if (!json.success) {
+          throw new Error(json.error || 'Failed to publish material.');
+        }
+
+        statusBox.style.backgroundColor = '#dcfce7';
+        statusBox.style.color = '#14532d';
+        statusBox.style.border = '1px solid #bbf7d0';
+        statusBox.innerHTML = '✅ <strong>Published!</strong> ' + json.message + (json.data && json.data.mtid ? ' (MTID: ' + json.data.mtid + ')' : '');
+
+        showToast('Material published directly to Cloudinary & Database!');
+
+        setTimeout(function() {
+          resetAdminPublishForm();
+          switchTab('materials');
+          fetchMaterialsForManagement();
+        }, 1800);
+      })
+      .catch(err => {
+        console.error('Publish material error:', err);
+        statusBox.style.backgroundColor = '#fee2e2';
+        statusBox.style.color = '#991b1b';
+        statusBox.style.border = '1px solid #fecaca';
+        statusBox.innerHTML = '❌ <strong>Upload Failed:</strong> ' + err.message;
+        showToast('Failed to publish material: ' + err.message, true);
+        btn.disabled = false;
+        btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Retry Direct Upload';
+      });
+    }
 
     function escapeMaterialHtml(value) {
       return String(value == null ? '' : value).replace(/[&<>'"]/g, function(char) {
@@ -2248,10 +3033,78 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
       if (tabId === 'push') {
         loadPopupHistory();
         loadPushHistory();
+        loadRegisteredPushDevices();
+      } else if (tabId === 'ai-overages') {
+        loadAiOverages();
       } else if (tabId === 'community') {
         loadCommunityMessagesAdmin();
       } else if (tabId === 'temp') {
         loadTempFiles();
+      }
+    }
+
+    let aiOveragesRefreshTimer = null;
+    async function loadAiOverages() {
+      const summary = document.getElementById('ai-overages-summary');
+      const tbody = document.getElementById('ai-overages-table-body');
+      const logs = document.getElementById('ai-logs-container');
+      const note = document.getElementById('ai-overages-note');
+      if (!summary || !tbody || !logs) return;
+      summary.innerHTML = '<div style="color:#64748b; font-size:13px;">Loading AI pool telemetry...</div>';
+      try {
+        const response = await fetch('/api/v1/dashboard/ai-overages');
+        const json = await response.json();
+        if (!json.success) throw new Error(json.error || 'Failed to load AI telemetry');
+        const data = json.data || {};
+        const pool = data.pool || [];
+        const totalUsed = pool.reduce((sum, item) => sum + Number(item.used || 0), 0);
+        const totalSuccess = pool.reduce((sum, item) => sum + Number(item.successes || 0), 0);
+        const totalFailures = pool.reduce((sum, item) => sum + Number(item.failures || 0), 0);
+        const activeCooldowns = pool.filter(item => item.cooldownUntil).length;
+        if (aiOveragesRefreshTimer) clearTimeout(aiOveragesRefreshTimer);
+        if (activeCooldowns > 0 && document.getElementById('tab-content-ai-overages') && !document.getElementById('tab-content-ai-overages').classList.contains('hidden')) {
+          aiOveragesRefreshTimer = setTimeout(loadAiOverages, 10000);
+        }
+        summary.innerHTML = [
+          ['Configured APIs', pool.length, 'Keys detected in the server pool'],
+          ['Requests attempted', totalUsed, 'Runtime attempts since restart'],
+          ['Successful replies', totalSuccess, 'Gemini responses with text'],
+          ['Failures / fallbacks', totalFailures, activeCooldowns + ' API(s) cooling down']
+        ].map(item => '<div class="stat-card"><div class="stat-label">' + item[0] + '</div><div class="stat-val">' + item[1] + '</div><div class="stat-sub">' + item[2] + '</div></div>').join('');
+        tbody.innerHTML = pool.length ? pool.map(item => {
+          const remaining = item.configuredLimit === null ? 'Not exposed' : Math.max(0, Number(item.configuredLimit) - Number(item.used || 0));
+          const cooldownMs = Number(item.cooldownRemainingMs || 0);
+          const cooldownTotalMs = 60000;
+          const cooldownPercent = Math.min(100, Math.max(0, ((cooldownTotalMs - cooldownMs) / cooldownTotalMs) * 100));
+          const cooldownMinutes = Math.floor(cooldownMs / 60000);
+          const cooldownSeconds = Math.ceil((cooldownMs % 60000) / 1000);
+          const cooldownText = cooldownMinutes >= 60 ? Math.floor(cooldownMinutes / 60) + 'h ' + (cooldownMinutes % 60) + 'm' : cooldownMinutes + 'm ' + cooldownSeconds + 's';
+          const cooldownCell = item.cooldownUntil ? '<div style="color:#b45309;font-weight:700;">Cooling down</div><div style="height:5px;background:#fef3c7;border-radius:5px;margin-top:6px;min-width:100px;"><div style="height:5px;width:' + cooldownPercent.toFixed(1) + '%;background:#f59e0b;border-radius:5px;"></div></div><div style="font-size:10px;color:#92400e;margin-top:3px;">' + cooldownText + ' remaining</div>' : '<span style="color:#15803d;font-weight:700;">Ready</span>';
+          return '<tr><td><b>' + item.apiLabel + '</b></td><td><code>' + item.model + '</code></td><td>' + item.used + '</td><td>' + (item.configuredLimit === null ? 'Not configured' : item.configuredLimit) + '</td><td>' + remaining + '</td><td style="color:#15803d;font-weight:800;">' + item.successes + '</td><td style="color:#dc2626;font-weight:800;">' + item.failures + '</td><td>' + cooldownCell + '</td></tr>';
+        }).join('') : '<tr><td colspan="8" style="text-align:center;padding:28px;color:#dc2626;">No Gemini API keys detected. Check GEMINI_API_KEY, GEMINI_API_KEYS, or GEMINI_API_KEY_1...</td></tr>';
+        if (note) note.innerText = 'Models in rotation: ' + ((data.models || []).join(', ') || 'none') + '. Gemini does not provide a universal remaining-quota value through this request path. “Remaining” is calculated only when GEMINI_API_LIMIT_1, GEMINI_API_LIMIT_2, etc. are configured; otherwise the dashboard reports “Not exposed”. Usage counters reset when the backend restarts.';
+        const recentLogs = data.logs || [];
+        logs.innerHTML = recentLogs.length ? recentLogs.map(item => {
+          const color = item.level === 'error' ? '#dc2626' : item.level === 'warn' ? '#b45309' : '#15803d';
+          return '<div style="border:1px solid #e2e8f0;border-left:4px solid ' + color + ';border-radius:9px;padding:10px 12px;background:#f8fafc;"><div style="display:flex;justify-content:space-between;gap:12px;font-size:11px;color:#64748b;"><b style="color:' + color + ';text-transform:uppercase;">' + item.level + '</b><span>' + new Date(item.timestamp).toLocaleString() + '</span></div><div style="font-size:12px;font-weight:700;color:#334155;margin-top:4px;">' + (item.assistant || 'AI') + (item.apiLabel ? ' · ' + item.apiLabel : '') + (item.model ? ' · ' + item.model : '') + (item.status ? ' · HTTP ' + item.status : '') + '</div><div style="font-size:12px;color:#475569;margin-top:3px;">' + item.message + '</div></div>';
+        }).join('') : '<div style="text-align:center;padding:28px;color:#94a3b8;">No AI failures recorded since the backend started.</div>';
+      } catch (error) {
+        summary.innerHTML = '<div style="color:#dc2626;font-size:13px;">Failed to load AI telemetry: ' + error.message + '</div>';
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:28px;color:#dc2626;">AI telemetry unavailable.</td></tr>';
+        logs.innerHTML = '<div style="color:#dc2626;padding:18px;">' + error.message + '</div>';
+      }
+    }
+
+    async function clearAiOverages() {
+      if (!window.confirm('Clear all persistent AI usage counters, cooldowns, failures, and logs? This cannot be undone.')) return;
+      try {
+        const response = await fetch('/api/v1/dashboard/ai-overages', { method: 'DELETE' });
+        const json = await response.json();
+        if (!json.success) throw new Error(json.error || 'Failed to clear AI telemetry');
+        showToast(json.message || 'AI overages data cleared.');
+        loadAiOverages();
+      } catch (error) {
+        showToast('Failed to clear AI overages: ' + error.message, true);
       }
     }
 
@@ -2277,32 +3130,40 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
         popBtn.style.background = '#f1f5f9';
         popBtn.style.color = '#475569';
         loadPushHistory();
+        loadRegisteredPushDevices();
       }
     }
 
+    async function loadRegisteredPushDevices() {
+      const count = document.getElementById('registered-push-device-count');
+      const breakdown = document.getElementById('registered-push-device-breakdown');
+      if (!count || !breakdown) return;
+      try {
+        const res = await fetch('/api/v1/admin/registered-devices');
+        const json = await res.json();
+        if (!json.success) throw new Error(json.error || 'Unable to load devices');
+        count.textContent = String(json.total || 0);
+        breakdown.textContent = 'Android: ' + (json.byPlatform?.android || 0) + ' • iOS: ' + (json.byPlatform?.ios || 0) + ' • Web: ' + (json.byPlatform?.web || 0);
+      } catch (error) {
+        count.textContent = '—';
+        breakdown.textContent = 'Could not load registered device tokens';
+      }
+    }
     function setPopupType(type) {
       const normalForm = document.getElementById('popup-normal-form');
       const updateForm = document.getElementById('popup-update-form');
+      const interactiveForm = document.getElementById('popup-interactive-form');
       const btnNormal = document.getElementById('pop-type-btn-normal');
       const btnUpdate = document.getElementById('pop-type-btn-update');
-
-      if (type === 'normal') {
-        normalForm.classList.remove('hidden');
-        updateForm.classList.add('hidden');
-        btnNormal.style.background = '#ffffff';
-        btnNormal.style.color = '#15803d';
-        btnUpdate.style.background = 'transparent';
-        btnUpdate.style.color = '#64748b';
-      } else {
-        normalForm.classList.add('hidden');
-        updateForm.classList.remove('hidden');
-        btnUpdate.style.background = '#ffffff';
-        btnUpdate.style.color = '#2563eb';
-        btnNormal.style.background = 'transparent';
-        btnNormal.style.color = '#64748b';
-      }
+      const btnInteractive = document.getElementById('pop-type-btn-interactive');
+      [normalForm, updateForm, interactiveForm].forEach(function(form) { if (form) form.classList.add('hidden'); });
+      [btnNormal, btnUpdate, btnInteractive].forEach(function(button) { if (button) { button.style.background = 'transparent'; button.style.color = '#64748b'; } });
+      const activeForm = type === 'update' ? updateForm : type === 'interactive' ? interactiveForm : normalForm;
+      const activeButton = type === 'update' ? btnUpdate : type === 'interactive' ? btnInteractive : btnNormal;
+      if (activeForm) activeForm.classList.remove('hidden');
+      if (activeButton) { activeButton.style.background = '#ffffff'; activeButton.style.color = type === 'update' ? '#2563eb' : '#15803d'; }
+      if (type === 'interactive' && !document.querySelector('#interactive-inputs .interactive-input-row')) addInteractiveInput();
     }
-
     function togglePopAudienceBox() {
       const val = document.getElementById('pop-normal-audience').value;
       const box = document.getElementById('pop-audience-emails-box');
@@ -2462,6 +3323,76 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
       }
     }
 
+    function addInteractiveInput() {
+      const container = document.getElementById('interactive-inputs');
+      if (!container) return;
+      const index = container.children.length + 1;
+      const row = document.createElement('div');
+      row.className = 'interactive-input-row';
+      row.style.cssText = 'border: 1px solid #dbeafe; background: #f8fdff; border-radius: 10px; padding: 10px; display: grid; gap: 7px;';
+      row.innerHTML = '<div style="display:grid;grid-template-columns:1fr 130px;gap:8px;">' +
+        '<input class="form-control interactive-label" placeholder="Question label" required />' +
+        '<select class="form-control interactive-type"><option value="text">Text box</option><option value="radio">Radio choices</option><option value="toggle">Toggle</option><option value="checkbox">Checkbox</option></select></div>' +
+        '<input class="form-control interactive-options" placeholder="Choices separated by commas (for radio)" />' +
+        '<label style="font-size:11px;font-weight:700;"><input type="checkbox" class="interactive-required" /> Required</label>' +
+        '<button type="button" onclick="this.closest(\\'.interactive-input-row\\').remove()" style="width:max-content;border:0;background:transparent;color:#dc2626;font-size:11px;font-weight:800;">Remove input</button>';
+      container.appendChild(row);
+    }
+
+    document.getElementById('pop-interactive-audience')?.addEventListener('change', function() {
+      const emails = document.getElementById('pop-interactive-emails');
+      if (emails) emails.style.display = this.value === 'emails' ? 'block' : 'none';
+    });
+
+    function collectInteractiveInputs() {
+      return Array.from(document.querySelectorAll('#interactive-inputs .interactive-input-row')).map(function(row, index) {
+        const type = row.querySelector('.interactive-type').value;
+        return { id: 'field_' + (index + 1), label: row.querySelector('.interactive-label').value.trim(), type: type, required: row.querySelector('.interactive-required').checked, options: row.querySelector('.interactive-options').value.split(',').map(function(value) { return value.trim(); }).filter(Boolean) };
+      }).filter(function(input) { return input.label; });
+    }
+
+    async function handleCreateInteractivePopup(e) {
+      e.preventDefault();
+      const inputs = collectInteractiveInputs();
+      if (!inputs.length) { showToast('Add at least one input.', true); return; }
+      const btn = document.getElementById('btn-submit-pop-interactive');
+      btn.disabled = true;
+      try {
+        let imageUrl = '';
+        const imageFile = document.getElementById('pop-interactive-image').files[0];
+        if (imageFile) {
+          const form = new FormData(); form.append('file', imageFile);
+          const upload = await fetch('/api/v1/notify/upload-media', { method: 'POST', body: form });
+          const uploadJson = await upload.json();
+          if (!upload.ok || !uploadJson.success) throw new Error(uploadJson.error || 'Banner upload failed.');
+          imageUrl = uploadJson.data.imageUrl;
+        }
+        const response = await fetch('/api/v1/notify/popups', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'interactive', title: document.getElementById('pop-interactive-title').value, subtitle: document.getElementById('pop-interactive-subtitle').value, body: document.getElementById('pop-interactive-body').value, imageUrl: imageUrl, inputs: inputs, targetAudience: document.getElementById('pop-interactive-audience').value, targetEmails: document.getElementById('pop-interactive-emails').value, hasCancelButton: document.getElementById('pop-interactive-cancel').checked }) });
+        const json = await response.json();
+        if (!json.success) throw new Error(json.error || 'Could not create popup.');
+        showToast('Interactive popup created: ' + (json.data?.popupId || ''));
+        document.getElementById('popup-interactive-form').reset();
+        document.getElementById('interactive-inputs').innerHTML = '';
+        addInteractiveInput();
+        loadPopupHistory();
+      } catch (error) { showToast('Error creating interactive popup: ' + error.message, true); }
+      finally { btn.disabled = false; }
+    }
+
+    async function viewPopupResponses(id) {
+      const response = await fetch('/api/v1/notify/popups/' + encodeURIComponent(id) + '/responses');
+      const json = await response.json();
+      if (!json.success) { showToast(json.error || 'Could not load responses.', true); return; }
+      const rows = (json.data.responses || []).map(function(item) {
+        return '<div style="border-bottom:1px solid #e2e8f0;padding:12px 0;"><strong>' + (item.name || 'Guest') + '</strong><div style="font-size:11px;color:#64748b;">' + (item.email || 'No email') + '</div><div style="margin-top:6px;white-space:pre-wrap;">' + Object.entries(item.responses || {}).map(function(entry) { return entry[0] + ': ' + entry[1]; }).join(' | ') + '</div></div>';
+      }).join('');
+      const overlay = document.createElement('div');
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;padding:20px;z-index:9999;';
+      overlay.innerHTML = '<div style="background:#fff;border-radius:14px;width:min(620px,100%);max-height:80vh;overflow:auto;padding:20px;box-shadow:0 20px 50px rgba(0,0,0,.25);"><div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #e2e8f0;padding-bottom:10px;"><div><h3 style="margin:0;color:#0f172a;">Popup responses</h3><p style="margin:4px 0 0;color:#64748b;font-size:12px;">' + (json.data.popup?.title || '') + '</p></div><button id="close-popup-responses" style="border:0;background:#f1f5f9;border-radius:8px;padding:7px 10px;cursor:pointer;">Close</button></div><div style="margin-top:8px;">' + (rows || '<div style="padding:20px;color:#64748b;text-align:center;">No responses yet.</div>') + '</div></div>';
+      document.body.appendChild(overlay);
+      overlay.querySelector('#close-popup-responses').onclick = function() { overlay.remove(); };
+      overlay.onclick = function(event) { if (event.target === overlay) overlay.remove(); };
+    }
     async function handleCreateUpdatePopup(e) {
       e.preventDefault();
       const minAppVersion = document.getElementById('pop-update-minver').value;
@@ -2469,6 +3400,8 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
       const subtitle = document.getElementById('pop-update-sub').value;
       const playStoreUrl = document.getElementById('pop-update-url').value;
       const isForceUpdate = document.getElementById('pop-update-force').checked;
+      const imageFile = document.getElementById('pop-update-image')?.files?.[0];
+      let imageUrl = '';
 
       const btn = document.getElementById('btn-submit-pop-update');
       btn.disabled = true;
@@ -2541,7 +3474,7 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
                 '<span style="background: #15803d; color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 10px;">' + item.popupId + '</span>' +
                 item.title +
               '</span>' +
-              '<button data-id="' + item._id + '" onclick="handleDeletePopup(this.dataset.id)" class="btn" style="background: #fee2e2; color: #dc2626; padding: 3px 8px; font-size: 10px; font-weight: 800; border: 1px solid #fca5a5; border-radius: 6px;">' +
+              (item.type === 'interactive' ? '<button onclick="viewPopupResponses(\\'' + item._id + '\\')" class="btn" style="background: #dcfce7; color: #15803d; padding: 3px 8px; font-size: 10px; font-weight: 800; border: 1px solid #86efac; border-radius: 6px; margin-right: 5px;">View responses</button>' : '') +              '<button data-id="' + item._id + '" onclick="handleDeletePopup(this.dataset.id)" class="btn" style="background: #fee2e2; color: #dc2626; padding: 3px 8px; font-size: 10px; font-weight: 800; border: 1px solid #fca5a5; border-radius: 6px;">' +
                 '🗑️ Delete' +
               '</button>' +
             '</div>' +
@@ -2592,11 +3525,118 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
         renderPendingPapers(json.pendingPapers);
         renderUsers(json.users);
         renderHouses(json.houses);
+        renderAppSettings(json.stats || json.settings);
       } catch (err) {
         showToast('Error loading dashboard: ' + err.message, true);
       }
     }
 
+    function renderAppSettings(statsOrSettings) {
+      const isDemoOn = statsOrSettings && statsOrSettings.showDemoMaterials !== undefined ? statsOrSettings.showDemoMaterials : true;
+      const toggleInput = document.getElementById('toggle-demo-materials');
+      const statusBadge = document.getElementById('demo-status-badge');
+      const slider = document.getElementById('toggle-slider');
+      const knob = document.getElementById('toggle-knob');
+      const label = document.getElementById('demo-toggle-status-label');
+
+      if (toggleInput) toggleInput.checked = isDemoOn;
+
+      if (statusBadge) {
+        statusBadge.innerText = isDemoOn ? 'ENABLED' : 'DISABLED';
+        statusBadge.style.background = isDemoOn ? '#dcfce7' : '#f1f5f9';
+        statusBadge.style.color = isDemoOn ? '#15803d' : '#64748b';
+      }
+
+      if (slider) {
+        slider.style.backgroundColor = isDemoOn ? '#22c55e' : '#cbd5e1';
+      }
+
+      if (knob) {
+        knob.style.left = isDemoOn ? '29px' : '3px';
+      }
+
+      if (label) {
+        label.innerText = isDemoOn ? 'Saved in Database (Showing Demo & Real)' : 'Saved in Database (Real Materials Only)';
+        label.style.color = isDemoOn ? '#15803d' : '#64748b';
+      }
+    }
+
+    async function handleDemoMaterialsToggle(enabled) {
+      const label = document.getElementById('demo-toggle-status-label');
+      if (label) label.innerText = 'Saving setting to database...';
+
+      try {
+        const res = await fetch('/api/v1/dashboard/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: 'showDemoMaterials', value: enabled })
+        });
+        const json = await res.json();
+        if (!json.success) throw new Error(json.message || 'Update failed');
+
+        showToast(json.message || ('Demo materials ' + (enabled ? 'enabled' : 'disabled') + '!'));
+        renderAppSettings({ showDemoMaterials: enabled });
+      } catch (err) {
+        showToast('Setting update failed: ' + err.message, true);
+        const toggleInput = document.getElementById('toggle-demo-materials');
+        if (toggleInput) toggleInput.checked = !enabled;
+        renderAppSettings({ showDemoMaterials: !enabled });
+      }
+    }
+
+    async function downloadDatabaseBackup() {
+      const status = document.getElementById('database-backup-status');
+      if (status) status.innerText = 'Preparing complete database backup...';
+      try {
+        const response = await fetch('/api/v1/dashboard/backup');
+        if (!response.ok) throw new Error('Backup request failed (' + response.status + ').');
+        const blob = await response.blob();
+        const disposition = response.headers.get('content-disposition') || '';
+        const match = disposition.match(/filename="?([^";]+)"?/i);
+        const filename = match ? match[1] : 'moiconnect-database-backup.json';
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = filename;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        URL.revokeObjectURL(url);
+        if (status) status.innerText = 'Full database backup downloaded successfully.';
+        showToast('Full database backup downloaded.');
+      } catch (err) {
+        if (status) status.innerText = 'Backup failed: ' + err.message;
+        showToast('Backup failed: ' + err.message, true);
+      }
+    }
+
+    async function restoreDatabaseBackup(input) {
+      const file = input.files && input.files[0];
+      if (!file) return;
+      const confirmed = window.confirm('This will replace the current database collections with the selected backup. Continue only if this is intentional.');
+      if (!confirmed) {
+        input.value = '';
+        return;
+      }
+      const status = document.getElementById('database-backup-status');
+      if (status) status.innerText = 'Restoring database. Please keep this page open...';
+      try {
+        const formData = new FormData();
+        formData.append('backup', file);
+        formData.append('confirmRestore', 'RESTORE_DATABASE');
+        const response = await fetch('/api/v1/dashboard/restore', { method: 'POST', body: formData });
+        const json = await response.json();
+        if (!response.ok || !json.success) throw new Error(json.error || 'Restore failed.');
+        if (status) status.innerText = json.message;
+        showToast(json.message + ' Refreshing dashboard...');
+        setTimeout(() => window.location.reload(), 1200);
+      } catch (err) {
+        if (status) status.innerText = 'Restore failed: ' + err.message;
+        showToast('Restore failed: ' + err.message, true);
+      } finally {
+        input.value = '';
+      }
+    }
     function formatBytes(bytes) {
       if (!bytes || bytes === 0) return '0 Bytes';
       const k = 1024;
@@ -2706,7 +3746,14 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
         (p.unitCode && p.unitCode.toLowerCase().includes(q)) ||
         (p.courseCode && p.courseCode.toLowerCase().includes(q)) ||
         (p.school && p.school.toLowerCase().includes(q)) ||
-        (p.unitName && p.unitName.toLowerCase().includes(q))
+        (p.unitName && p.unitName.toLowerCase().includes(q)) ||
+        (p.department && p.department.toLowerCase().includes(q)) ||
+        (p.semester && p.semester.toLowerCase().includes(q)) ||
+        (p.academicYear && p.academicYear.toLowerCase().includes(q)) ||
+        (p.type && p.type.toLowerCase().includes(q)) ||
+        (p.mtid && p.mtid.toLowerCase().includes(q)) ||
+        (p.description && p.description.toLowerCase().includes(q)) ||
+        (p.examYear && String(p.examYear).includes(q))
       );
       renderPendingPapers(filtered);
     }
@@ -2806,7 +3853,48 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
 
       if (previewCard && previewBody) {
         previewCard.style.display = 'block';
-        if (fmt.category === 'image') {
+        if (Array.isArray(paper.attachments) && paper.attachments.length > 0) {
+          let attachmentsHtml = '<div style="display: flex; flex-direction: column; gap: 10px; width: 100%;">';
+          paper.attachments.forEach(function(att, idx) {
+            const attFmt = detectFormat(att.fileUrl, att.fileType);
+            const attName = att.originalName || ('Document ' + (idx + 1));
+            const attPrevUrl = '/admin/preview?url=' + encodeURIComponent(att.fileUrl) + 
+              '&title=' + encodeURIComponent(attName) + 
+              '&type=' + encodeURIComponent(att.fileType || attFmt.category) + 
+              '&id=' + encodeURIComponent(paper._id + '_' + idx);
+
+            attachmentsHtml += '<div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px;">' +
+              '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; flex-wrap: wrap; gap: 6px;">' +
+                '<div style="display: flex; align-items: center; gap: 8px;">' +
+                  '<span style="font-size: 11px; font-weight: 800; background: #0f172a; color: #ffffff; padding: 2px 6px; border-radius: 4px;">Doc #' + (idx + 1) + '</span>' +
+                  '<strong style="font-size: 13px; color: #0f172a;">' + escapeMaterialHtml(attName) + '</strong>' +
+                  '<span style="font-size: 10px; font-weight: 800; padding: 2px 6px; border-radius: 4px; background: #e2e8f0; color: #1e293b;">' + attFmt.label + '</span>' +
+                '</div>' +
+                '<div style="display: flex; gap: 6px;">' +
+                  '<a href="' + attPrevUrl + '" target="_blank" class="btn btn-view" style="font-size: 11px; padding: 4px 10px;">' +
+                    'Smart Preview ↗' +
+                  '</a>' +
+                  '<a href="' + att.fileUrl + '" download class="btn btn-dark" style="font-size: 11px; padding: 4px 10px;">' +
+                    'Download' +
+                  '</a>' +
+                '</div>' +
+              '</div>';
+
+            if (attFmt.category === 'image') {
+              attachmentsHtml += '<div style="text-align: center; margin-top: 8px;">' +
+                '<a href="' + attPrevUrl + '" target="_blank">' +
+                  '<img src="' + att.fileUrl + '" alt="Thumbnail" style="max-height: 180px; max-width: 100%; border-radius: 6px; border: 1px solid #cbd5e1; object-fit: contain;" />' +
+                '</a>' +
+              '</div>';
+            } else {
+              attachmentsHtml += '<div style="font-size: 11px; color: #64748b; margin-top: 4px;">' + formatBytes(att.fileSize || 0) + ' &middot; Click Smart Preview to open document</div>';
+            }
+
+            attachmentsHtml += '</div>';
+          });
+          attachmentsHtml += '</div>';
+          previewBody.innerHTML = attachmentsHtml;
+        } else if (fmt.category === 'image') {
           previewBody.innerHTML = '<div style="text-align: center; width: 100%;">' +
             '<a href="' + smartPreviewUrl + '" target="_blank" title="Click to view full image in tab">' +
               '<img src="' + paper.fileUrl + '" alt="Preview" style="max-height: 220px; max-width: 100%; border-radius: 6px; object-fit: contain; box-shadow: 0 2px 8px rgba(0,0,0,0.1); border: 1px solid #e2e8f0;" />' +
@@ -2864,6 +3952,10 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
       document.getElementById('modal-input-year').value = paper.examYear || 2025;
       document.getElementById('modal-input-type').value = paper.type || 'past_paper';
       document.getElementById('modal-input-school').value = paper.school || '';
+      document.getElementById('modal-input-department').value = paper.department || '';
+      document.getElementById('modal-input-academic-year').value = paper.academicYear || '';
+      document.getElementById('modal-input-semester').value = paper.semester || '';
+      document.getElementById('modal-input-description').value = paper.description || '';
 
       // Reset file input
       const replaceInput = document.getElementById('modal-replace-input');
@@ -3007,6 +4099,10 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
       const examYear = parseInt(document.getElementById('modal-input-year').value.trim(), 10) || 2025;
       const type = document.getElementById('modal-input-type').value;
       const school = document.getElementById('modal-input-school').value.trim();
+      const department = document.getElementById('modal-input-department').value.trim();
+      const academicYear = document.getElementById('modal-input-academic-year').value.trim();
+      const semester = document.getElementById('modal-input-semester').value;
+      const description = document.getElementById('modal-input-description').value.trim();
 
       const btn = document.getElementById('btn-save-paper-edits');
       btn.disabled = true;
@@ -3450,6 +4546,7 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
           document.getElementById('push-form').reset();
           toggleEmailBox();
           loadPushHistory();
+        loadRegisteredPushDevices();
         } else {
           showToast(json.error || 'Push dispatch failed.', true);
         }
@@ -3672,10 +4769,11 @@ export const renderAdminDashboard = (_req: Request, res: Response): void => {
     // Auto load on page render
     loadDashboardData();
     loadPushHistory();
+        loadRegisteredPushDevices();
   </script>
 </body>
 </html>`;
 
-  res.setHeader('Content-Type', 'text/html');
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(html);
 };

@@ -10,7 +10,7 @@ const seedAdmin = async () => {
 
     const adminEmail = process.env.ADMIN_EMAIL || 'dev@gmail.com';
     const adminPassword = process.env.ADMIN_PASSWORD || 'spiderman';
-    const adminName = process.env.ADMIN_NAME || 'Moi System Admin';
+    const adminName = process.env.ADMIN_NAME || 'Campus bot';
 
     let existingAdmin = await User.findOne({ email: adminEmail });
     const salt = await bcrypt.genSalt(10);
@@ -23,6 +23,7 @@ const seedAdmin = async () => {
         existingAdmin.roles.push('admin');
       }
       existingAdmin.activeRole = 'admin';
+      existingAdmin.name = adminName;
       existingAdmin.accountStatus = 'active';
       await existingAdmin.save();
       console.log(`[Seed Script]: Updated existing user ${adminEmail} to admin with active credentials.`);

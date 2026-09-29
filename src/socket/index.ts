@@ -6,6 +6,7 @@ import { User } from '../models/User';
 import { Conversation } from '../models/Conversation';
 import { Message } from '../models/Message';
 import { CommunityMessage } from '../models/CommunityMessage';
+import { getCampusBotsGeneration, isBotStopCommand, runCampusBotConversation, shouldCampusBotRespond, stopCampusBots } from '../services/campusBotService';
 
 export interface AuthenticatedSocket extends Socket {
   userId?: string;
@@ -147,21 +148,34 @@ export const setupSocketIO = (io: SocketIOServer): void => {
       senderId?: string;
       text: string;
       fileAttachment?: any;
+      stickerId?: string;
       replyTo?: any;
       senderName?: string;
       senderEmail?: string;
       senderFaculty?: string;
+      senderCourse?: string;
+      senderPhone?: string;
+      senderAvatarUrl?: string;
       avatarBg?: string;
-    }) => {
+    }, ack?: (result: { success: boolean; id?: string; error?: string }) => void) => {
       try {
-        const { clientMsgId, text, fileAttachment, replyTo, senderName, senderEmail, senderFaculty, avatarBg } = data;
-        if (!text?.trim() && !fileAttachment) return;
+        const { clientMsgId, text, fileAttachment, stickerId, replyTo, senderName, senderEmail, senderFaculty, senderCourse, senderPhone, senderAvatarUrl, avatarBg } = data;
+        if (!text?.trim() && !fileAttachment && !stickerId) return;
+        const stopBots = isBotStopCommand(text);
+        if (stopBots) {
+          stopCampusBots();
+          io.to('community_room').emit('community:user_stop_typing', { userId: 'campus-bot' });
+          io.to('community_room').emit('community:user_stop_typing', { userId: 'campus-ai' });
+        }
+        const botGeneration = getCampusBotsGeneration();
 
         const sId = (userId && Types.ObjectId.isValid(userId))
           ? userId
           : ((data.senderId && Types.ObjectId.isValid(data.senderId)) ? data.senderId : new Types.ObjectId().toString());
 
         const sEmail = (socket as any).user?.email || senderEmail || '';
+        const isCampusBot = sEmail.trim().toLowerCase() === 'dev@gmail.com';
+        const effectiveSenderName = isCampusBot ? 'Campus bot' : (senderName || 'Moi Student');
         const generatedId = new Types.ObjectId().toString();
         const nowISO = new Date().toISOString();
 
@@ -169,11 +183,16 @@ export const setupSocketIO = (io: SocketIOServer): void => {
           _id: generatedId,
           clientMsgId,
           senderId: sId,
-          senderName: senderName || 'Moi Student',
+          senderName: effectiveSenderName,
           senderEmail: sEmail,
           senderFaculty: senderFaculty || 'School of Science & Computing',
+          senderCourse,
+          senderPhone,
+          senderAvatarUrl,
           avatarBg: avatarBg || '#15803d',
           text: text?.trim() || '',
+          waitForBot: !stopBots && shouldCampusBotRespond(text, replyTo),
+          stickerId,
           fileAttachment,
           replyTo,
           reactions: {},
@@ -196,22 +215,39 @@ export const setupSocketIO = (io: SocketIOServer): void => {
           try {
             if (clientMsgId) {
               const existing = await CommunityMessage.findOne({ clientMsgId }).lean();
-              if (existing) return;
+              if (existing) {
+                ack?.({ success: true, id: String(existing._id) });
+                return;
+              }
             }
 
-            await CommunityMessage.create({
+            const savedMessage = await CommunityMessage.create({
               _id: generatedId,
               clientMsgId,
               senderId: sId,
               senderName: messagePayload.senderName,
               senderEmail: messagePayload.senderEmail,
               senderFaculty: messagePayload.senderFaculty,
+              senderCourse: messagePayload.senderCourse,
+              senderPhone: messagePayload.senderPhone,
+              senderAvatarUrl: messagePayload.senderAvatarUrl,
               avatarBg: messagePayload.avatarBg,
               text: messagePayload.text,
+              stickerId: messagePayload.stickerId,
               fileAttachment,
               replyTo,
               reactions: {}
             });
+            ack?.({ success: true, id: generatedId });
+            if (!stopBots && shouldCampusBotRespond(messagePayload.text, messagePayload.replyTo)) {
+              void runCampusBotConversation(savedMessage, {
+                onTyping: (assistant, typing) => io.to('community_room').emit(
+                  typing ? 'community:user_typing' : 'community:user_stop_typing',
+                  { userId: assistant.kind === 'bot' ? 'campus-bot' : 'campus-ai', userName: assistant.name }
+                ),
+                onReply: (assistantMessage) => io.to('community_room').emit('community:receive_message', assistantMessage)
+              }, botGeneration).catch((botError) => console.error('[Campus assistants] Reply error:', botError));
+            }
           } catch (dbErr) {
             console.error('[Async DB Save Error]:', dbErr);
           }

@@ -1,11 +1,16 @@
 import { Response } from 'express';
 import path from 'path';
 import { Paper } from '../models/Paper';
+import { getAppSettingValue } from '../models/AppSetting';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { CreatePaperInput } from '@moi/shared';
 import { getSignedCloudinaryUrl } from '../services/tempFileService';
+import { stableMaterialStats } from '../utils/materialStats';
 
 export const getPapers = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
   try {
     const page = parseInt(req.query.page as string || '1', 10);
     const limit = parseInt(req.query.limit as string || '50', 10);
@@ -18,6 +23,11 @@ export const getPapers = async (req: AuthenticatedRequest, res: Response): Promi
     query.status = includePending === 'true' ? { $in: ['approved', 'pending'] } : 'approved';
     query.isHidden = { $ne: true };
 
+    const showDemoMaterials = await getAppSettingValue('showDemoMaterials', false);
+    if (!showDemoMaterials) {
+      query.isDemo = { $ne: true };
+    }
+
     if (school) query.school = school;
     if (courseCode) query.courseCode = (courseCode as string).toUpperCase();
     if (unitCode) query.unitCode = (unitCode as string).toUpperCase();
@@ -26,13 +36,31 @@ export const getPapers = async (req: AuthenticatedRequest, res: Response): Promi
     if (year) query.examYear = parseInt(year as string, 10);
 
     if (search) {
-      const searchRegex = new RegExp(search as string, 'i');
-      query.$or = [
+      const searchStr = (search as string).trim();
+      const searchRegex = new RegExp(searchStr, 'i');
+      
+      const isYearNum = !isNaN(Number(searchStr));
+      const yearNum = isYearNum ? Number(searchStr) : null;
+
+      const searchConditions: any[] = [
         { title: searchRegex },
         { unitCode: searchRegex },
         { unitName: searchRegex },
-        { school: searchRegex }
+        { courseCode: searchRegex },
+        { school: searchRegex },
+        { department: searchRegex },
+        { type: searchRegex },
+        { semester: searchRegex },
+        { academicYear: searchRegex },
+        { description: searchRegex },
+        { mtid: searchRegex }
       ];
+
+      if (yearNum && yearNum > 1900 && yearNum < 2100) {
+        searchConditions.push({ examYear: yearNum });
+      }
+
+      query.$or = searchConditions;
     }
 
     const total = await Paper.countDocuments(query);
@@ -42,11 +70,54 @@ export const getPapers = async (req: AuthenticatedRequest, res: Response): Promi
       .skip(skip)
       .limit(limit);
 
-    const papersWithSignedUrls = papers.map((paper) => {
-      const data = paper.toObject();
+    const formatPaperData = (paperDoc: any) => {
+      const data = paperDoc.toObject ? paperDoc.toObject() : paperDoc;
+      const fallbackStats = stableMaterialStats(String(data._id || data.title || 'material'));
+      data.downloads = typeof data.downloads === 'number' && data.downloads >= 500 ? data.downloads : fallbackStats.downloads;
+      data.ratingScore = data.ratingScore || fallbackStats.ratingScore;
       data.fileUrl = getSignedCloudinaryUrl(data.publicId, data.fileUrl, data.fileType);
+      if (!data.thumbnail) {
+        if (data.fileType === 'image' || data.fileUrl?.match(/\.(jpg|jpeg|png|webp|gif)/i)) {
+          data.thumbnail = data.fileUrl;
+        } else if (Array.isArray(data.attachments)) {
+          const imgAtt = data.attachments.find((att: any) => att.fileType === 'image' || att.fileUrl?.match(/\.(jpg|jpeg|png|webp|gif)/i));
+          if (imgAtt && imgAtt.fileUrl) {
+            data.thumbnail = imgAtt.fileUrl;
+          }
+        }
+      }
+      if (data.thumbnail) {
+        data.thumbnail = getSignedCloudinaryUrl(undefined, data.thumbnail, 'image');
+      }
+      if (Array.isArray(data.attachments)) {
+        data.attachments = data.attachments.map((att: any) => ({
+          ...att,
+          fileUrl: getSignedCloudinaryUrl(att.publicId, att.fileUrl, att.fileType)
+        }));
+      }
       return data;
-    });
+    };
+
+    let papersWithSignedUrls = papers.map(formatPaperData);
+
+    if (search) {
+      const q = (search as string).trim().toLowerCase();
+      papersWithSignedUrls.sort((a: any, b: any) => {
+        const aTitle = (a.title || '').toLowerCase();
+        const bTitle = (b.title || '').toLowerCase();
+        const aUnit = (a.unitCode || '').toLowerCase();
+        const bUnit = (b.unitCode || '').toLowerCase();
+        const aMtid = (a.mtid || '').toLowerCase();
+        const bMtid = (b.mtid || '').toLowerCase();
+
+        const aTop = aUnit === q || aMtid === q || aUnit.includes(q) || aTitle.includes(q);
+        const bTop = bUnit === q || bMtid === q || bUnit.includes(q) || bTitle.includes(q);
+
+        if (aTop && !bTop) return -1;
+        if (!aTop && bTop) return 1;
+        return 0;
+      });
+    }
 
     res.json({
       success: true,
@@ -69,6 +140,13 @@ export const getPaperById = async (req: AuthenticatedRequest, res: Response): Pr
     const paper = await Paper.findById(id).populate('submittedBy', 'name email avatarUrl');
 
     if (!paper) {
+      res.status(404).json({ success: false, error: 'Academic resource not found.' });
+      return;
+    }
+
+    const showDemoMaterials = await getAppSettingValue('showDemoMaterials', false);
+    const isAdmin = !!(req.user && req.user.roles.includes('admin'));
+    if (!showDemoMaterials && paper.isDemo && !isAdmin) {
       res.status(404).json({ success: false, error: 'Academic resource not found.' });
       return;
     }
@@ -96,6 +174,12 @@ export const getPaperById = async (req: AuthenticatedRequest, res: Response): Pr
 
     const paperData = paper.toObject();
     paperData.fileUrl = getSignedCloudinaryUrl(paperData.publicId, paperData.fileUrl, paperData.fileType);
+    if (Array.isArray(paperData.attachments)) {
+      paperData.attachments = paperData.attachments.map((att: any) => ({
+        ...att,
+        fileUrl: getSignedCloudinaryUrl(att.publicId, att.fileUrl, att.fileType)
+      }));
+    }
     res.json({ success: true, data: paperData });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message || 'Failed to fetch paper' });
@@ -156,13 +240,25 @@ export const createPaper = async (req: AuthenticatedRequest, res: Response): Pro
       tempFilename = input.fileUrl.split('/uploads/temp/')[1]?.split('?')[0];
     }
 
+    let thumbnail = (input as any).thumbnail;
+    if (!thumbnail) {
+      if (input.fileType === 'image' || input.fileUrl?.match(/\.(jpg|jpeg|png|webp|gif)/i)) {
+        thumbnail = input.fileUrl;
+      } else if (Array.isArray((input as any).attachments)) {
+        const imgAtt = (input as any).attachments.find((att: any) => att.fileType === 'image' || att.fileUrl?.match(/\.(jpg|jpeg|png|webp|gif)/i));
+        if (imgAtt && imgAtt.fileUrl) {
+          thumbnail = imgAtt.fileUrl;
+        }
+      }
+    }
+
     const newPaper = await Paper.create({
       ...input,
+      thumbnail,
       tempFilename,
       submittedBy: userId,
       status: 'pending',
-      downloads: 0
-    });
+});
 
     const populated = userId ? await newPaper.populate('submittedBy', 'name email avatarUrl') : newPaper;
 
