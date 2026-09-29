@@ -190,3 +190,32 @@ export const getAdminNotificationHistory = async (_req: Request, res: Response):
     res.status(500).json({ success: false, error: error.message || 'Failed to fetch history' });
   }
 };
+
+// 6. Delete an in-app notification from the server inbox/history.
+// This cannot retract a push already displayed by Android, but it prevents
+// devices from fetching the notification again from the in-app inbox.
+export const deleteAdminNotification = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const deleted = await Notification.findByIdAndDelete(req.params.id);
+    if (!deleted) {
+      res.status(404).json({ success: false, error: 'Notification not found.' });
+      return;
+    }
+    res.json({ success: true, message: 'Notification removed. Devices will no longer fetch it.' });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to delete notification' });
+  }
+};
+
+export const deleteAllAdminNotifications = async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const result = await Notification.deleteMany({});
+    res.json({
+      success: true,
+      deletedCount: result.deletedCount || 0,
+      message: 'All push notification history has been deleted.'
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to delete notification history' });
+  }
+};

@@ -20,7 +20,7 @@ import {
 import { dispatchPushNotification } from '../services/pushNotificationService';
 import { awardPaperApprovalPoints } from '../services/rewardService';
 import { randomDownloadCount, randomRatingScore } from '../utils/materialStats';
-import { clearAiTelemetry, getAiTelemetry } from '../services/campusBotService';
+import { clearAiTelemetry, getAiPromptSettings, getAiTelemetry, saveAiPromptSettings } from '../services/campusBotService';
 
 // Secret-safe AI pool telemetry for the admin dashboard. API keys themselves are never returned.
 export const getAiOverages = async (_req: Request, res: Response): Promise<void> => {
@@ -37,6 +37,32 @@ export const clearAiOverages = async (_req: Request, res: Response): Promise<voi
     res.json({ success: true, message: 'AI overages, counters, cooldowns, and logs cleared.' });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message || 'Failed to clear AI telemetry.' });
+  }
+};
+
+export const getAiContextSettings = async (_req: Request, res: Response): Promise<void> => {
+  try {
+    res.json({ success: true, data: await getAiPromptSettings() });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to load AI context.' });
+  }
+};
+
+export const updateAiContextSettings = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const body = req.body || {};
+    const context = typeof body.context === 'string' ? body.context : '';
+    const persona = typeof body.persona === 'string' ? body.persona : '';
+    const responseRules = typeof body.responseRules === 'string' ? body.responseRules : '';
+    const safetyRules = typeof body.safetyRules === 'string' ? body.safetyRules : '';
+    if (!context.trim() && !persona.trim() && !responseRules.trim() && !safetyRules.trim()) {
+      res.status(400).json({ success: false, error: 'At least one AI instruction is required.' });
+      return;
+    }
+    const saved = await saveAiPromptSettings({ context, persona, responseRules, safetyRules });
+    res.json({ success: true, data: saved, message: 'AI instructions saved.' });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to save AI context.' });
   }
 };
 
@@ -2166,7 +2192,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
           💬 In-App Popups (Modal Overlay)
         </button>
         <button id="sub-btn-push" type="button" onclick="switchNotifySubTab('push')" class="btn" style="background: #f1f5f9; color: #475569; font-weight: 800; border-radius: 10px; padding: 10px 18px; font-size: 13px;">
-          🔔 Android Push Notifications
+          🔔 Android Push Notifications & History
         </button>
       </div>
 
@@ -2325,9 +2351,12 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
             <div class="card-header">
               <div>
                 <h3 style="font-size: 16px; font-weight: 800; color: #0f172a;">Active In-App Popups History</h3>
-                <p class="card-sub">Currently broadcasted popups</p>
+                <p class="card-sub">Currently broadcasted popups · delete any item individually</p>
               </div>
-              <button onclick="loadPopupHistory()" class="btn btn-view" style="font-size: 11px;">Refresh Popups</button>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <button onclick="loadPopupHistory()" class="btn btn-view" style="font-size: 11px;">Refresh Popups</button>
+                <button onclick="deleteAllPopupHistory()" class="btn" style="font-size: 11px; background:#fee2e2; color:#dc2626; border:1px solid #fca5a5;">🗑️ Delete All</button>
+              </div>
             </div>
 
             <div id="popups-history-container" style="display: flex; flex-direction: column; gap: 10px;">
@@ -2448,10 +2477,13 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
           <div class="card">
             <div class="card-header">
               <div>
-                <h3 style="font-size: 16px; font-weight: 800; color: #0f172a;">Broadcast History</h3>
-                <p class="card-sub">Recently dispatched push notifications</p>
+                <h3 style="font-size: 16px; font-weight: 800; color: #0f172a;">Android Push Notification History</h3>
+                <p class="card-sub">Recently dispatched push notifications · delete any item individually</p>
               </div>
-              <button onclick="loadPushHistory()" class="btn btn-view" style="font-size: 11px;">Refresh History</button>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <button onclick="loadPushHistory()" class="btn btn-view" style="font-size: 11px;">Refresh History</button>
+                <button onclick="deleteAllPushHistory()" class="btn" style="font-size: 11px; background:#fee2e2; color:#dc2626; border:1px solid #fca5a5;">🗑️ Delete All</button>
+              </div>
             </div>
 
             <div id="push-history-container" style="display: flex; flex-direction: column; gap: 10px; height: 900px; max-height: 900px; overflow-y: auto; overscroll-behavior: contain; padding-right: 6px;">
@@ -2472,8 +2504,36 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
             <p class="card-sub">Secret-safe runtime usage for Campus Bot and Campus AI. API keys are never shown.</p>
           </div>
           <div class="btn-group">
+            <button onclick="toggleAiContextEditor()" class="btn btn-view">AI Context</button>
             <button onclick="loadAiOverages()" class="btn btn-view">Refresh AI Status</button>
             <button onclick="clearAiOverages()" class="btn btn-reject">Clear Overages Data</button>
+          </div>
+        </div>
+        <div id="ai-context-editor" class="hidden" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin-bottom:18px;">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:10px;">
+            <div>
+              <div style="font-size:14px;font-weight:800;color:#0f172a;">AI Instruction Controls</div>
+              <div style="font-size:12px;color:#64748b;margin-top:3px;">Control the assistant's role, personality, response rules, and safety behavior. The server always adds the student's name and current message automatically.</div>
+            </div>
+            <button onclick="loadAiContext()" class="btn btn-view" style="padding:6px 10px;font-size:11px;">Reload</button>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;">
+            <label style="font-size:12px;font-weight:800;color:#334155;">Primary Context
+              <textarea id="ai-context-input" rows="5" maxlength="5000" placeholder="What should the assistant know about its purpose?" style="display:block;width:100%;box-sizing:border-box;resize:vertical;margin-top:5px;border:1px solid #cbd5e1;border-radius:8px;padding:10px;font:inherit;font-size:13px;color:#1e293b;background:#fff;"></textarea>
+            </label>
+            <label style="font-size:12px;font-weight:800;color:#334155;">Persona & Tone
+              <textarea id="ai-persona-input" rows="5" maxlength="5000" placeholder="Friendly, formal, concise, funny..." style="display:block;width:100%;box-sizing:border-box;resize:vertical;margin-top:5px;border:1px solid #cbd5e1;border-radius:8px;padding:10px;font:inherit;font-size:13px;color:#1e293b;background:#fff;"></textarea>
+            </label>
+            <label style="font-size:12px;font-weight:800;color:#334155;">Response Rules
+              <textarea id="ai-rules-input" rows="5" maxlength="5000" placeholder="How should answers be structured? What should be avoided?" style="display:block;width:100%;box-sizing:border-box;resize:vertical;margin-top:5px;border:1px solid #cbd5e1;border-radius:8px;padding:10px;font:inherit;font-size:13px;color:#1e293b;background:#fff;"></textarea>
+            </label>
+            <label style="font-size:12px;font-weight:800;color:#334155;">Safety & Privacy Rules
+              <textarea id="ai-safety-input" rows="5" maxlength="5000" placeholder="Privacy, accuracy, and safety boundaries..." style="display:block;width:100%;box-sizing:border-box;resize:vertical;margin-top:5px;border:1px solid #cbd5e1;border-radius:8px;padding:10px;font:inherit;font-size:13px;color:#1e293b;background:#fff;"></textarea>
+            </label>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:8px;">
+            <span id="ai-context-status" style="font-size:11px;color:#64748b;"></span>
+            <button onclick="saveAiContext()" class="btn btn-approve">Save AI Instructions</button>
           </div>
         </div>
         <div id="ai-overages-summary" class="stats-grid" style="margin-bottom: 18px;"></div>
@@ -2969,7 +3029,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
           return '<article class="material-card ' + (hidden ? 'hidden-material' : '') + '">' +
             '<div class="material-cover ' + (material.fileType === 'pdf' ? 'pdf' : '') + '"><span class="material-cover-icon">' + (material.fileType === 'pdf' ? 'PDF' : 'DOC') + '</span><input type="checkbox" class="material-check material-select" data-id="' + id + '" onchange="updateMaterialsSelection()" aria-label="Select ' + title + '"></div>' +
             '<div class="material-body"><div class="material-title">' + title + '</div><div class="material-meta"><strong>' + unit + '</strong> &middot; ' + school + '<br>' + type + ' &middot; ' + status + (material.mtid ? ' &middot; ' + escapeMaterialHtml(material.mtid) : '') + '</div><span class="material-status ' + (hidden ? 'hidden-status' : '') + '">' + (hidden ? 'Hidden from students' : 'Visible to students') + '</span></div>' +
-            '<div class="material-actions"><button onclick="toggleMaterialVisibility(\\'' + id + '\\',' + (!hidden) + ')" class="btn btn-view">' + (hidden ? 'Show' : 'Hide') + '</button><button onclick="deleteMaterials([' + "'" + id + "'" + '])" class="btn btn-reject">Delete</button></div>' +
+            '<div class="material-actions"><button data-material-id="' + id + '" data-hidden="' + (!hidden) + '" onclick="toggleMaterialVisibility(this.dataset.materialId, this.dataset.hidden === &quot;true&quot;)" class="btn btn-view">' + (hidden ? 'Show' : 'Hide') + '</button><button onclick="deleteMaterials([\'' + id + '\'])" class="btn btn-reject">Delete</button></div>' +
           '</article>';
         }).join('') + '</div>';
     }
@@ -3044,6 +3104,67 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
     }
 
     let aiOveragesRefreshTimer = null;
+    function toggleAiContextEditor() {
+      const editor = document.getElementById('ai-context-editor');
+      if (!editor) return;
+      const opening = editor.classList.contains('hidden');
+      editor.classList.toggle('hidden');
+      if (opening) loadAiContext();
+    }
+
+    async function loadAiContext() {
+      const contextInput = document.getElementById('ai-context-input');
+      const personaInput = document.getElementById('ai-persona-input');
+      const rulesInput = document.getElementById('ai-rules-input');
+      const safetyInput = document.getElementById('ai-safety-input');
+      const status = document.getElementById('ai-context-status');
+      if (!contextInput) return;
+      if (status) status.innerText = 'Loading saved AI instructions...';
+      try {
+        const response = await fetch('/api/v1/dashboard/ai-context');
+        const json = await response.json();
+        if (!json.success) throw new Error(json.error || 'Failed to load AI context');
+        contextInput.value = json.data?.context || '';
+        if (personaInput) personaInput.value = json.data?.persona || '';
+        if (rulesInput) rulesInput.value = json.data?.responseRules || '';
+        if (safetyInput) safetyInput.value = json.data?.safetyRules || '';
+        if (status) status.innerText = 'Saved AI instructions loaded from MongoDB.';
+      } catch (error) {
+        if (status) status.innerText = 'Failed to load context: ' + error.message;
+      }
+    }
+
+    async function saveAiContext() {
+      const contextInput = document.getElementById('ai-context-input');
+      const personaInput = document.getElementById('ai-persona-input');
+      const rulesInput = document.getElementById('ai-rules-input');
+      const safetyInput = document.getElementById('ai-safety-input');
+      const status = document.getElementById('ai-context-status');
+      const context = contextInput ? contextInput.value.trim() : '';
+      const persona = personaInput ? personaInput.value.trim() : '';
+      const responseRules = rulesInput ? rulesInput.value.trim() : '';
+      const safetyRules = safetyInput ? safetyInput.value.trim() : '';
+      if (!context && !persona && !responseRules && !safetyRules) {
+        if (status) status.innerText = 'Enter at least one AI instruction.';
+        return;
+      }
+      if (status) status.innerText = 'Saving...';
+      try {
+        const response = await fetch('/api/v1/dashboard/ai-context', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ context, persona, responseRules, safetyRules }) });
+        const json = await response.json();
+        if (!json.success) throw new Error(json.error || 'Failed to save AI context');
+        if (contextInput) contextInput.value = json.data?.context || context;
+        if (personaInput) personaInput.value = json.data?.persona || persona;
+        if (rulesInput) rulesInput.value = json.data?.responseRules || responseRules;
+        if (safetyInput) safetyInput.value = json.data?.safetyRules || safetyRules;
+        if (status) status.innerText = 'Saved to MongoDB. New AI requests will use these instructions.';
+        showToast(json.message || 'AI instructions saved.');
+      } catch (error) {
+        if (status) status.innerText = 'Failed to save context: ' + error.message;
+        showToast('Failed to save AI instructions: ' + error.message, true);
+      }
+    }
+
     async function loadAiOverages() {
       const summary = document.getElementById('ai-overages-summary');
       const tbody = document.getElementById('ai-overages-table-body');
@@ -3081,7 +3202,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
           const cooldownText = cooldownMinutes >= 60 ? Math.floor(cooldownMinutes / 60) + 'h ' + (cooldownMinutes % 60) + 'm' : cooldownMinutes + 'm ' + cooldownSeconds + 's';
           const cooldownCell = item.cooldownUntil ? '<div style="color:#b45309;font-weight:700;">Cooling down</div><div style="height:5px;background:#fef3c7;border-radius:5px;margin-top:6px;min-width:100px;"><div style="height:5px;width:' + cooldownPercent.toFixed(1) + '%;background:#f59e0b;border-radius:5px;"></div></div><div style="font-size:10px;color:#92400e;margin-top:3px;">' + cooldownText + ' remaining</div>' : '<span style="color:#15803d;font-weight:700;">Ready</span>';
           return '<tr><td><b>' + item.apiLabel + '</b></td><td><code>' + item.model + '</code></td><td>' + item.used + '</td><td>' + (item.configuredLimit === null ? 'Not configured' : item.configuredLimit) + '</td><td>' + remaining + '</td><td style="color:#15803d;font-weight:800;">' + item.successes + '</td><td style="color:#dc2626;font-weight:800;">' + item.failures + '</td><td>' + cooldownCell + '</td></tr>';
-        }).join('') : '<tr><td colspan="8" style="text-align:center;padding:28px;color:#dc2626;">No Gemini API keys detected. Check GEMINI_API_KEY, GEMINI_API_KEYS, or GEMINI_API_KEY_1...</td></tr>';
+        }).join('') : '<tr><td colspan="8" style="text-align:center;padding:28px;color:#dc2626;">No Gemini API keys detected. Set GEMINI_API_KEYS to a comma-separated list of keys...</td></tr>';
         if (note) note.innerText = 'Models in rotation: ' + ((data.models || []).join(', ') || 'none') + '. Gemini does not provide a universal remaining-quota value through this request path. “Remaining” is calculated only when GEMINI_API_LIMIT_1, GEMINI_API_LIMIT_2, etc. are configured; otherwise the dashboard reports “Not exposed”. Usage counters reset when the backend restarts.';
         const recentLogs = data.logs || [];
         logs.innerHTML = recentLogs.length ? recentLogs.map(item => {
@@ -3256,7 +3377,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         return;
       }
       const invalidExternal = actions.find(function(action) {
-        return action.type === 'external' && !/^https?:\\/\\//i.test(action.target);
+        return action.type === 'external' && !/^https?:\/\//i.test(action.target);
       });
       if (invalidExternal) {
         showToast('External actions must use a valid http:// or https:// URL.', true);
@@ -3335,7 +3456,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         '<select class="form-control interactive-type"><option value="text">Text box</option><option value="radio">Radio choices</option><option value="toggle">Toggle</option><option value="checkbox">Checkbox</option></select></div>' +
         '<input class="form-control interactive-options" placeholder="Choices separated by commas (for radio)" />' +
         '<label style="font-size:11px;font-weight:700;"><input type="checkbox" class="interactive-required" /> Required</label>' +
-        '<button type="button" onclick="this.closest(\\'.interactive-input-row\\').remove()" style="width:max-content;border:0;background:transparent;color:#dc2626;font-size:11px;font-weight:800;">Remove input</button>';
+        '<button type="button" onclick="this.closest(&quot;.interactive-input-row&quot;).remove()" style="width:max-content;border:0;background:transparent;color:#dc2626;font-size:11px;font-weight:800;">Remove input</button>';
       container.appendChild(row);
     }
 
@@ -3474,9 +3595,10 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
                 '<span style="background: #15803d; color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 10px;">' + item.popupId + '</span>' +
                 item.title +
               '</span>' +
-              (item.type === 'interactive' ? '<button onclick="viewPopupResponses(\\'' + item._id + '\\')" class="btn" style="background: #dcfce7; color: #15803d; padding: 3px 8px; font-size: 10px; font-weight: 800; border: 1px solid #86efac; border-radius: 6px; margin-right: 5px;">View responses</button>' : '') +              '<button data-id="' + item._id + '" onclick="handleDeletePopup(this.dataset.id)" class="btn" style="background: #fee2e2; color: #dc2626; padding: 3px 8px; font-size: 10px; font-weight: 800; border: 1px solid #fca5a5; border-radius: 6px;">' +
-                '🗑️ Delete' +
-              '</button>' +
+              '<span style="display:flex;align-items:center;gap:6px;">' +
+                (item.type === 'interactive' ? '<button type="button" data-popup-id="' + item._id + '" onclick="viewPopupResponses(this.dataset.popupId)" class="btn" style="background: #dcfce7; color: #15803d; padding: 3px 8px; font-size: 10px; font-weight: 800; border: 1px solid #86efac; border-radius: 6px;">View responses</button>' : '') +
+                '<button type="button" data-id="' + item._id + '" onclick="handleDeletePopup(this.dataset.id)" class="btn" style="background: #fee2e2; color: #dc2626; padding: 3px 8px; font-size: 10px; font-weight: 800; border: 1px solid #fca5a5; border-radius: 6px; cursor: pointer;">🗑️ Delete</button>' +
+              '</span>' +
             '</div>' +
             (item.subtitle ? '<div style="font-size: 11px; font-weight: 700; color: #15803d; margin-bottom: 4px;">' + item.subtitle + '</div>' : '') +
             '<div style="display: flex; gap: 8px; font-size: 11px; color: #64748b; margin-top: 6px;">' +
@@ -4595,14 +4717,53 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
             '</div>' +
             subtitleHtml +
             '<div style="color: #475569; margin-bottom: 6px; line-height: 1.4;">' + item.body + '</div>' +
-            '<div style="display: flex; justify-content: space-between; color: #94a3b8; font-size: 11px;">' +
+            '<div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; color: #94a3b8; font-size: 11px;">' +
               '<span>Target: ' + targetText + '</span>' +
-              '<span>' + new Date(item.createdAt).toLocaleString() + '</span>' +
+              '<span style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;"><span>' + new Date(item.createdAt).toLocaleString() + '</span><button type="button" onclick="deletePushHistoryItem(\'' + item._id + '\')" class="btn" style="background:#fee2e2;color:#dc2626;padding:3px 8px;font-size:10px;font-weight:800;border:1px solid #fca5a5;border-radius:6px;cursor:pointer;">🗑️ Delete</button></span>' +
             '</div>' +
           '</div>';
         }).join('');
       } catch (err) {
         console.error('Failed to load push history:', err);
+      }
+    }
+
+    async function deleteAllPopupHistory() {
+      if (!confirm('Delete all in-app popup history and response records? This cannot be undone.')) return;
+      try {
+        const res = await fetch('/api/v1/notify/popups', { method: 'DELETE' });
+        const json = await res.json();
+        if (!json.success) throw new Error(json.error || 'Failed to delete popup history');
+        showToast((json.deletedCount || 0) + ' in-app popup record(s) deleted.');
+        loadPopupHistory();
+      } catch (err) {
+        showToast('Error deleting popup history: ' + err.message, true);
+      }
+    }
+
+    async function deletePushHistoryItem(id) {
+      if (!confirm('Delete this notification from the server inbox? It cannot retract a push already shown on a device.')) return;
+      try {
+        const response = await fetch('/api/v1/admin/push-history/' + encodeURIComponent(id), { method: 'DELETE' });
+        const json = await response.json();
+        if (!json.success) throw new Error(json.error || 'Failed to delete notification');
+        showToast(json.message || 'Notification deleted.');
+        loadPushHistory();
+      } catch (error) {
+        showToast('Failed to delete notification: ' + error.message, true);
+      }
+    }
+
+    async function deleteAllPushHistory() {
+      if (!confirm('Delete all Android push notification history? This cannot retract notifications already shown on devices.')) return;
+      try {
+        const response = await fetch('/api/v1/admin/push-history', { method: 'DELETE' });
+        const json = await response.json();
+        if (!json.success) throw new Error(json.error || 'Failed to delete push history');
+        showToast((json.deletedCount || 0) + ' push notification record(s) deleted.');
+        loadPushHistory();
+      } catch (error) {
+        showToast('Failed to delete push history: ' + error.message, true);
       }
     }
 

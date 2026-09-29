@@ -150,13 +150,35 @@ export const getAdminPopups = async (_req: Request, res: Response): Promise<void
 export const deletePopup = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
-    await Popup.findOneAndDelete({ $or: [{ _id: id }, { popupId: id }] });
+    const lookup = mongoose.isValidObjectId(id)
+      ? { $or: [{ _id: id }, { popupId: id }] }
+      : { popupId: id };
+    const deleted = await Popup.findOneAndDelete(lookup);
+    if (!deleted) {
+      res.status(404).json({ success: false, error: 'Popup not found.' });
+      return;
+    }
+    await PopupResponse.deleteMany({ popupId: deleted._id });
     res.json({
       success: true,
-      message: 'Popup removed successfully'
+      message: 'Popup removed successfully. Devices will no longer receive it.'
     });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message || 'Failed to delete popup' });
+  }
+};
+
+export const deleteAllPopups = async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const result = await Popup.deleteMany({});
+    await PopupResponse.deleteMany({});
+    res.json({
+      success: true,
+      deletedCount: result.deletedCount || 0,
+      message: 'All in-app popup history has been deleted.'
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to delete popup history' });
   }
 };
 

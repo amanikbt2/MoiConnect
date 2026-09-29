@@ -52,6 +52,8 @@ router.post('/dashboard/restore', tempUpload.single('backup'), dashboardControll
 router.get('/dashboard/overview', dashboardController.getDashboardOverview);
 router.get('/dashboard/ai-overages', dashboardController.getAiOverages);
 router.delete('/dashboard/ai-overages', dashboardController.clearAiOverages);
+router.get('/dashboard/ai-context', dashboardController.getAiContextSettings);
+router.put('/dashboard/ai-context', dashboardController.updateAiContextSettings);
 router.get('/dashboard/materials', dashboardController.getDashboardMaterials);
 router.post('/dashboard/materials/publish', tempUpload.fields([{ name: 'file', maxCount: 1 }, { name: 'thumbnail', maxCount: 1 }]), dashboardController.publishAdminMaterial);
 router.patch('/dashboard/materials/visibility', dashboardController.updateDashboardMaterialsVisibility);
@@ -76,12 +78,15 @@ router.post('/notifications/read-all', authenticate, notificationController.mark
 router.post('/notifications/:id/read', authenticate, notificationController.markNotificationRead);
 router.post('/admin/push-notify', notificationController.sendAdminPushNotification);
 router.get('/admin/push-history', notificationController.getAdminNotificationHistory);
+router.delete('/admin/push-history', notificationController.deleteAllAdminNotifications);
+router.delete('/admin/push-history/:id', notificationController.deleteAdminNotification);
 router.get('/admin/registered-devices', notificationController.getRegisteredDeviceCount);
 
 // Notify & Popup API Routes
 router.post('/notify/upload-media', tempUpload.single('file'), popupController.uploadPopupMedia);
 router.get('/notify/popups', popupController.getAdminPopups);
 router.post('/notify/popups', popupController.createPopup);
+router.delete('/notify/popups', popupController.deleteAllPopups);
 router.delete('/notify/popups/:id', popupController.deletePopup);
 router.post('/notify/check-popup', optionalAuthenticate, popupController.checkClientPopup);
 router.post('/notify/popups/:id/responses', optionalAuthenticate, popupController.submitPopupResponse);

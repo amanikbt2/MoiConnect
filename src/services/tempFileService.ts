@@ -133,6 +133,8 @@ export const getSignedCloudinaryUrl = (publicId?: string, fileUrl?: string, file
 
   const resourceType = fileUrl.includes('/raw/upload/')
     ? 'raw'
+    : fileUrl.includes('/video/upload/')
+      ? 'video'
     : fileUrl.includes('/image/upload/')
       ? 'image'
       : fileType && fileType !== 'image'
@@ -157,7 +159,8 @@ export const getSignedCloudinaryUrl = (publicId?: string, fileUrl?: string, file
 };
 export const uploadTempFileToCloudinary = async (
   filenameOrUrl: string,
-  folder: string = 'MoiConnect/pdf'
+  folder: string = 'MoiConnect/pdf',
+  resourceTypeOverride?: 'image' | 'video' | 'raw'
 ): Promise<{ secure_url: string; public_id: string }> => {
   const filename = path.basename(filenameOrUrl.split('?')[0]);
   const filePath = path.join(TEMP_UPLOADS_DIR, filename);
@@ -176,7 +179,8 @@ export const uploadTempFileToCloudinary = async (
 
   const extension = path.extname(filename).toLowerCase();
   const imageExtensions = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.svg', '.ico', '.tif', '.tiff']);
-  const resourceType = imageExtensions.has(extension) ? 'image' : 'raw';
+  const videoExtensions = new Set(['.mp4', '.mov', '.m4v', '.webm', '.avi', '.mkv', '.3gp']);
+  const resourceType = resourceTypeOverride || (imageExtensions.has(extension) ? 'image' : videoExtensions.has(extension) ? 'video' : 'raw');
 
   const result: any = await cloudinary.uploader.upload(filePath, {
     folder,

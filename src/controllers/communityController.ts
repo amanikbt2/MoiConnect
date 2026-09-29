@@ -11,19 +11,23 @@ export const getCommunityMessages = async (req: Request, res: Response): Promise
   try {
     const { since, limit } = req.query;
     const query: any = {};
+    let isDeltaSync = false;
 
     if (since) {
       const sinceDate = new Date(since as string);
       if (!isNaN(sinceDate.getTime())) {
         query.updatedAt = { $gt: sinceDate };
+        isDeltaSync = true;
       }
     }
 
     const maxLimit = Math.min(parseInt(limit as string, 10) || 100, 200);
 
-    const messages = await CommunityMessage.find(query).select('-reactionUsers')
-      .sort({ createdAt: 1 }) // Chronological order
+    let messages = await CommunityMessage.find(query).select('-reactionUsers')
+      .sort(isDeltaSync ? { updatedAt: 1 } : { createdAt: -1 })
       .limit(maxLimit);
+
+    if (!isDeltaSync) messages = messages.reverse();
 
     res.json({
       success: true,
@@ -224,9 +228,11 @@ export const uploadCommunityMedia = async (req: Request, res: Response): Promise
 
     const file = req.file;
     const mime = file.mimetype || '';
-    let fileType: 'pdf' | 'doc' | 'image' = 'pdf';
+    let fileType: 'pdf' | 'doc' | 'image' | 'video' = 'pdf';
     if (mime.includes('image')) {
       fileType = 'image';
+    } else if (mime.includes('video')) {
+      fileType = 'video';
     } else if (mime.includes('word') || file.originalname.endsWith('.doc') || file.originalname.endsWith('.docx')) {
       fileType = 'doc';
     }
@@ -238,7 +244,8 @@ export const uploadCommunityMedia = async (req: Request, res: Response): Promise
       : '1.0 MB';
 
     // Upload to Cloudinary under folder 'moiconnect/chat_media'
-    const result = await uploadTempFileToCloudinary(file.filename, 'moiconnect/chat_media');
+    const cloudinaryResourceType = fileType === 'image' ? 'image' : fileType === 'video' ? 'video' : 'raw';
+    const result = await uploadTempFileToCloudinary(file.filename, 'moiconnect/chat_media', cloudinaryResourceType);
 
     res.json({
       success: true,
