@@ -64,6 +64,7 @@ router.post('/dashboard/papers/:id/upload-thumbnail', tempUpload.single('file'),
 router.post('/dashboard/papers/:id/approve', dashboardController.quickApprovePaper);
 router.post('/dashboard/papers/:id/reject', dashboardController.quickRejectPaper);
 router.patch('/dashboard/papers/:id', dashboardController.quickEditPaper);
+router.post('/dashboard/papers/:id/smart-edit', tempUpload.fields([{ name: 'file', maxCount: 1 }, { name: 'thumbnail', maxCount: 1 }]), dashboardController.smartEditMaterial);
 router.post('/dashboard/papers/:id/replace-file', tempUpload.single('file'), dashboardController.quickReplacePaperFile);
 router.get('/dashboard/temp-files', dashboardController.getDashboardTempFiles);
 router.delete('/dashboard/temp-files/:filename', dashboardController.deleteDashboardTempFile);

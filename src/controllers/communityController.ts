@@ -113,6 +113,10 @@ export const postCommunityMessage = async (req: Request, res: Response): Promise
       const io = getSocketIO();
       if (io) {
         io.to('community_room').emit('community:receive_message', message);
+        io.to('community_room').emit('community:user_stop_typing', {
+          userId: message.senderId,
+          userName: message.senderName
+        });
       }
 
       // Asynchronous Push Notifications to offline devices (Non-blocking)

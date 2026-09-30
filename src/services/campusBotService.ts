@@ -342,8 +342,10 @@ export const runCampusBotConversation = async (message: any, hooks: Conversation
   for (let turn = 0; assistant && turn < MAX_TURNS_PER_CHAIN; turn += 1) {
     if (generationAtStart !== stopGeneration) return;
     const sourceId = String(source._id);
-    if (inFlightReplies.has(sourceId)) return;
+    const clientKey = source.clientMsgId ? String(source.clientMsgId) : sourceId;
+    if (inFlightReplies.has(sourceId) || inFlightReplies.has(clientKey)) return;
     inFlightReplies.add(sourceId);
+    inFlightReplies.add(clientKey);
     const controller = new AbortController();
     activeRequests.add(controller);
     let typingAssistant = assistant;
@@ -351,7 +353,12 @@ export const runCampusBotConversation = async (message: any, hooks: Conversation
     let saved: any;
     let responseText = '';
     try {
-      const existing = await CommunityMessage.findOne({ botReplyFor: sourceId });
+      const existing = await CommunityMessage.findOne({
+        $or: [
+          { botReplyFor: sourceId },
+          ...(source.clientMsgId ? [{ clientMsgId: `bot_${source.clientMsgId}` }] : [])
+        ]
+      });
       if (existing) return;
       if (generationAtStart !== stopGeneration) return;
       const prompt = await getConversationPrompt(source, assistant);
@@ -360,6 +367,7 @@ export const runCampusBotConversation = async (message: any, hooks: Conversation
       if (!responseText || generationAtStart !== stopGeneration) return;
       saved = await CommunityMessage.create({
         botReplyFor: sourceId,
+        clientMsgId: source.clientMsgId ? `bot_${source.clientMsgId}` : undefined,
         senderId: assistant.id,
         senderName: assistant.name,
         senderEmail: assistant.email,
@@ -379,6 +387,7 @@ export const runCampusBotConversation = async (message: any, hooks: Conversation
     } finally {
       activeRequests.delete(controller);
       inFlightReplies.delete(sourceId);
+      inFlightReplies.delete(clientKey);
       hooks.onTyping?.(typingAssistant, false);
     }
     hooks.onReply?.(saved);

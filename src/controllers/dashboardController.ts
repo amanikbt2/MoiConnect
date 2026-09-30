@@ -779,6 +779,130 @@ export const quickEditPaper = async (req: Request, res: Response): Promise<void>
   }
 };
 
+// 4b. Smart Edit Material (Metadata, MTID, Document File, and Thumbnail Image)
+export const smartEditMaterial = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const {
+      title,
+      unitCode,
+      courseCode,
+      unitName,
+      school,
+      department,
+      type,
+      examYear,
+      academicYear,
+      semester,
+      description,
+      mtid,
+      autoGenerateMtid
+    } = req.body;
+
+    const paper = await Paper.findById(id);
+    if (!paper) {
+      res.status(404).json({ success: false, error: 'Material resource not found.' });
+      return;
+    }
+
+    if (title !== undefined && String(title).trim()) paper.title = String(title).trim();
+    if (unitCode !== undefined && String(unitCode).trim()) paper.unitCode = String(unitCode).trim().toUpperCase();
+    if (courseCode !== undefined && String(courseCode).trim()) paper.courseCode = String(courseCode).trim().toUpperCase();
+    else if (unitCode !== undefined && String(unitCode).trim()) paper.courseCode = String(unitCode).trim().toUpperCase();
+
+    if (unitName !== undefined && String(unitName).trim()) paper.unitName = String(unitName).trim();
+    if (school !== undefined && String(school).trim()) paper.school = String(school).trim();
+    if (department !== undefined && String(department).trim()) paper.department = String(department).trim();
+    else if (school !== undefined && String(school).trim()) paper.department = String(school).trim();
+
+    if (type !== undefined && String(type).trim()) paper.type = String(type).trim() as any;
+    if (examYear !== undefined && examYear !== '') paper.examYear = parseInt(String(examYear), 10) || 2025;
+    if (academicYear !== undefined) paper.academicYear = String(academicYear).trim();
+    if (semester !== undefined) paper.semester = String(semester).trim();
+    if (description !== undefined) paper.description = String(description).trim();
+
+    // Auto-generate or manual MTID update
+    if (autoGenerateMtid === 'true' || autoGenerateMtid === true || (mtid === 'AUTO' && !paper.mtid)) {
+      let prefix = 'N';
+      let typesToCount = ['notes', 'revision', 'lecture_notes'];
+      if (paper.type === 'cat') {
+        prefix = 'C';
+        typesToCount = ['cat'];
+      } else if ((paper.type as string) === 'past_paper' || (paper.type as string) === 'solution') {
+        prefix = 'P';
+        typesToCount = ['past_paper', 'solution'];
+      }
+      const count = await Paper.countDocuments({ status: 'approved', type: { $in: typesToCount } });
+      paper.mtid = `${prefix}${String(count + 1).padStart(4, '0')}`;
+    } else if (mtid !== undefined && String(mtid).trim()) {
+      paper.mtid = String(mtid).trim().toUpperCase();
+    }
+
+    // Handle files uploaded via multipart/form-data
+    const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+    const documentFile = files?.['file']?.[0] || (req as any).file;
+    const thumbnailFile = files?.['thumbnail']?.[0];
+
+    // If replacement document file is uploaded
+    if (documentFile) {
+      if (paper.tempFilename || paper.fileUrl?.includes('/uploads/temp/')) {
+        deleteTempFile(paper.tempFilename || paper.fileUrl);
+      }
+
+      if (paper.status === 'approved') {
+        try {
+          const uploadRes = await uploadTempFileToCloudinary(documentFile.filename, 'MoiConnect/pdf');
+          paper.fileUrl = uploadRes.secure_url;
+          paper.publicId = uploadRes.public_id;
+          paper.tempFilename = undefined;
+        } catch (cloudErr) {
+          console.warn('[Smart Edit Material] Cloudinary doc upload fallback:', cloudErr);
+          const host = req.get('host') || 'localhost:5000';
+          const protocol = req.protocol || 'http';
+          paper.tempFilename = documentFile.filename;
+          paper.fileUrl = `${protocol}://${host}/uploads/temp/${documentFile.filename}`;
+        }
+      } else {
+        const host = req.get('host') || 'localhost:5000';
+        const protocol = req.protocol || 'http';
+        paper.tempFilename = documentFile.filename;
+        paper.fileUrl = `${protocol}://${host}/uploads/temp/${documentFile.filename}`;
+      }
+
+      paper.fileSize = documentFile.size;
+      const cleanOrig = documentFile.originalname.toLowerCase();
+      const ext = path.extname(cleanOrig).replace('.', '');
+      if (['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(ext)) paper.fileType = 'image';
+      else if (['doc', 'docx'].includes(ext)) paper.fileType = 'doc';
+      else if (['txt', 'text'].includes(ext)) paper.fileType = 'text';
+      else paper.fileType = ext || 'pdf';
+    }
+
+    // If replacement thumbnail image is uploaded
+    if (thumbnailFile) {
+      try {
+        const thumbRes = await uploadTempFileToCloudinary(thumbnailFile.filename, 'MoiConnect/material_thumbnails');
+        paper.thumbnail = thumbRes.secure_url;
+      } catch (thumbErr) {
+        console.warn('[Smart Edit Material] Thumbnail upload fallback:', thumbErr);
+        const host = req.get('host') || 'localhost:5000';
+        const protocol = req.protocol || 'http';
+        paper.thumbnail = `${protocol}://${host}/uploads/temp/${thumbnailFile.filename}`;
+      }
+    }
+
+    await paper.save();
+
+    res.json({
+      success: true,
+      message: `Material "${paper.title}" (${paper.unitCode || ''}) updated successfully.`,
+      data: paper
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Smart edit failed' });
+  }
+};
+
 // 5. Quick Replace Paper File with Clean Media
 export const quickReplacePaperFile = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -2849,6 +2973,139 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       </div>
     </div>
 
+    <!-- Smart Edit Material Modal -->
+    <div id="smart-edit-modal" class="modal-backdrop hidden" onclick="if(event.target === this) closeSmartEditModal()">
+      <div class="modal-content" style="max-width: 720px;" onclick="event.stopPropagation()">
+        <div style="display: flex; justify-content: space-between; align-items: center; padding-bottom: 16px; margin-bottom: 20px; border-bottom: 2px solid #f1f5f9;">
+          <div>
+            <h2 style="font-size: 18px; font-weight: 800; color: #0f172a; display: flex; align-items: center; gap: 8px;">
+              ✏️ Smart Edit Material Details & Files
+            </h2>
+            <p style="font-size: 12px; color: #64748b; margin-top: 2px;">
+              Safely update metadata, auto-assign smart MTID, and optionally upload replacement document/thumbnail files without creating duplicates.
+            </p>
+          </div>
+          <button type="button" onclick="closeSmartEditModal()" class="btn btn-view" style="padding: 6px 12px; font-size: 12px;">✕ Close</button>
+        </div>
+
+        <form id="smart-edit-form" onsubmit="handleSmartEditSubmit(event)" style="display: flex; flex-direction: column; gap: 16px;">
+          <input type="hidden" id="smart-edit-paper-id" />
+
+          <!-- Title & Paper Type -->
+          <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 12px;">
+            <div>
+              <label style="display: block; font-size: 11px; font-weight: 800; color: #334155; margin-bottom: 4px;">Material Title *</label>
+              <input type="text" id="smart-edit-title" class="form-control" style="width: 100%; font-weight: 700;" required />
+            </div>
+            <div>
+              <label style="display: block; font-size: 11px; font-weight: 800; color: #334155; margin-bottom: 4px;">Material Type *</label>
+              <select id="smart-edit-type" onchange="autoGenerateSmartEditMtid()" class="form-control" style="width: 100%; font-weight: 700;">
+                <option value="past_paper">Past Paper</option>
+                <option value="cat">CAT Paper</option>
+                <option value="lecture_notes">Lecture Notes</option>
+                <option value="notes">Study Notes</option>
+                <option value="solution">Solutions</option>
+                <option value="revision">Revision Material</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- MTID Auto-Generation & Code -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+            <div>
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                <label style="font-size: 11px; font-weight: 800; color: #334155;">Smart MTID *</label>
+                <button type="button" onclick="autoGenerateSmartEditMtid(true)" style="background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd; font-size: 10px; font-weight: 800; padding: 2px 8px; border-radius: 6px; cursor: pointer;">⚡ Auto-Gen MTID</button>
+              </div>
+              <input type="text" id="smart-edit-mtid" class="form-control" style="width: 100%; font-weight: 800; font-family: monospace; letter-spacing: 0.5px;" placeholder="e.g. P0001 or C0001 or N0001" required />
+            </div>
+            <div>
+              <label style="display: block; font-size: 11px; font-weight: 800; color: #334155; margin-bottom: 4px;">Unit / Course Code *</label>
+              <input type="text" id="smart-edit-unit-code" class="form-control" style="width: 100%; font-weight: 700; text-transform: uppercase;" required />
+            </div>
+          </div>
+
+          <!-- Unit Name & School -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+            <div>
+              <label style="display: block; font-size: 11px; font-weight: 800; color: #334155; margin-bottom: 4px;">Unit Name *</label>
+              <input type="text" id="smart-edit-unit-name" class="form-control" style="width: 100%;" required />
+            </div>
+            <div>
+              <label style="display: block; font-size: 11px; font-weight: 800; color: #334155; margin-bottom: 4px;">School / Faculty *</label>
+              <input type="text" id="smart-edit-school" class="form-control" style="width: 100%;" required />
+            </div>
+          </div>
+
+          <!-- Department & Academic Year / Level -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 10px;">
+            <div style="grid-column: span 2;">
+              <label style="display: block; font-size: 11px; font-weight: 800; color: #334155; margin-bottom: 4px;">Department *</label>
+              <input type="text" id="smart-edit-department" class="form-control" style="width: 100%;" required />
+            </div>
+            <div>
+              <label style="display: block; font-size: 11px; font-weight: 800; color: #334155; margin-bottom: 4px;">Academic Year</label>
+              <input type="text" id="smart-edit-academic-year" class="form-control" style="width: 100%;" placeholder="e.g. Year 2" />
+            </div>
+            <div>
+              <label style="display: block; font-size: 11px; font-weight: 800; color: #334155; margin-bottom: 4px;">Semester</label>
+              <select id="smart-edit-semester" class="form-control" style="width: 100%;">
+                <option value="">Select</option>
+                <option value="Semester 1">Semester 1</option>
+                <option value="Semester 2">Semester 2</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Exam Year & Description -->
+          <div style="display: grid; grid-template-columns: 1fr 2fr; gap: 12px;">
+            <div>
+              <label style="display: block; font-size: 11px; font-weight: 800; color: #334155; margin-bottom: 4px;">Exam Year</label>
+              <input type="number" id="smart-edit-year" class="form-control" style="width: 100%; font-weight: 700;" placeholder="2025" />
+            </div>
+            <div>
+              <label style="display: block; font-size: 11px; font-weight: 800; color: #334155; margin-bottom: 4px;">Description / Overview</label>
+              <input type="text" id="smart-edit-description" class="form-control" style="width: 100%;" placeholder="Optional description..." />
+            </div>
+          </div>
+
+          <!-- Replacement Files Section (Thumbnail & Document) -->
+          <div style="background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 12px;">
+            <div style="font-size: 12px; font-weight: 800; color: #0f172a; display: flex; align-items: center; gap: 6px;">
+              📁 File & Thumbnail Replacement (Optional)
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
+              <!-- Thumbnail file input & preview -->
+              <div>
+                <label style="display: block; font-size: 11px; font-weight: 800; color: #475569; margin-bottom: 4px;">Replace Thumbnail Image</label>
+                <input type="file" id="smart-edit-thumbnail-file" accept="image/*" onchange="previewSmartEditThumbnail(this)" class="form-control" style="width: 100%; font-size: 11px;" />
+                <div style="display: flex; align-items: center; gap: 10px; margin-top: 8px;">
+                  <img id="smart-edit-thumb-preview" src="" alt="Thumbnail preview" style="width: 48px; height: 48px; object-fit: cover; border-radius: 8px; border: 1px solid #cbd5e1; display: none;" />
+                  <span id="smart-edit-thumb-status" style="font-size: 11px; color: #64748b;">No thumbnail set</span>
+                </div>
+              </div>
+
+              <!-- Document file input -->
+              <div>
+                <label style="display: block; font-size: 11px; font-weight: 800; color: #475569; margin-bottom: 4px;">Replace Main Document File</label>
+                <input type="file" id="smart-edit-document-file" accept=".pdf,.doc,.docx,image/*" class="form-control" style="width: 100%; font-size: 11px;" />
+                <div id="smart-edit-doc-status" style="font-size: 11px; color: #64748b; margin-top: 8px; word-break: break-all;">Current file URL: (none)</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Submit buttons -->
+          <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px;">
+            <button type="button" onclick="closeSmartEditModal()" class="btn btn-view">Cancel</button>
+            <button type="submit" id="btn-smart-edit-submit" class="btn btn-approve" style="padding: 10px 22px; font-size: 13px;">
+              💾 Save All Changes (In-Place Edit)
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
   </main>
 
   <footer>
@@ -3065,7 +3322,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
           return '<article class="material-card ' + (hidden ? 'hidden-material' : '') + '">' +
             '<div class="material-cover ' + (material.fileType === 'pdf' ? 'pdf' : '') + '"><span class="material-cover-icon">' + (material.fileType === 'pdf' ? 'PDF' : 'DOC') + '</span><input type="checkbox" class="material-check material-select" data-id="' + id + '" onchange="updateMaterialsSelection()" aria-label="Select ' + title + '"></div>' +
             '<div class="material-body"><div class="material-title">' + title + '</div><div class="material-meta"><strong>' + unit + '</strong> &middot; ' + school + '<br>' + type + ' &middot; ' + status + (material.mtid ? ' &middot; ' + escapeMaterialHtml(material.mtid) : '') + '</div><span class="material-status ' + (hidden ? 'hidden-status' : '') + '">' + (hidden ? 'Hidden from students' : 'Visible to students') + '</span></div>' +
-            '<div class="material-actions"><button data-material-id="' + id + '" data-hidden="' + (!hidden) + '" onclick="toggleMaterialVisibility(this.dataset.materialId, this.dataset.hidden === &quot;true&quot;)" class="btn btn-view">' + (hidden ? 'Show' : 'Hide') + '</button><button onclick="deleteMaterials([&quot;' + id + '&quot;])" class="btn btn-reject">Delete</button></div>' +
+            '<div class="material-actions"><button data-material-id="' + id + '" data-hidden="' + (!hidden) + '" onclick="toggleMaterialVisibility(this.dataset.materialId, this.dataset.hidden === &quot;true&quot;)" class="btn btn-view">' + (hidden ? 'Show' : 'Hide') + '</button><button onclick="openSmartEditModal(&quot;' + id + '&quot;)" class="btn btn-view" style="color: #d97706; border-color: #fcd34d;">✏️ Edit</button><button onclick="deleteMaterials([&quot;' + id + '&quot;])" class="btn btn-reject">Delete</button></div>' +
           '</article>';
         }).join('') + '</div>';
     }
@@ -3881,6 +4138,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
             '<span style="color: #64748b;">' + schoolName + '</span>' +
             '<span class="size-pill">' + formatBytes(paper.fileSize || 0) + '</span>' +
             '<span style="color: #94a3b8;">' + (paper.submittedBy ? paper.submittedBy.name : 'Student') + '</span>' +
+            '<button class="btn btn-tiny" data-id="' + paper._id + '" onclick="event.stopPropagation(); openSmartEditModal(this.dataset.id)" style="background: #d97706; color: #ffffff;" title="Smart Edit Material Details & Files">✏️ Edit</button>' +
             '<button class="btn btn-tiny" data-id="' + paper._id + '" onclick="event.stopPropagation(); openPaperModal(this.dataset.id)" style="background: ' + (isApproved ? '#0284c7' : '#15803d') + '; color: #ffffff;">' +
               (isApproved ? 'Inspect & Edit' : 'Review & Action ⚡') +
             '</button>' +
@@ -4442,6 +4700,140 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       } finally {
         btn.disabled = false;
         btn.innerText = 'Reject';
+      }
+    }
+
+    // SMART EDIT MATERIAL MODAL FUNCTIONS
+    function openSmartEditModal(id) {
+      let paper = null;
+      if (globalData) {
+        paper = [...(globalData.pendingPapers || []), ...(globalData.approvedPapers || [])].find(function(p) { return p._id === id; });
+      }
+      if (!paper && typeof materialsManagementData !== 'undefined' && Array.isArray(materialsManagementData)) {
+        paper = materialsManagementData.find(function(p) { return p._id === id; });
+      }
+      if (!paper) {
+        showToast('Material not found for smart editing.', true);
+        return;
+      }
+
+      document.getElementById('smart-edit-paper-id').value = paper._id;
+      document.getElementById('smart-edit-title').value = paper.title || '';
+      document.getElementById('smart-edit-type').value = paper.type || 'past_paper';
+      document.getElementById('smart-edit-mtid').value = paper.mtid || '';
+      document.getElementById('smart-edit-unit-code').value = paper.unitCode || paper.courseCode || '';
+      document.getElementById('smart-edit-unit-name').value = paper.unitName || '';
+      document.getElementById('smart-edit-school').value = paper.school || '';
+      document.getElementById('smart-edit-department').value = paper.department || paper.school || '';
+      document.getElementById('smart-edit-academic-year').value = paper.academicYear || '';
+      document.getElementById('smart-edit-semester').value = paper.semester || '';
+      document.getElementById('smart-edit-year').value = paper.examYear || 2025;
+      document.getElementById('smart-edit-description').value = paper.description || '';
+
+      // Reset file inputs
+      const thumbFile = document.getElementById('smart-edit-thumbnail-file');
+      if (thumbFile) thumbFile.value = '';
+      const docFile = document.getElementById('smart-edit-document-file');
+      if (docFile) docFile.value = '';
+
+      // Thumbnail preview & status
+      const thumbPreview = document.getElementById('smart-edit-thumb-preview');
+      const thumbStatus = document.getElementById('smart-edit-thumb-status');
+      if (paper.thumbnail) {
+        thumbPreview.src = paper.thumbnail;
+        thumbPreview.style.display = 'block';
+        thumbStatus.innerText = 'Current thumbnail active';
+      } else {
+        thumbPreview.style.display = 'none';
+        thumbStatus.innerText = 'No custom thumbnail set';
+      }
+
+      // Document status
+      const docStatus = document.getElementById('smart-edit-doc-status');
+      if (docStatus) {
+        docStatus.innerText = paper.fileUrl ? 'Current file: ' + paper.fileUrl.split('/').pop() : 'No document file';
+      }
+
+      document.getElementById('smart-edit-modal').classList.remove('hidden');
+    }
+
+    function closeSmartEditModal() {
+      const modal = document.getElementById('smart-edit-modal');
+      if (modal) modal.classList.add('hidden');
+    }
+
+    function previewSmartEditThumbnail(input) {
+      const preview = document.getElementById('smart-edit-thumb-preview');
+      const status = document.getElementById('smart-edit-thumb-status');
+      if (input.files && input.files[0]) {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+          preview.src = e.target.result;
+          preview.style.display = 'block';
+          status.innerText = 'Selected replacement thumbnail';
+        };
+        reader.readAsDataURL(input.files[0]);
+      }
+    }
+
+    function autoGenerateSmartEditMtid(force) {
+      const mtidInput = document.getElementById('smart-edit-mtid');
+      if (!force && mtidInput.value && mtidInput.value !== 'AUTO') return;
+      mtidInput.value = 'AUTO';
+    }
+
+    async function handleSmartEditSubmit(event) {
+      event.preventDefault();
+      const id = document.getElementById('smart-edit-paper-id').value;
+      if (!id) return;
+
+      const btn = document.getElementById('btn-smart-edit-submit');
+      btn.disabled = true;
+      btn.innerText = '⏳ Saving Smart Edits...';
+
+      try {
+        const formData = new FormData();
+        formData.append('title', document.getElementById('smart-edit-title').value.trim());
+        formData.append('type', document.getElementById('smart-edit-type').value);
+        formData.append('mtid', document.getElementById('smart-edit-mtid').value.trim());
+        if (document.getElementById('smart-edit-mtid').value.trim() === 'AUTO') {
+          formData.append('autoGenerateMtid', 'true');
+        }
+        formData.append('unitCode', document.getElementById('smart-edit-unit-code').value.trim());
+        formData.append('courseCode', document.getElementById('smart-edit-unit-code').value.trim());
+        formData.append('unitName', document.getElementById('smart-edit-unit-name').value.trim());
+        formData.append('school', document.getElementById('smart-edit-school').value.trim());
+        formData.append('department', document.getElementById('smart-edit-department').value.trim());
+        formData.append('academicYear', document.getElementById('smart-edit-academic-year').value.trim());
+        formData.append('semester', document.getElementById('smart-edit-semester').value);
+        formData.append('examYear', document.getElementById('smart-edit-year').value);
+        formData.append('description', document.getElementById('smart-edit-description').value.trim());
+
+        const thumbFile = document.getElementById('smart-edit-thumbnail-file').files[0];
+        if (thumbFile) formData.append('thumbnail', thumbFile);
+
+        const docFile = document.getElementById('smart-edit-document-file').files[0];
+        if (docFile) formData.append('file', docFile);
+
+        const res = await fetch('/api/v1/dashboard/papers/' + id + '/smart-edit', {
+          method: 'POST',
+          body: formData
+        });
+
+        const json = await res.json();
+        if (!json.success) throw new Error(json.error || 'Smart edit failed');
+
+        showToast('✨ ' + (json.message || 'Material updated successfully!'));
+        closeSmartEditModal();
+        if (typeof loadDashboardData === 'function') loadDashboardData();
+        if (typeof fetchMaterialsForManagement === 'function' && typeof materialsManagementData !== 'undefined' && materialsManagementData.length > 0) {
+          fetchMaterialsForManagement();
+        }
+      } catch (err) {
+        showToast('Smart Edit Error: ' + err.message, true);
+      } finally {
+        btn.disabled = false;
+        btn.innerText = '💾 Save All Changes (In-Place Edit)';
       }
     }
 

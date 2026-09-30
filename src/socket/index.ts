@@ -22,6 +22,7 @@ interface OnlineSession {
 
 // In-memory zero-polling active sockets registry for maximum speed (O(1) lookups)
 const activeSockets = new Map<string, OnlineSession>();
+const processedClientMsgIds = new Map<string, string>();
 let ioInstance: SocketIOServer | null = null;
 
 export const getSocketIO = (): SocketIOServer | null => {
@@ -127,18 +128,25 @@ export const setupSocketIO = (io: SocketIOServer): void => {
       }).catch(() => {});
     }
 
+    socket.on('join_community', () => {
+      socket.join('community_room');
+      broadcastOnlineCount();
+    });
+
     // Typing Indicator Socket Handlers (Zero-DB In-Memory Sub-1ms Broadcast)
     socket.on('community:start_typing', (data: { userName?: string; userId?: string }) => {
       socket.to('community_room').emit('community:user_typing', {
         userId: userId || data?.userId || socket.id,
-        userName: data?.userName || 'Moi Student'
+        userName: data?.userName || 'Moi Student',
+        socketId: socket.id
       });
     });
 
     socket.on('community:stop_typing', (data: { userName?: string; userId?: string }) => {
       socket.to('community_room').emit('community:user_stop_typing', {
         userId: userId || data?.userId || socket.id,
-        userName: data?.userName || 'Moi Student'
+        userName: data?.userName || 'Moi Student',
+        socketId: socket.id
       });
     });
 
@@ -161,6 +169,13 @@ export const setupSocketIO = (io: SocketIOServer): void => {
       try {
         const { clientMsgId, text, fileAttachment, stickerId, replyTo, senderName, senderEmail, senderFaculty, senderCourse, senderPhone, senderAvatarUrl, avatarBg } = data;
         if (!text?.trim() && !fileAttachment && !stickerId) return;
+
+        if (clientMsgId && processedClientMsgIds.has(clientMsgId)) {
+          const existingId = processedClientMsgIds.get(clientMsgId);
+          ack?.({ success: true, id: existingId });
+          return;
+        }
+
         const stopBots = isBotStopCommand(text);
         if (stopBots) {
           stopCampusBots();
@@ -178,6 +193,14 @@ export const setupSocketIO = (io: SocketIOServer): void => {
         const effectiveSenderName = isCampusBot ? 'Campus bot' : (senderName || 'Moi Student');
         const generatedId = new Types.ObjectId().toString();
         const nowISO = new Date().toISOString();
+
+        if (clientMsgId) {
+          processedClientMsgIds.set(clientMsgId, generatedId);
+          if (processedClientMsgIds.size > 2000) {
+            const firstKey = processedClientMsgIds.keys().next().value;
+            if (firstKey) processedClientMsgIds.delete(firstKey);
+          }
+        }
 
         const messagePayload = {
           _id: generatedId,
