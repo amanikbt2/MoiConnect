@@ -127,35 +127,47 @@ export const deleteBatchTempFiles = (filenames: string[]): { deletedCount: numbe
 };
 
 export const getSignedCloudinaryUrl = (publicId?: string, fileUrl?: string, fileType?: string): string => {
-  if (!fileUrl?.includes('res.cloudinary.com')) return fileUrl || '';
+  const cloudName = process.env.CLOUDINARY_CLOUD_NAME || 'mconnect';
 
-  if (!publicId) return fileUrl;
+  // 1. If publicId is provided and it's a raw/PDF asset, return non-expiring res.cloudinary.com CDN link
+  if (publicId) {
+    const isImage = fileType === 'image' || publicId.match(/\.(jpg|jpeg|png|webp|gif)$/i);
+    const isVideo = fileType === 'video' || publicId.match(/\.(mp4|mov|webm)$/i);
+    const resourceType = isImage ? 'image' : (isVideo ? 'video' : 'raw');
 
-  const resourceType = fileUrl.includes('/raw/upload/')
-    ? 'raw'
-    : fileUrl.includes('/video/upload/')
-      ? 'video'
-    : fileUrl.includes('/image/upload/')
-      ? 'image'
-      : fileType && fileType !== 'image'
-        ? 'raw'
-        : 'image';
+    if (resourceType === 'raw') {
+      const cleanPid = publicId.replace(/^\//, '');
+      const ext = path.extname(cleanPid) ? '' : '.pdf';
+      return `https://res.cloudinary.com/${cloudName}/raw/upload/${cleanPid}${ext}`;
+    }
 
-  if (resourceType === 'raw') {
-    const format = path.extname(publicId).replace('.', '') || 'pdf';
-    return cloudinary.utils.private_download_url(publicId, format, {
-      resource_type: 'raw',
+    return cloudinary.url(publicId, {
+      resource_type: resourceType,
       type: 'upload',
-      attachment: false
+      secure: true
     });
   }
 
-  return cloudinary.url(publicId, {
-    resource_type: resourceType,
-    type: 'upload',
-    secure: true,
-    sign_url: true
-  });
+  if (!fileUrl) return '';
+
+  // 2. If fileUrl contains api.cloudinary.com (stale timestamp link), sanitize it to direct res.cloudinary.com CDN link
+  if (fileUrl.includes('api.cloudinary.com')) {
+    try {
+      const parsedUrl = new URL(fileUrl);
+      const pidParam = parsedUrl.searchParams.get('public_id');
+      const extractedCloud = parsedUrl.pathname.split('/')[2] || cloudName;
+
+      if (pidParam) {
+        const cleanPid = pidParam.replace(/^\//, '');
+        const ext = path.extname(cleanPid) ? '' : '.pdf';
+        return `https://res.cloudinary.com/${extractedCloud}/raw/upload/${cleanPid}${ext}`;
+      }
+    } catch (e) {
+      // Fallback if URL parsing fails
+    }
+  }
+
+  return fileUrl;
 };
 export const uploadTempFileToCloudinary = async (
   filenameOrUrl: string,

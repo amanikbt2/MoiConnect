@@ -329,13 +329,15 @@ export const updateDashboardMaterialsVisibility = async (req: Request, res: Resp
   }
 };
 
-const destroyMaterialCloudinaryAsset = async (paper: any): Promise<boolean> => {
-  const publicId = paper.publicId || extractCloudinaryPublicId(paper.fileUrl);
-  if (!publicId) return false;
+const getCloudinaryResourceTypes = (fileType?: string, fileUrl?: string): string[] => {
+  if (fileType === 'video' || fileUrl?.includes('/video/upload/')) return ['video', 'raw', 'image'];
+  if (fileType === 'image' || fileUrl?.includes('/image/upload/')) return ['image', 'raw', 'video'];
+  return ['raw', 'image', 'video'];
+};
 
-  const preferredType = paper.fileType === 'image' || paper.fileUrl?.includes('/image/upload/') ? 'image' : 'raw';
-  const resourceTypes = preferredType === 'image' ? ['image', 'raw'] : ['raw', 'image'];
-  for (const resourceType of resourceTypes) {
+const destroyCloudinaryAsset = async (publicId: string, fileType?: string, fileUrl?: string): Promise<boolean> => {
+  if (!publicId) return false;
+  for (const resourceType of getCloudinaryResourceTypes(fileType, fileUrl)) {
     try {
       const result = await cloudinary.uploader.destroy(publicId, {
         resource_type: resourceType,
@@ -344,10 +346,29 @@ const destroyMaterialCloudinaryAsset = async (paper: any): Promise<boolean> => {
       });
       if (result.result === 'ok') return true;
     } catch (error) {
-      console.warn(`[Dashboard Materials] Cloudinary ${resourceType} cleanup skipped:`, error);
+      console.warn(`[Dashboard Materials] Cloudinary ${resourceType} cleanup skipped for ${publicId}:`, error);
     }
   }
   return false;
+};
+
+const destroyMaterialCloudinaryAssets = async (paper: any): Promise<number> => {
+  const assets = new Map<string, { fileType?: string; fileUrl?: string }>();
+  const addAsset = (publicId?: string | null, fileType?: string, fileUrl?: string) => {
+    if (publicId) assets.set(publicId, { fileType, fileUrl });
+  };
+
+  addAsset(paper.publicId || extractCloudinaryPublicId(paper.fileUrl), paper.fileType, paper.fileUrl);
+  addAsset(extractCloudinaryPublicId(paper.thumbnail), 'image', paper.thumbnail);
+  for (const attachment of paper.attachments || []) {
+    addAsset(attachment.publicId || extractCloudinaryPublicId(attachment.fileUrl), attachment.fileType, attachment.fileUrl);
+  }
+
+  let deletedCount = 0;
+  for (const [publicId, metadata] of assets) {
+    if (await destroyCloudinaryAsset(publicId, metadata.fileType, metadata.fileUrl)) deletedCount += 1;
+  }
+  return deletedCount;
 };
 
 export const deleteDashboardMaterials = async (req: Request, res: Response): Promise<void> => {
@@ -361,9 +382,14 @@ export const deleteDashboardMaterials = async (req: Request, res: Response): Pro
     const materials = await Paper.find({ _id: { $in: ids } });
     let cloudinaryDeleted = 0;
     for (const paper of materials) {
-      if (await destroyMaterialCloudinaryAsset(paper)) cloudinaryDeleted += 1;
+      cloudinaryDeleted += await destroyMaterialCloudinaryAssets(paper);
       if (paper.tempFilename || paper.fileUrl?.includes('/uploads/temp/')) {
         deleteTempFile(paper.tempFilename || paper.fileUrl);
+      }
+      for (const attachment of paper.attachments || []) {
+        if (attachment.tempFilename || attachment.fileUrl?.includes('/uploads/temp/')) {
+          deleteTempFile(attachment.tempFilename || attachment.fileUrl);
+        }
       }
     }
 
@@ -1885,7 +1911,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
               Publish Material Now (Cloudinary + DB)
             </button>
-            <button type="button" onclick="resetAdminPublishForm()" class="btn btn-view" style="padding: 12px 18px; font-size: 14px;">Clear Form</button>
+            <button type="button" id="btn-pub-clear" onclick="resetAdminPublishForm()" class="btn btn-view" style="padding: 12px 18px; font-size: 14px;">Clear Form</button>
           </div>
         </form>
       </div>
@@ -2832,6 +2858,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
   <!-- Dashboard JavaScript Logic -->
   <script>
     let globalData = null;
+    let adminPublishInFlight = false;
 
     const SVG_CHECK = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
     const SVG_CROSS = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
@@ -2883,7 +2910,10 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       const statusBox = document.getElementById('pub-status-box');
       if (statusBox) { statusBox.className = 'hidden'; statusBox.innerHTML = ''; }
       const btn = document.getElementById('btn-pub-submit');
+      const clearBtn = document.getElementById('btn-pub-clear');
       if (btn) { btn.disabled = false; btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Publish Material Now (Cloudinary + DB)'; }
+      if (clearBtn) clearBtn.disabled = false;
+      adminPublishInFlight = false;
     }
 
     function formatBytesJS(bytes) {
@@ -2896,6 +2926,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
 
     function publishAdminMaterialDirect(event) {
       event.preventDefault();
+      if (adminPublishInFlight) return;
       const title = document.getElementById('pub-title').value.trim();
       const type = document.getElementById('pub-type').value;
       const schoolSelect = document.getElementById('pub-school-select').value;
@@ -2922,9 +2953,12 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       }
 
       const btn = document.getElementById('btn-pub-submit');
+      const clearBtn = document.getElementById('btn-pub-clear');
       const statusBox = document.getElementById('pub-status-box');
 
+      adminPublishInFlight = true;
       btn.disabled = true;
+      if (clearBtn) clearBtn.disabled = true;
       btn.innerHTML = '⏳ Uploading to Cloudinary...';
 
       statusBox.className = '';
@@ -2980,7 +3014,9 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         statusBox.style.border = '1px solid #fecaca';
         statusBox.innerHTML = '❌ <strong>Upload Failed:</strong> ' + err.message;
         showToast('Failed to publish material: ' + err.message, true);
+        adminPublishInFlight = false;
         btn.disabled = false;
+        if (clearBtn) clearBtn.disabled = false;
         btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Retry Direct Upload';
       });
     }
