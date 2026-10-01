@@ -5389,6 +5389,44 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
     }
 
     // Auto load on page render
+    function checkAdminAuth() {
+      const isAuth = sessionStorage.getItem('admin_authenticated') === 'true' || localStorage.getItem('admin_authenticated') === 'true';
+      const overlay = document.getElementById('adminLockOverlay');
+      if (overlay) {
+        overlay.style.display = isAuth ? 'none' : 'flex';
+      }
+    }
+
+    function handleAdminLogin(e) {
+      if (e) e.preventDefault();
+      const email = (document.getElementById('adminLoginEmail').value || '').trim().toLowerCase();
+      const password = (document.getElementById('adminLoginPassword').value || '').trim();
+      const errDiv = document.getElementById('adminLoginError');
+
+      if (email === 'dev@gmail.com' && password === 'spiderman') {
+        sessionStorage.setItem('admin_authenticated', 'true');
+        localStorage.setItem('admin_authenticated', 'true');
+        if (errDiv) errDiv.style.display = 'none';
+        const overlay = document.getElementById('adminLockOverlay');
+        if (overlay) overlay.style.display = 'none';
+        showToast('Admin Dashboard Unlocked!');
+      } else {
+        if (errDiv) {
+          errDiv.innerText = 'Invalid admin email or password. Access denied.';
+          errDiv.style.display = 'block';
+        }
+      }
+      return false;
+    }
+
+    function adminLogout() {
+      sessionStorage.removeItem('admin_authenticated');
+      localStorage.removeItem('admin_authenticated');
+      location.reload();
+    }
+
+    checkAdminAuth();
+
     loadDashboardData();
     loadPushHistory();
         loadRegisteredPushDevices();
