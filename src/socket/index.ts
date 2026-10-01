@@ -7,6 +7,7 @@ import { Conversation } from '../models/Conversation';
 import { Message } from '../models/Message';
 import { CommunityMessage } from '../models/CommunityMessage';
 import { getCampusBotsGeneration, isBotStopCommand, runCampusBotConversation, shouldCampusBotRespond, stopCampusBots } from '../services/campusBotService';
+import { sendCommunityMessagePush, sendDirectMessagePush } from '../services/pushNotificationService';
 
 export interface AuthenticatedSocket extends Socket {
   userId?: string;
@@ -20,9 +21,25 @@ interface OnlineSession {
   connectedAt: Date;
 }
 
+interface LiveParticipant {
+  id: string;
+  name: string;
+  avatar?: string;
+  socketId: string;
+}
+
+interface ActiveLiveBroadcast {
+  hostId: string;
+  hostSocketId: string;
+  hostName: string;
+  hostAvatar?: string;
+  participants: Map<string, LiveParticipant>;
+}
+
 // In-memory zero-polling active sockets registry for maximum speed (O(1) lookups)
 const activeSockets = new Map<string, OnlineSession>();
 const processedClientMsgIds = new Map<string, string>();
+let activeLiveBroadcast: ActiveLiveBroadcast | null = null;
 let ioInstance: SocketIOServer | null = null;
 
 export const getSocketIO = (): SocketIOServer | null => {
@@ -113,6 +130,21 @@ export const setupSocketIO = (io: SocketIOServer): void => {
     socket.join('community_room');
     broadcastOnlineCount();
 
+    if (activeLiveBroadcast) {
+      socket.emit('community:live_start', {
+        hostName: activeLiveBroadcast.hostName,
+        hostAvatar: activeLiveBroadcast.hostAvatar,
+        hostId: activeLiveBroadcast.hostId
+      });
+      activeLiveBroadcast.participants.forEach((participant) => {
+        socket.emit('community:live_join', {
+          id: participant.id,
+          name: participant.name,
+          avatar: participant.avatar
+        });
+      });
+    }
+
     // Broadcast system connection pill notice if user is authenticated
     if (userId) {
       User.findById(userId).select('name').then(u => {
@@ -131,6 +163,53 @@ export const setupSocketIO = (io: SocketIOServer): void => {
     socket.on('join_community', () => {
       socket.join('community_room');
       broadcastOnlineCount();
+    });
+
+    socket.on('community:live_start', (data: { hostName?: string; hostAvatar?: string; hostId?: string }) => {
+      if (activeLiveBroadcast) return;
+
+      activeLiveBroadcast = {
+        hostId: data?.hostId || userId || socket.id,
+        hostSocketId: socket.id,
+        hostName: data?.hostName || 'Moi Student',
+        hostAvatar: data?.hostAvatar,
+        participants: new Map()
+      };
+
+      socket.to('community_room').emit('community:live_start', {
+        hostName: activeLiveBroadcast.hostName,
+        hostAvatar: activeLiveBroadcast.hostAvatar,
+        hostId: activeLiveBroadcast.hostId
+      });
+    });
+
+    socket.on('community:live_join', (data: { id?: string; name?: string; avatar?: string }) => {
+      if (!activeLiveBroadcast || !data?.id) return;
+
+      const participant: LiveParticipant = {
+        id: data.id,
+        name: data.name || 'Moi Student',
+        avatar: data.avatar,
+        socketId: socket.id
+      };
+      activeLiveBroadcast.participants.set(participant.id, participant);
+      io.to('community_room').emit('community:live_join', {
+        id: participant.id,
+        name: participant.name,
+        avatar: participant.avatar
+      });
+    });
+
+    socket.on('community:live_leave', (data: { id?: string }) => {
+      if (!activeLiveBroadcast || !data?.id) return;
+      activeLiveBroadcast.participants.delete(data.id);
+      io.to('community_room').emit('community:live_leave', { id: data.id });
+    });
+
+    socket.on('community:live_end', () => {
+      if (!activeLiveBroadcast || activeLiveBroadcast.hostSocketId !== socket.id) return;
+      activeLiveBroadcast = null;
+      io.to('community_room').emit('community:live_end');
     });
 
     // Typing Indicator Socket Handlers (Zero-DB In-Memory Sub-1ms Broadcast)
@@ -262,6 +341,7 @@ export const setupSocketIO = (io: SocketIOServer): void => {
               reactions: {}
             });
             ack?.({ success: true, id: generatedId });
+            void sendCommunityMessagePush(messagePayload).catch(() => {});
             if (!stopBots && shouldCampusBotRespond(messagePayload.text, messagePayload.replyTo)) {
               void runCampusBotConversation(savedMessage, {
                 onTyping: (assistant, typing) => io.to('community_room').emit(
@@ -351,6 +431,14 @@ export const setupSocketIO = (io: SocketIOServer): void => {
 
         io.to(`conversation:${conversationId}`).emit('receive_message', populatedMessage);
 
+        const senderObj = populatedMessage.senderId as any;
+        const senderInfo = {
+          _id: senderObj?._id || userId,
+          name: senderObj?.name || 'Moi Student',
+          email: senderObj?.email || ''
+        };
+        void sendDirectMessagePush(conversation, senderInfo, text.trim()).catch(() => {});
+
         conversation.participants.forEach(participantId => {
           const pId = participantId.toString();
           if (pId !== userId) {
@@ -367,6 +455,16 @@ export const setupSocketIO = (io: SocketIOServer): void => {
 
     // Clean up on disconnect instantly with zero delay or intervals
     socket.on('disconnect', () => {
+      if (activeLiveBroadcast?.hostSocketId === socket.id) {
+        activeLiveBroadcast = null;
+        socket.to('community_room').emit('community:live_end');
+      } else if (activeLiveBroadcast) {
+        const participant = Array.from(activeLiveBroadcast.participants.values()).find((entry) => entry.socketId === socket.id);
+        if (participant) {
+          activeLiveBroadcast.participants.delete(participant.id);
+          socket.to('community_room').emit('community:live_leave', { id: participant.id });
+        }
+      }
       activeSockets.delete(socket.id);
       broadcastOnlineCount();
       console.log(`[Socket Disconnected]: ${isGuest ? 'Guest (Unknown)' : `User ${userId}`} (Active: ${activeSockets.size})`);

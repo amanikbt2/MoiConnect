@@ -1,6 +1,7 @@
 import mongoose, { Schema, Document } from 'mongoose';
 
 export interface INotification extends Document {
+  notificationCode?: string;
   title: string;
   subtitle?: string;
   body: string;
@@ -15,6 +16,7 @@ export interface INotification extends Document {
 
 const NotificationSchema = new Schema<INotification>(
   {
+    notificationCode: { type: String },
     title: { type: String, required: true },
     subtitle: { type: String, default: '' },
     body: { type: String, required: true },

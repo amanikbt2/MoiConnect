@@ -1753,6 +1753,35 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
 </head>
 <body>
 
+  <!-- Admin Security Lock Overlay -->
+  <div id="adminLockOverlay" style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(12px); z-index: 999999; display: flex; align-items: center; justify-content: center; padding: 20px;">
+    <div style="background: #ffffff; width: 100%; max-width: 420px; border-radius: 20px; padding: 36px 28px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); border: 1px solid #e2e8f0; text-align: center;">
+      <div style="width: 64px; height: 64px; background: #dcfce7; border: 2px solid #bbf7d0; border-radius: 18px; display: flex; align-items: center; justify-content: center; margin: 0 auto 18px; font-size: 30px;">
+        🔒
+      </div>
+      <h2 style="font-size: 22px; font-weight: 800; color: #0f172a; margin-bottom: 6px;">Admin Access Control</h2>
+      <p style="font-size: 13px; color: #64748b; margin-bottom: 24px;">Please enter developer credentials to access the MoiConnect Admin Dashboard.</p>
+      
+      <form onsubmit="return handleAdminLogin(event)">
+        <div id="adminLoginError" style="display: none; background: #fee2e2; border: 1px solid #fecaca; color: #991b1b; padding: 10px 14px; border-radius: 10px; font-size: 12px; font-weight: 700; margin-bottom: 16px; text-align: left;"></div>
+        
+        <div style="text-align: left; margin-bottom: 16px;">
+          <label style="display: block; font-size: 12px; font-weight: 700; color: #334155; margin-bottom: 6px;">Admin Email</label>
+          <input type="email" id="adminLoginEmail" required placeholder="dev@gmail.com" style="width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid #cbd5e1; font-size: 14px; outline: none;" />
+        </div>
+
+        <div style="text-align: left; margin-bottom: 24px;">
+          <label style="display: block; font-size: 12px; font-weight: 700; color: #334155; margin-bottom: 6px;">Password</label>
+          <input type="password" id="adminLoginPassword" required placeholder="••••••••" style="width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid #cbd5e1; font-size: 14px; outline: none;" />
+        </div>
+
+        <button type="submit" style="width: 100%; background: #15803d; color: #ffffff; font-size: 15px; font-weight: 800; padding: 12px; border-radius: 10px; border: none; cursor: pointer; box-shadow: 0 4px 12px rgba(21, 128, 61, 0.25);">
+          Unlock Admin Dashboard
+        </button>
+      </form>
+    </div>
+  </div>
+
   <!-- Header Banner -->
   <header>
     <div class="header-container">
@@ -1775,6 +1804,10 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         <button onclick="loadDashboardData()" class="btn-refresh">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
           Refresh
+        </button>
+        <button onclick="adminLogout()" class="btn-refresh" style="background-color: #dc2626; border-color: #b91c1c;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+          Logout
         </button>
       </div>
     </div>

@@ -6,8 +6,20 @@ import { uploadTempFileToCloudinary, deleteTempFile } from '../services/tempFile
 
 // Helper to format incrementing popupId e.g. POPUP-0001
 const getNextPopupId = async (): Promise<string> => {
-  const count = await Popup.countDocuments();
-  const nextNum = count + 1;
+  let highestExistingNum = 0;
+  try {
+    const popups = await Popup.find().select('popupId').lean();
+    for (const p of popups) {
+      const match = p.popupId?.match(/\d+/);
+      if (match) {
+        const num = parseInt(match[0], 10);
+        if (num > highestExistingNum) highestExistingNum = num;
+      }
+    }
+  } catch (e) {}
+
+  const { getNextSequenceValue } = require('../models/AppSetting');
+  const nextNum = await getNextSequenceValue('popupSequenceCounter', highestExistingNum);
   return `POPUP-${String(nextNum).padStart(4, '0')}`;
 };
 

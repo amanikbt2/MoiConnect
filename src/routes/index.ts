@@ -30,6 +30,7 @@ import * as dashboardController from '../controllers/dashboardController';
 import * as popupController from '../controllers/popupController';
 import * as notificationController from '../controllers/notificationController';
 import * as communityController from '../controllers/communityController';
+import * as liveController from '../controllers/liveController';
 import { tempUpload } from '../middleware/upload';
 
 const router = Router();
@@ -40,6 +41,7 @@ router.get('/community/mention-users', communityController.getMentionUsers);
 router.post('/community/messages', optionalAuthenticate, communityController.postCommunityMessage);
 router.post('/community/messages/:id/reaction', optionalAuthenticate, communityController.toggleCommunityReaction);
 router.post('/community/upload-media', tempUpload.single('file'), communityController.uploadCommunityMedia);
+router.get('/community/live/token', optionalAuthenticate, liveController.createCommunityLiveToken);
 
 // App Settings API Routes
 router.get('/settings', dashboardController.getAppSettings);
@@ -107,6 +109,9 @@ router.delete('/auth/delete-account', authenticate, authController.deleteAccount
 router.post('/papers/upload', optionalAuthenticate, tempUpload.single('file'), paperController.uploadPaperFile);
 router.get('/papers', paperController.getPapers);
 router.get('/papers/my-submissions', authenticate, paperController.getMySubmissions);
+router.get('/papers/stream-url', paperController.streamPaperPdfByUrl);
+router.get('/papers/:id/view', paperController.viewPaperPdf);
+router.get('/papers/:id/view-pdf', paperController.viewPaperPdf);
 router.get('/papers/:id', paperController.getPaperById);
 router.post('/papers', optionalAuthenticate, validateBody(createPaperSchema), paperController.createPaper);
 router.post('/papers/:id/download', paperController.downloadPaper);

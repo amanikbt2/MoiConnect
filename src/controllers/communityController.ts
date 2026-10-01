@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { CommunityMessage } from '../models/CommunityMessage';
 import { User } from '../models/User';
 import { getSocketIO } from '../socket';
-import { dispatchPushNotification } from '../services/pushNotificationService';
+import { dispatchPushNotification, sendCommunityMessagePush } from '../services/pushNotificationService';
 import { uploadTempFileToCloudinary } from '../services/tempFileService';
 import { getCampusBotsGeneration, isBotStopCommand, runCampusBotConversation, shouldCampusBotRespond, stopCampusBots } from '../services/campusBotService';
 
@@ -121,12 +121,7 @@ export const postCommunityMessage = async (req: Request, res: Response): Promise
 
       // Asynchronous Push Notifications to offline devices (Non-blocking)
       setImmediate(() => {
-        dispatchPushNotification({
-          title: `Ã°Å¸â€™Â¬ ${message.senderName}`,
-          body: message.text ? message.text.slice(0, 100) : `Ã°Å¸â€œÅ½ Sent a file: ${message.fileAttachment?.name || 'Attachment'}`,
-          target: 'all',
-          data: { screen: 'community', channelId: 'community_chat' }
-        }).catch(() => {});
+        void sendCommunityMessagePush(message).catch(() => {});
       });
     }
 

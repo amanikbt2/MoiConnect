@@ -51,3 +51,23 @@ export const setAppSettingValue = async <T = any>(key: string, value: T, userId?
     throw error;
   }
 };
+
+export const getNextSequenceValue = async (sequenceKey: string, fallbackMinCount: number = 0): Promise<number> => {
+  try {
+    const setting = await AppSetting.findOne({ key: sequenceKey });
+    let currentVal = setting?.value && typeof setting.value === 'number' ? setting.value : 0;
+    if (currentVal < fallbackMinCount) {
+      currentVal = fallbackMinCount;
+    }
+    const nextVal = currentVal + 1;
+    await AppSetting.findOneAndUpdate(
+      { key: sequenceKey },
+      { $set: { value: nextVal } },
+      { upsert: true, new: true }
+    );
+    return nextVal;
+  } catch (error) {
+    console.error(`Error generating sequence for [${sequenceKey}]:`, error);
+    return Date.now();
+  }
+};

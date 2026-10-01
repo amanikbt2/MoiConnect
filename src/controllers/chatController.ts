@@ -3,6 +3,7 @@ import { Conversation } from '../models/Conversation';
 import { Message } from '../models/Message';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { SendMessageInput } from '@moi/shared';
+import { sendDirectMessagePush } from '../services/pushNotificationService';
 
 export const getConversations = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
@@ -130,6 +131,10 @@ export const sendMessage = async (req: AuthenticatedRequest, res: Response): Pro
     await conversation.save();
 
     const populated = await message.populate('senderId', 'name email avatarUrl');
+
+    setImmediate(() => {
+      void sendDirectMessagePush(conversation, sender as any, text).catch(() => {});
+    });
 
     res.status(201).json({
       success: true,

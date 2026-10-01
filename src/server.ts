@@ -57,18 +57,28 @@ app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 // Security & Utility Middlewares
 app.use(helmet({
   crossOriginResourcePolicy: false,
-  contentSecurityPolicy: false
+  contentSecurityPolicy: false,
+  frameguard: false
 }));
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Rate Limiter
+// Rate Limiter (Protection with Admin & Localhost Skip)
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 300,
+  max: 1500,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => {
+    const ip = req.ip || req.socket?.remoteAddress || '';
+    return (
+      ip === '127.0.0.1' ||
+      ip === '::1' ||
+      ip === '::ffff:127.0.0.1' ||
+      req.originalUrl.includes('/dashboard')
+    );
+  },
   message: { success: false, error: 'Too many requests, please try again later.' }
 });
 app.use('/api', limiter);
@@ -92,6 +102,7 @@ app.get(['/admin/preview', '/preview'], renderSmartPreviewPage);
 
 // API Base Route
 app.use('/api/v1', routes);
+app.use('/api', routes);
 
 // Health Check
 app.get('/health', (_req, res) => {

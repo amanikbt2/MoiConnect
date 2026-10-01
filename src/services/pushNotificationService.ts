@@ -35,15 +35,39 @@ export function resolveMagicPlaceholders(
 export const dispatchPushNotification = async (payload: IPushNotificationPayload) => {
   const { title, subtitle, body, icon = 'bell', target, recipientEmails = [], data = {} } = payload;
 
+  let highestExistingNum = 0;
+  try {
+    const existing = await Notification.find().select('notificationCode data').lean();
+    for (const n of existing) {
+      const codeStr = n.notificationCode || n.data?.notificationCode || n.data?.code;
+      if (codeStr) {
+        const match = String(codeStr).match(/\d+/);
+        if (match) {
+          const num = parseInt(match[0], 10);
+          if (num > highestExistingNum) highestExistingNum = num;
+        }
+      }
+    }
+  } catch (e) {}
+
+  const { getNextSequenceValue } = require('../models/AppSetting');
+  const nextNum = await getNextSequenceValue('notificationSequenceCounter', highestExistingNum);
+  const notificationCode = `NOTIF-${String(nextNum).padStart(4, '0')}`;
+
   // 1. Save Notification record to MongoDB so it's stored for offline & in-app bell inbox
   const notificationRecord = await Notification.create({
+    notificationCode,
     title,
     subtitle,
     body,
     icon,
     target,
     recipientEmails: target === 'emails' ? recipientEmails.map(e => e.trim().toLowerCase()) : [],
-    data,
+    data: {
+      ...data,
+      notificationCode,
+      code: notificationCode
+    },
     readBy: []
   });
 
@@ -194,5 +218,94 @@ export const sendPushToTokens = async (
     } catch (err) {
       console.error('[Push Notification Error]:', err);
     }
+  }
+};
+
+export const sendCommunityMessagePush = async (messagePayload: {
+  senderId?: string;
+  senderName?: string;
+  senderEmail?: string;
+  text?: string;
+  fileAttachment?: any;
+  stickerId?: string;
+  _id?: string;
+}): Promise<void> => {
+  try {
+    const senderIdStr = messagePayload.senderId ? String(messagePayload.senderId) : '';
+    const senderEmailStr = (messagePayload.senderEmail || '').trim().toLowerCase();
+
+    // Query all device tokens except the sender's own tokens
+    const recipientTokens = await DeviceToken.find({
+      $and: [
+        ...(senderIdStr ? [{ userId: { $ne: senderIdStr } }] : []),
+        ...(senderEmailStr ? [{ email: { $ne: senderEmailStr } }] : [])
+      ]
+    }).distinct('token');
+
+    if (!recipientTokens || recipientTokens.length === 0) return;
+
+    let bodyText = messagePayload.text?.trim() || '';
+    if (!bodyText) {
+      if (messagePayload.fileAttachment?.name || messagePayload.fileAttachment?.url) {
+        bodyText = `📎 Sent a file: ${messagePayload.fileAttachment.name || 'Attachment'}`;
+      } else if (messagePayload.stickerId) {
+        bodyText = '🎨 Sent a sticker';
+      } else {
+        bodyText = 'New message in Community';
+      }
+    }
+
+    if (bodyText.length > 120) {
+      bodyText = bodyText.slice(0, 117) + '...';
+    }
+
+    const title = `💬 ${messagePayload.senderName || 'Moi Student'}`;
+
+    await sendPushToTokens(recipientTokens, title, bodyText, {
+      screen: 'community',
+      channelId: 'community_chat',
+      senderId: senderIdStr,
+      messageId: messagePayload._id
+    });
+  } catch (err) {
+    console.error('[Community Push Notification Error]:', err);
+  }
+};
+
+export const sendDirectMessagePush = async (
+  conversation: { _id: any; participants: any[] },
+  sender: { _id?: any; name?: string; email?: string },
+  text: string
+): Promise<void> => {
+  try {
+    const senderIdStr = sender._id ? String(sender._id) : '';
+
+    // Get recipient participant IDs (all participants except sender)
+    const recipientUserIds = (conversation.participants || [])
+      .map((p) => String(p))
+      .filter((pId) => pId && pId !== senderIdStr);
+
+    if (recipientUserIds.length === 0) return;
+
+    const recipientTokens = await DeviceToken.find({
+      userId: { $in: recipientUserIds }
+    }).distinct('token');
+
+    if (!recipientTokens || recipientTokens.length === 0) return;
+
+    let bodyText = text?.trim() || 'Sent a private message';
+    if (bodyText.length > 120) {
+      bodyText = bodyText.slice(0, 117) + '...';
+    }
+
+    const title = `💬 ${sender.name || 'Direct Message'}`;
+
+    await sendPushToTokens(recipientTokens, title, bodyText, {
+      screen: 'chat',
+      conversationId: String(conversation._id),
+      senderId: senderIdStr
+    });
+  } catch (err) {
+    console.error('[Direct Message Push Notification Error]:', err);
   }
 };
