@@ -240,6 +240,7 @@ export const uploadTempFileToCloudinary = async (
     use_filename: !publicIdOverride,
     unique_filename: !publicIdOverride,
     overwrite: Boolean(publicIdOverride),
+    invalidate: Boolean(publicIdOverride),
     ...(publicIdOverride ? { public_id: publicIdOverride } : {})
   });
 
@@ -257,7 +258,7 @@ export const uploadTempFileToCloudinary = async (
     : result.public_id;
 
   return {
-    secure_url: getSignedCloudinaryUrl(publicIdForUrl, result.secure_url, resourceType === 'raw' ? 'text' : 'image'),
+    secure_url: `${getSignedCloudinaryUrl(publicIdForUrl, result.secure_url, resourceType === 'raw' ? 'text' : 'image')}${result.version ? `?v=${result.version}` : ''}`,
     public_id: result.public_id
   };
 };

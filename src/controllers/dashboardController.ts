@@ -905,6 +905,8 @@ export const smartEditMaterial = async (req: Request, res: Response): Promise<vo
 
     // If replacement document file is uploaded
     if (documentFile) {
+      const previousDocumentPublicId = paper.publicId || extractCloudinaryPublicId(paper.fileUrl);
+      const previousDocumentUrl = paper.fileUrl;
       if (paper.tempFilename || paper.fileUrl?.includes('/uploads/temp/')) {
         deleteTempFile(paper.tempFilename || paper.fileUrl);
       }
@@ -921,12 +923,17 @@ export const smartEditMaterial = async (req: Request, res: Response): Promise<vo
           const protocol = req.protocol || 'http';
           paper.tempFilename = documentFile.filename;
           paper.fileUrl = `${protocol}://${host}/uploads/temp/${documentFile.filename}`;
+          paper.publicId = undefined;
         }
       } else {
         const host = req.get('host') || 'localhost:5000';
         const protocol = req.protocol || 'http';
         paper.tempFilename = documentFile.filename;
         paper.fileUrl = `${protocol}://${host}/uploads/temp/${documentFile.filename}`;
+      }
+
+      if (previousDocumentPublicId && previousDocumentPublicId !== paper.publicId && !previousDocumentUrl?.includes('/uploads/temp/')) {
+        await destroyCloudinaryAsset(previousDocumentPublicId, paper.fileType, previousDocumentUrl);
       }
 
       paper.fileSize = documentFile.size;
@@ -940,6 +947,8 @@ export const smartEditMaterial = async (req: Request, res: Response): Promise<vo
 
     // If replacement thumbnail image is uploaded
     if (thumbnailFile) {
+      const previousThumbnailUrl = paper.thumbnail;
+      const previousThumbnailPublicId = extractCloudinaryPublicId(previousThumbnailUrl || '');
       try {
         const thumbRes = await uploadTempFileToCloudinary(thumbnailFile.filename, 'MoiConnect/material_thumbnails');
         paper.thumbnail = thumbRes.secure_url;
@@ -949,11 +958,18 @@ export const smartEditMaterial = async (req: Request, res: Response): Promise<vo
         const protocol = req.protocol || 'http';
         paper.thumbnail = `${protocol}://${host}/uploads/temp/${thumbnailFile.filename}`;
       }
+      if (previousThumbnailPublicId && !previousThumbnailUrl?.includes('/uploads/temp/')) {
+        const replacementThumbnailPublicId = extractCloudinaryPublicId(paper.thumbnail || '');
+        if (previousThumbnailPublicId !== replacementThumbnailPublicId) {
+          await destroyCloudinaryAsset(previousThumbnailPublicId, 'image', previousThumbnailUrl);
+        }
+      }
     }
 
     if (ttsFile) {
       try {
         const previousTtsPublicId = paper.ttsTextPublicId;
+        const previousTtsUrl = paper.ttsTextUrl;
         const ttsUpload = await uploadTempFileToCloudinary(
           ttsFile.filename,
           'MoiConnect/tts',
@@ -963,7 +979,7 @@ export const smartEditMaterial = async (req: Request, res: Response): Promise<vo
         paper.ttsTextUrl = ttsUpload.secure_url;
         paper.ttsTextPublicId = ttsUpload.public_id;
         if (previousTtsPublicId && previousTtsPublicId !== ttsUpload.public_id) {
-          await destroyCloudinaryAsset(previousTtsPublicId, 'text', paper.ttsTextUrl);
+          await destroyCloudinaryAsset(previousTtsPublicId, 'text', previousTtsUrl);
         }
       } catch (ttsErr) {
         deleteTempFile(ttsFile.filename);
