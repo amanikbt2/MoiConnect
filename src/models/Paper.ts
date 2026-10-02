@@ -7,6 +7,8 @@ export interface IPaperAttachment {
   tempFilename?: string;
   fileType: string;
   fileSize?: number;
+  ttsTextUrl?: string;
+  ttsTextPublicId?: string;
   originalName?: string;
   publicId?: string;
 }
@@ -27,6 +29,8 @@ export interface IPaperDocument extends Document {
   fileUrl: string;
   thumbnail?: string;
   publicId?: string;
+  ttsTextUrl?: string;
+  ttsTextPublicId?: string;
   tempFilename?: string;
   fileType: string;
   fileSize?: number;
@@ -51,6 +55,8 @@ const attachmentSchema = new Schema(
     tempFilename: { type: String, trim: true },
     fileType: { type: String, default: 'pdf' },
     fileSize: { type: Number },
+    ttsTextUrl: { type: String, trim: true },
+    ttsTextPublicId: { type: String, trim: true },
     originalName: { type: String, trim: true },
     publicId: { type: String }
   },
@@ -77,6 +83,8 @@ const paperSchema = new Schema<IPaperDocument>(
     fileUrl: { type: String, required: true },
     thumbnail: { type: String, trim: true },
     publicId: { type: String },
+    ttsTextUrl: { type: String, trim: true },
+    ttsTextPublicId: { type: String, trim: true },
     tempFilename: { type: String, trim: true },
     fileType: { type: String, default: 'pdf' },
     fileSize: { type: Number },

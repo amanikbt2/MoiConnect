@@ -415,9 +415,15 @@ export const runCampusBotConversation = async (message: any, hooks: Conversation
       });
       if (existing) return;
       if (generationAtStart !== stopGeneration) return;
-      const prompt = await getConversationPrompt(source, assistant);
-      if (generationAtStart !== stopGeneration) return;
-      responseText = (await generateReply(prompt, assistant, controller.signal)) || '';
+      const disableAiFeatures = await getAppSettingValue('disableAiFeatures', false);
+      if (disableAiFeatures) {
+        responseText = 'Sorry, Im disabled for now';
+        addAiLog({ level: 'warn', assistant: assistant.name, message: 'AI feature is disabled in Admin Settings. Replied with disabled notice.' });
+      } else {
+        const prompt = await getConversationPrompt(source, assistant);
+        if (generationAtStart !== stopGeneration) return;
+        responseText = (await generateReply(prompt, assistant, controller.signal)) || '';
+      }
       if (!responseText || generationAtStart !== stopGeneration) return;
       saved = await CommunityMessage.create({
         botReplyFor: sourceId,

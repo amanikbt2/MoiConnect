@@ -104,6 +104,8 @@ export const getDashboardOverview = async (_req: Request, res: Response): Promis
 
     const tempFilesSummary = await listTempFiles();
     const showDemoMaterials = await getAppSettingValue('showDemoMaterials', false);
+    const allowCommunityChat = await getAppSettingValue('allowCommunityChat', true);
+    const disableAiFeatures = await getAppSettingValue('disableAiFeatures', false);
 
     res.json({
       success: true,
@@ -118,6 +120,7 @@ export const getDashboardOverview = async (_req: Request, res: Response): Promis
         pendingReports,
         totalDepartments,
         showDemoMaterials,
+        allowCommunityChat,
         totalOnline: onlineStats.totalOnline,
         authenticatedOnline: onlineStats.authenticatedCount,
         guestOnline: onlineStats.guestCount,
@@ -127,7 +130,8 @@ export const getDashboardOverview = async (_req: Request, res: Response): Promis
         totalTempSizeFormatted: tempFilesSummary.totalSizeFormatted
       },
       settings: {
-        showDemoMaterials
+        showDemoMaterials,
+        allowCommunityChat
       },
       pendingPapers: pendingPaperList,
       approvedPapers: approvedPaperList,
@@ -143,9 +147,10 @@ export const getDashboardOverview = async (_req: Request, res: Response): Promis
 export const getAppSettings = async (_req: Request, res: Response): Promise<void> => {
   try {
     const showDemoMaterials = await getAppSettingValue('showDemoMaterials', false);
+    const allowCommunityChat = await getAppSettingValue('allowCommunityChat', true);
     res.json({
       success: true,
-      settings: { showDemoMaterials }
+      settings: { showDemoMaterials, allowCommunityChat }
     });
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });
@@ -154,23 +159,44 @@ export const getAppSettings = async (_req: Request, res: Response): Promise<void
 
 export const updateDashboardSettings = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { key, value, showDemoMaterials } = req.body;
-    let targetKey = key || 'showDemoMaterials';
-    let targetVal = value !== undefined ? value : showDemoMaterials;
-
-    if (typeof targetVal !== 'boolean') {
-      res.status(400).json({ success: false, message: 'Setting value must be a boolean.' });
-      return;
+    const { key, value, showDemoMaterials, allowCommunityChat, disableAiFeatures } = req.body;
+    if (showDemoMaterials !== undefined) {
+      await setAppSettingValue('showDemoMaterials', Boolean(showDemoMaterials), (req as any).user?._id);
     }
-
-    const updatedVal = await setAppSettingValue(targetKey, targetVal, (req as any).user?._id);
+    if (allowCommunityChat !== undefined) {
+      await setAppSettingValue('allowCommunityChat', Boolean(allowCommunityChat), (req as any).user?._id);
+    }
+    if (disableAiFeatures !== undefined) {
+      await setAppSettingValue('disableAiFeatures', Boolean(disableAiFeatures), (req as any).user?._id);
+    }
+    if (key && value !== undefined) {
+      await setAppSettingValue(key, Boolean(value), (req as any).user?._id);
+    }
     const currentShowDemo = await getAppSettingValue('showDemoMaterials', false);
+    const currentAllowChat = await getAppSettingValue('allowCommunityChat', true);
+    const currentDisableAi = await getAppSettingValue('disableAiFeatures', false);
 
     res.json({
       success: true,
-      message: `Demo materials ${currentShowDemo ? 'enabled' : 'disabled'} successfully.`,
-      settings: { showDemoMaterials: currentShowDemo }
+      message: 'App settings updated successfully.',
+      settings: { showDemoMaterials: currentShowDemo, allowCommunityChat: currentAllowChat, disableAiFeatures: currentDisableAi }
     });
+    return;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -359,6 +385,7 @@ const destroyMaterialCloudinaryAssets = async (paper: any): Promise<number> => {
   };
 
   addAsset(paper.publicId || extractCloudinaryPublicId(paper.fileUrl), paper.fileType, paper.fileUrl);
+  addAsset(paper.ttsTextPublicId || extractCloudinaryPublicId(paper.ttsTextUrl), 'text', paper.ttsTextUrl);
   addAsset(extractCloudinaryPublicId(paper.thumbnail), 'image', paper.thumbnail);
   for (const attachment of paper.attachments || []) {
     addAsset(attachment.publicId || extractCloudinaryPublicId(attachment.fileUrl), attachment.fileType, attachment.fileUrl);
@@ -439,6 +466,7 @@ export const publishAdminMaterial = async (req: Request, res: Response): Promise
     const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
     const documentFile = files?.['file']?.[0] || (req as any).file;
     const thumbnailFile = files?.['thumbnail']?.[0];
+    const ttsFile = files?.['ttsFile']?.[0];
 
     if (!documentFile) {
       res.status(400).json({ success: false, error: 'Please attach a document file (PDF, Word, or Image).' });
@@ -494,6 +522,19 @@ export const publishAdminMaterial = async (req: Request, res: Response): Promise
     });
     const mtid = `${prefix}${String(approvedCount + 1).padStart(4, '0')}`;
 
+    let ttsTextUrl: string | undefined;
+    let ttsTextPublicId: string | undefined;
+    if (ttsFile) {
+      const ttsUpload = await uploadTempFileToCloudinary(
+        ttsFile.filename,
+        'MoiConnect/tts',
+        'raw',
+        `${mtid}_text`
+      );
+      ttsTextUrl = ttsUpload.secure_url;
+      ttsTextPublicId = ttsUpload.public_id;
+    }
+
     // 5. Create Paper record in MongoDB directly with approved status
     const newPaper = await Paper.create({
       title: title.trim(),
@@ -517,6 +558,8 @@ export const publishAdminMaterial = async (req: Request, res: Response): Promise
       downloads: randomDownloadCount(),
       ratingScore: randomRatingScore(),
       mtid,
+      ttsTextUrl,
+      ttsTextPublicId,
       reviewedAt: new Date()
     });
 
@@ -644,6 +687,22 @@ export const quickApprovePaper = async (req: Request, res: Response): Promise<vo
         type: { $in: typesToCount }
       });
       paper.mtid = `${prefix}${String(approvedCount + 1).padStart(4, '0')}`;
+    }
+
+    if (req.file) {
+      try {
+        const ttsUpload = await uploadTempFileToCloudinary(
+          req.file.filename,
+          'MoiConnect/tts',
+          'raw',
+          `${paper.mtid}_text`
+        );
+        paper.ttsTextUrl = ttsUpload.secure_url;
+        paper.ttsTextPublicId = ttsUpload.public_id;
+      } catch (ttsErr) {
+        deleteTempFile(req.file.filename);
+        throw ttsErr;
+      }
     }
 
     paper.reviewedAt = new Date();
@@ -842,6 +901,7 @@ export const smartEditMaterial = async (req: Request, res: Response): Promise<vo
     const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
     const documentFile = files?.['file']?.[0] || (req as any).file;
     const thumbnailFile = files?.['thumbnail']?.[0];
+    const ttsFile = files?.['ttsFile']?.[0];
 
     // If replacement document file is uploaded
     if (documentFile) {
@@ -888,6 +948,26 @@ export const smartEditMaterial = async (req: Request, res: Response): Promise<vo
         const host = req.get('host') || 'localhost:5000';
         const protocol = req.protocol || 'http';
         paper.thumbnail = `${protocol}://${host}/uploads/temp/${thumbnailFile.filename}`;
+      }
+    }
+
+    if (ttsFile) {
+      try {
+        const previousTtsPublicId = paper.ttsTextPublicId;
+        const ttsUpload = await uploadTempFileToCloudinary(
+          ttsFile.filename,
+          'MoiConnect/tts',
+          'raw',
+          `${paper.mtid}_text`
+        );
+        paper.ttsTextUrl = ttsUpload.secure_url;
+        paper.ttsTextPublicId = ttsUpload.public_id;
+        if (previousTtsPublicId && previousTtsPublicId !== ttsUpload.public_id) {
+          await destroyCloudinaryAsset(previousTtsPublicId, 'text', paper.ttsTextUrl);
+        }
+      } catch (ttsErr) {
+        deleteTempFile(ttsFile.filename);
+        throw ttsErr;
       }
     }
 
@@ -1615,6 +1695,26 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
   const badgeColor = initialShowDemo ? '#15803d' : '#64748b';
   const sliderBg = initialShowDemo ? '#22c55e' : '#cbd5e1';
   const knobLeft = initialShowDemo ? '29px' : '3px';
+  const initialAllowChat = await getAppSettingValue('allowCommunityChat', true);
+  const isChatCheckedAttr = initialAllowChat ? 'checked' : '';
+  const chatBadgeText = initialAllowChat ? 'ENABLED' : 'DISABLED';
+  const chatBadgeBg = initialAllowChat ? '#dcfce7' : '#fee2e2';
+  const chatBadgeColor = initialAllowChat ? '#15803d' : '#dc2626';
+  const chatSliderBg = initialAllowChat ? '#22c55e' : '#cbd5e1';
+  const chatKnobLeft = initialAllowChat ? '29px' : '3px';
+  const chatLabelText = initialAllowChat
+    ? 'Saved in Database (Community Chat Enabled)'
+    : 'Saved in Database (Community Chat Disabled)';
+  const initialDisableAi = await getAppSettingValue('disableAiFeatures', false);
+  const aiIsCheckedAttr = initialDisableAi ? 'checked' : '';
+  const aiBadgeText = initialDisableAi ? 'AI DISABLED' : 'AI ACTIVE';
+  const aiBadgeBg = initialDisableAi ? '#fee2e2' : '#dcfce7';
+  const aiBadgeColor = initialDisableAi ? '#dc2626' : '#15803d';
+  const aiSliderBg = initialDisableAi ? '#ef4444' : '#cbd5e1';
+  const aiKnobLeft = initialDisableAi ? '29px' : '3px';
+  const aiLabelText = initialDisableAi
+    ? 'Saved in Database (AI Features Disabled -> "Sorry, Im disabled for now")'
+    : 'Saved in Database (AI Features Operating Normally)';
   const labelText = initialShowDemo
     ? 'Saved in Database (Showing Demo & Real)'
     : 'Saved in Database (Real Materials Only)';
@@ -1845,6 +1945,12 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         <span id="badge-community-count" class="tab-badge hidden">0</span>
       </button>
 
+      <button id="tab-btn-feedbacks" onclick="switchTab('feedbacks')" class="tab-btn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        User Feedbacks
+        <span id="badge-feedbacks-count" class="tab-badge hidden">0</span>
+      </button>
+
       <button id="tab-btn-stats" onclick="switchTab('stats')" class="tab-btn">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>
         Stats & Registered Users
@@ -2057,6 +2163,13 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
               <div style="font-size: 11px; color: #94a3b8; margin-top: 4px;">If omitted, a high-quality default thumbnail based on material type will be automatically assigned.</div>
             </div>
 
+            <!-- Optional TTS Text Upload -->
+            <div style="grid-column: 1 / -1;">
+              <label style="display: block; font-size: 13px; font-weight: 700; color: #334155; margin-bottom: 6px;">Lecture Reading Text File (Optional)</label>
+              <input type="file" id="pub-tts-input" name="ttsFile" accept=".txt,text/plain" class="form-control" style="width: 100%;" />
+              <div style="font-size: 11px; color: #64748b; margin-top: 4px;">Upload clean lecture text for the app speaker. It will be stored as <code>MTID_text.txt</code> in Cloudinary.</div>
+            </div>
+
           </div>
 
           <!-- Progress / Upload Message -->
@@ -2192,6 +2305,44 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
             </thead>
             <tbody id="community-messages-table-body">
               <tr><td colspan="6" style="text-align: center; padding: 32px; color: #94a3b8;">Loading community messages...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB USER FEEDBACKS & REPORTS -->
+    <section id="tab-content-feedbacks" class="tab-content hidden">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              User Feedbacks & Content Reports
+            </h2>
+            <p class="card-desc">Review and manage reports submitted by students on community chat messages, past papers, or hostels.</p>
+          </div>
+          <button class="btn btn-primary" onclick="loadReportsTab()">
+            Refresh Feedbacks
+          </button>
+        </div>
+
+        <div class="table-responsive" style="margin-top: 16px;">
+          <table>
+            <thead>
+              <tr>
+                <th>Reporter User</th>
+                <th>Target Type</th>
+                <th>Reason & Details</th>
+                <th>Submitted Date</th>
+                <th>Status</th>
+                <th style="text-align: right;">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="reports-table-body">
+              <tr>
+                <td colspan="6" style="text-align: center; padding: 32px; color: #94a3b8;">Loading user feedbacks...</td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -2783,6 +2934,59 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
               <span id="demo-toggle-status-label" style="font-size: 11px; font-weight: 700; color: ${badgeColor};">${labelText}</span>
             </div>
           </div>
+
+          
+          <!-- Setting Card 3: Disable AI Features Toggle -->
+          <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 14px; padding: 22px; margin-top: 16px; display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap;">
+            <div style="flex: 1; min-width: 280px;">
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+                <span style="font-size: 18px;">🤖</span>
+                <h3 style="margin: 0; font-size: 16px; font-weight: 800; color: #0f172a;">Disable AI Features</h3>
+              </div>
+              <p style="margin: 0; font-size: 13px; color: #475569; line-height: 1.5;">
+                When <b>ON</b>, AI assistant mentions (@Bot / @AI) in community chat are disabled and will instantly reply with <i>"Sorry, Im disabled for now"</i> without calling external AI APIs.<br/>
+                When <b>OFF</b>, AI features work normally using active AI pool keys.
+              </p>
+            </div>
+
+            <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 8px;">
+              <div style="display: flex; align-items: center; gap: 12px;">
+                <span id="ai-status-badge" style="font-size: 11px; font-weight: 800; padding: 4px 10px; border-radius: 20px; background: ${aiBadgeBg}; color: ${aiBadgeColor}; text-transform: uppercase;">${aiBadgeText}</span>
+                <label style="position: relative; display: inline-block; width: 54px; height: 28px; cursor: pointer;">
+                  <input type="checkbox" id="toggle-disable-ai" ${aiIsCheckedAttr} onchange="handleDisableAiToggle(this.checked)" style="opacity: 0; width: 0; height: 0;">
+                  <span id="ai-toggle-slider" style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: ${aiSliderBg}; transition: .3s; border-radius: 34px;"></span>
+                  <span id="ai-toggle-knob" style="position: absolute; height: 22px; width: 22px; left: ${aiKnobLeft}; bottom: 3px; background-color: white; transition: .3s; border-radius: 50%; box-shadow: 0 2px 4px rgba(0,0,0,0.2);"></span>
+                </label>
+              </div>
+              <span id="ai-toggle-status-label" style="font-size: 11px; font-weight: 700; color: ${aiBadgeColor};">${aiLabelText}</span>
+            </div>
+          </div>
+
+          <!-- Setting Card 2: Allow Community Chat Toggle -->
+          <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 14px; padding: 22px; margin-top: 16px; display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap;">
+            <div style="flex: 1; min-width: 280px;">
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+                <span style="font-size: 18px;">💬</span>
+                <h3 style="margin: 0; font-size: 16px; font-weight: 800; color: #0f172a;">Allow Community Chat</h3>
+              </div>
+              <p style="margin: 0; font-size: 13px; color: #475569; line-height: 1.5;">
+                When <b>ON</b>, real-time community chat messaging is enabled across the mobile app.<br/>
+                When <b>OFF</b>, chat input is disabled and replaced with "Community chat disabled by administrator".
+              </p>
+            </div>
+
+            <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 8px;">
+              <div style="display: flex; align-items: center; gap: 12px;">
+                <span id="chat-status-badge" style="font-size: 11px; font-weight: 800; padding: 4px 10px; border-radius: 20px; background: ${chatBadgeBg}; color: ${chatBadgeColor}; text-transform: uppercase;">${chatBadgeText}</span>
+                <label style="position: relative; display: inline-block; width: 54px; height: 28px; cursor: pointer;">
+                  <input type="checkbox" id="toggle-community-chat" ${isChatCheckedAttr} onchange="handleCommunityChatToggle(this.checked)" style="opacity: 0; width: 0; height: 0;">
+                  <span id="chat-toggle-slider" style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: ${chatSliderBg}; transition: .3s; border-radius: 34px;"></span>
+                  <span id="chat-toggle-knob" style="position: absolute; height: 22px; width: 22px; left: ${chatKnobLeft}; bottom: 3px; background-color: white; transition: .3s; border-radius: 50%; box-shadow: 0 2px 4px rgba(0,0,0,0.2);"></span>
+                </label>
+              </div>
+              <span id="chat-toggle-status-label" style="font-size: 11px; font-weight: 700; color: ${chatBadgeColor};">${chatLabelText}</span>
+            </div>
+          </div>
         </div>
       </div>
     
@@ -2899,6 +3103,12 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
             <div id="media-status-current-box" style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 10px 12px; display: flex; align-items: center; gap: 8px; font-size: 12px; color: #166534; font-weight: 600;">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#166534" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
               <span>Using current file. It will be uploaded to Cloudinary (folder: <code>MoiConnect/pdf</code>) upon approval.</span>
+            </div>
+
+            <div style="margin-top: 12px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 10px 12px;">
+              <div style="font-size: 12px; font-weight: 800; color: #1e3a8a; margin-bottom: 6px;">Optional TTS Lecture Text</div>
+              <input type="file" id="modal-tts-input" accept=".txt,text/plain" style="font-size: 12px; width: 100%;" />
+              <div style="font-size: 11px; color: #3b82f6; margin-top: 4px;">This text will be saved as the approved material’s MTID_text.txt file.</div>
             </div>
 
             <!-- Box for Option 2 (Upload Clean) -->
@@ -3125,6 +3335,11 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
                 <input type="file" id="smart-edit-document-file" accept=".pdf,.doc,.docx,image/*" class="form-control" style="width: 100%; font-size: 11px;" />
                 <div id="smart-edit-doc-status" style="font-size: 11px; color: #64748b; margin-top: 8px; word-break: break-all;">Current file URL: (none)</div>
               </div>
+              <div style="grid-column: 1 / -1;">
+                <label style="display: block; font-size: 11px; font-weight: 800; color: #475569; margin-bottom: 4px;">Replace TTS Lecture Text (Optional)</label>
+                <input type="file" id="smart-edit-tts-file" accept=".txt,text/plain" class="form-control" style="width: 100%; font-size: 11px;" />
+                <div id="smart-edit-tts-status" style="font-size: 11px; color: #64748b; margin-top: 8px;">Upload a new text file to replace the current MTID_text.txt reading.</div>
+              </div>
             </div>
           </div>
 
@@ -3231,6 +3446,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       const description = document.getElementById('pub-description').value.trim();
       const fileInput = document.getElementById('pub-file-input');
       const thumbnailInput = document.getElementById('pub-thumbnail-input');
+      const ttsInput = document.getElementById('pub-tts-input');
 
       if (!title || !school || !department || !unitCode || !unitName) {
         showToast('Please fill out all required fields marked with *', true);
@@ -3272,6 +3488,9 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       formData.append('file', fileInput.files[0]);
       if (thumbnailInput.files && thumbnailInput.files[0]) {
         formData.append('thumbnail', thumbnailInput.files[0]);
+      }
+      if (ttsInput.files && ttsInput.files[0]) {
+        formData.append('ttsFile', ttsInput.files[0]);
       }
 
       fetch('/api/v1/dashboard/materials/publish', {
@@ -3355,7 +3574,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
           return '<article class="material-card ' + (hidden ? 'hidden-material' : '') + '">' +
             '<div class="material-cover ' + (material.fileType === 'pdf' ? 'pdf' : '') + '"><span class="material-cover-icon">' + (material.fileType === 'pdf' ? 'PDF' : 'DOC') + '</span><input type="checkbox" class="material-check material-select" data-id="' + id + '" onchange="updateMaterialsSelection()" aria-label="Select ' + title + '"></div>' +
             '<div class="material-body"><div class="material-title">' + title + '</div><div class="material-meta"><strong>' + unit + '</strong> &middot; ' + school + '<br>' + type + ' &middot; ' + status + (material.mtid ? ' &middot; ' + escapeMaterialHtml(material.mtid) : '') + '</div><span class="material-status ' + (hidden ? 'hidden-status' : '') + '">' + (hidden ? 'Hidden from students' : 'Visible to students') + '</span></div>' +
-            '<div class="material-actions"><button data-material-id="' + id + '" data-hidden="' + (!hidden) + '" onclick="toggleMaterialVisibility(this.dataset.materialId, this.dataset.hidden === &quot;true&quot;)" class="btn btn-view">' + (hidden ? 'Show' : 'Hide') + '</button><button onclick="openSmartEditModal(&quot;' + id + '&quot;)" class="btn btn-view" style="color: #d97706; border-color: #fcd34d;">✏️ Edit</button><button onclick="deleteMaterials([&quot;' + id + '&quot;])" class="btn btn-reject">Delete</button></div>' +
+            '<div class="material-actions"><button data-material-id="' + id + '" data-hidden="' + (!hidden) + '" onclick="toggleMaterialVisibility(this.dataset.materialId, this.dataset.hidden === &quot;true&quot;)" class="btn btn-view">' + (hidden ? 'Show' : 'Hide') + '</button><button data-edit-id="' + id + '" onclick="openSmartEditModal(this.dataset.editId)" class="btn btn-view" style="color: #d97706; border-color: #fcd34d;">✏️ Edit</button><button data-delete-id="' + id + '" onclick="deleteMaterials([this.dataset.deleteId])" class="btn btn-reject">Delete</button></div>' +
           '</article>';
         }).join('') + '</div>';
     }
@@ -3426,6 +3645,96 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         loadCommunityMessagesAdmin();
       } else if (tabId === 'temp') {
         loadTempFiles();
+      } else if (tabId === 'feedbacks') {
+        loadReportsTab();
+      }
+    }
+
+    async function loadReportsTab() {
+      const tbody = document.getElementById('reports-table-body');
+      if (!tbody) return;
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 24px; color: #94a3b8;">Fetching user feedbacks...</td></tr>';
+      try {
+        const res = await fetch('/admin/reports?status=pending');
+        const json = await res.json();
+        const reports = json.data || [];
+        const badge = document.getElementById('badge-feedbacks-count');
+        if (badge) {
+          badge.textContent = reports.length;
+          badge.classList.toggle('hidden', reports.length === 0);
+        }
+        if (reports.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 48px; color: #94a3b8;">No pending user feedbacks! Server is completely clean.</td></tr>';
+          return;
+        }
+        tbody.innerHTML = reports.map(r => {
+          const reporter = r.reporterId ? (r.reporterId.name || r.reporterId.email || 'Student') : 'Anonymous';
+          const typeLabel = String(r.targetType || 'item').toUpperCase().replace('_', ' ');
+          return \`
+            <tr>
+              <td>
+                <div style="font-weight: 700; color: #0f172a;">\${reporter}</div>
+                <div style="font-size: 11px; color: #64748b;">\${r.reporterId?.email || ''}</div>
+              </td>
+              <td>
+                <span class="badge \${r.targetType === 'community_message' ? 'badge-blue' : (r.targetType === 'paper' ? 'badge-green' : 'badge-amber')}">
+                  \${typeLabel}
+                </span>
+              </td>
+              <td>
+                <div style="font-weight: 700; color: #dc2626;">\${r.reason}</div>
+                <div style="font-size: 12px; color: #334155; margin-top: 2px;">\${r.details || 'No additional details'}</div>
+              </td>
+              <td style="font-size: 12px; color: #64748b;">\${new Date(r.createdAt).toLocaleString()}</td>
+              <td><span class="badge badge-amber">\${String(r.status || 'pending').toUpperCase()}</span></td>
+              <td style="text-align: right;">
+                <div style="display: inline-flex; gap: 6px;">
+                  <button onclick="handleDeleteReportedTarget('\${r._id}')" class="btn btn-danger" style="font-size: 11px; padding: 4px 10px;">
+                    Delete Content
+                  </button>
+                  <button onclick="handleDismissReport('\${r._id}')" class="btn btn-secondary" style="font-size: 11px; padding: 4px 10px;">
+                    Dismiss
+                  </button>
+                </div>
+              </td>
+            </tr>
+          \`;
+        }).join('');
+      } catch (err) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: #ef4444; padding: 24px;">Failed to load user feedbacks.</td></tr>';
+      }
+    }
+
+    async function handleDeleteReportedTarget(reportId) {
+      if (!confirm('Are you sure you want to delete the reported content from the database?')) return;
+      try {
+        const res = await fetch('/admin/reports/' + reportId + '/delete-target', { method: 'DELETE' });
+        const json = await res.json();
+        if (json.success) {
+          showToast('Reported content deleted successfully.');
+          loadReportsTab();
+        } else {
+          alert(json.error || 'Failed to delete content.');
+        }
+      } catch (err) {
+        alert('Network error deleting reported content.');
+      }
+    }
+
+    async function handleDismissReport(reportId) {
+      try {
+        const res = await fetch('/admin/reports/' + reportId, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'dismissed' })
+        });
+        const json = await res.json();
+        if (json.success) {
+          showToast('Report dismissed.');
+          loadReportsTab();
+        }
+      } catch (err) {
+        alert('Failed to dismiss report.');
       }
     }
 
@@ -3981,6 +4290,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
 
     function renderAppSettings(statsOrSettings) {
       const isDemoOn = statsOrSettings && statsOrSettings.showDemoMaterials !== undefined ? statsOrSettings.showDemoMaterials : true;
+      const isChatOn = statsOrSettings && statsOrSettings.allowCommunityChat !== undefined ? statsOrSettings.allowCommunityChat : true;
       const toggleInput = document.getElementById('toggle-demo-materials');
       const statusBadge = document.getElementById('demo-status-badge');
       const slider = document.getElementById('toggle-slider');
@@ -4007,6 +4317,24 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         label.innerText = isDemoOn ? 'Saved in Database (Showing Demo & Real)' : 'Saved in Database (Real Materials Only)';
         label.style.color = isDemoOn ? '#15803d' : '#64748b';
       }
+
+      const chatToggleInput = document.getElementById('toggle-community-chat');
+      const chatBadge = document.getElementById('chat-status-badge');
+      const chatSlider = document.getElementById('chat-toggle-slider');
+      const chatKnob = document.getElementById('chat-toggle-knob');
+      const chatLabel = document.getElementById('chat-toggle-status-label');
+      if (chatToggleInput) chatToggleInput.checked = isChatOn;
+      if (chatBadge) {
+        chatBadge.innerText = isChatOn ? 'ENABLED' : 'DISABLED';
+        chatBadge.style.background = isChatOn ? '#dcfce7' : '#fee2e2';
+        chatBadge.style.color = isChatOn ? '#15803d' : '#dc2626';
+      }
+      if (chatSlider) chatSlider.style.backgroundColor = isChatOn ? '#22c55e' : '#cbd5e1';
+      if (chatKnob) chatKnob.style.left = isChatOn ? '29px' : '3px';
+      if (chatLabel) {
+        chatLabel.innerText = isChatOn ? 'Saved in Database (Community Chat Enabled)' : 'Saved in Database (Community Chat Disabled)';
+        chatLabel.style.color = isChatOn ? '#15803d' : '#dc2626';
+      }
     }
 
     async function handleDemoMaterialsToggle(enabled) {
@@ -4029,6 +4357,29 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         const toggleInput = document.getElementById('toggle-demo-materials');
         if (toggleInput) toggleInput.checked = !enabled;
         renderAppSettings({ showDemoMaterials: !enabled });
+      }
+    }
+
+    async function handleCommunityChatToggle(enabled) {
+      const label = document.getElementById('chat-toggle-status-label');
+      if (label) label.innerText = 'Saving setting to database...';
+
+      try {
+        const res = await fetch('/api/v1/dashboard/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: 'allowCommunityChat', value: enabled })
+        });
+        const json = await res.json();
+        if (!json.success) throw new Error(json.message || 'Update failed');
+
+        showToast('Community chat ' + (enabled ? 'enabled' : 'disabled') + '!');
+        renderAppSettings({ allowCommunityChat: enabled });
+      } catch (err) {
+        showToast('Setting update failed: ' + err.message, true);
+        const toggleInput = document.getElementById('toggle-community-chat');
+        if (toggleInput) toggleInput.checked = !enabled;
+        renderAppSettings({ allowCommunityChat: !enabled });
       }
     }
 
@@ -4411,6 +4762,8 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       if (replaceInput) replaceInput.value = '';
       const cleanInfo = document.getElementById('selected-clean-file-info');
       if (cleanInfo) cleanInfo.style.display = 'none';
+      const ttsInput = document.getElementById('modal-tts-input');
+      if (ttsInput) ttsInput.value = '';
 
       // Action buttons state
       const approveBtn = document.getElementById('modal-btn-approve');
@@ -4647,6 +5000,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
 
       const btn = document.getElementById('modal-btn-approve');
       btn.disabled = true;
+      const ttsInput = document.getElementById('modal-tts-input');
 
       // Smart upload if in upload mode and file selected
       if (currentMediaMode === 'upload') {
@@ -4682,8 +5036,13 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       btn.innerText = '⏳ Approving...';
 
       try {
+        const approveForm = new FormData();
+        if (ttsInput && ttsInput.files && ttsInput.files[0]) {
+          approveForm.append('ttsFile', ttsInput.files[0]);
+        }
         const res = await fetch('/api/v1/dashboard/papers/' + currentModalPaper._id + '/approve', {
-          method: 'POST'
+          method: 'POST',
+          body: ttsInput && ttsInput.files && ttsInput.files[0] ? approveForm : undefined
         });
 
         const json = await res.json();
@@ -4768,6 +5127,8 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       if (thumbFile) thumbFile.value = '';
       const docFile = document.getElementById('smart-edit-document-file');
       if (docFile) docFile.value = '';
+      const ttsFile = document.getElementById('smart-edit-tts-file');
+      if (ttsFile) ttsFile.value = '';
 
       // Thumbnail preview & status
       const thumbPreview = document.getElementById('smart-edit-thumb-preview');
@@ -4785,6 +5146,10 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       const docStatus = document.getElementById('smart-edit-doc-status');
       if (docStatus) {
         docStatus.innerText = paper.fileUrl ? 'Current file: ' + paper.fileUrl.split('/').pop() : 'No document file';
+      }
+      const ttsStatus = document.getElementById('smart-edit-tts-status');
+      if (ttsStatus) {
+        ttsStatus.innerText = paper.ttsTextUrl ? 'Current TTS text attached. Upload a new file to replace it.' : 'No TTS text attached yet.';
       }
 
       document.getElementById('smart-edit-modal').classList.remove('hidden');
@@ -4847,6 +5212,9 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
 
         const docFile = document.getElementById('smart-edit-document-file').files[0];
         if (docFile) formData.append('file', docFile);
+
+        const ttsFile = document.getElementById('smart-edit-tts-file').files[0];
+        if (ttsFile) formData.append('ttsFile', ttsFile);
 
         const res = await fetch('/api/v1/dashboard/papers/' + id + '/smart-edit', {
           method: 'POST',
@@ -5170,14 +5538,14 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
           return '<div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; font-size: 12px;">' +
             '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">' +
               '<span style="font-weight: 800; color: #0f172a; display: flex; align-items: center; gap: 6px;">' +
-                '<span>' + iconSymbol + '</span> ' + item.title +
+                '<span>' + iconSymbol + '</span> ' + String(item.title || '').replace(/Ã°Å¸â€™Â¬/g, '💬').replace(/Ã°Å¸â€™/g, '💬').replace(/Ã°Å¸/g, '💬') +
               '</span>' +
               '<span style="font-size: 10px; font-weight: 800; text-transform: uppercase; background: #e0e7ff; color: #3730a3; padding: 2px 6px; border-radius: 4px;">' +
                 item.target +
               '</span>' +
             '</div>' +
             subtitleHtml +
-            '<div style="color: #475569; margin-bottom: 6px; line-height: 1.4;">' + item.body + '</div>' +
+            '<div style="color: #475569; margin-bottom: 6px; line-height: 1.4;">' + String(item.body || '').replace(/Ã°Å¸â€™Â¬/g, '💬').replace(/Ã°Å¸â€™/g, '💬').replace(/Ã°Å¸/g, '💬') + '</div>' +
             '<div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; color: #94a3b8; font-size: 11px;">' +
               '<span>Target: ' + targetText + '</span>' +
               '<span style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;"><span>' + new Date(item.createdAt).toLocaleString() + '</span><button type="button" onclick="deletePushHistoryItem(&quot;' + item._id + '&quot;)" class="btn" style="background:#fee2e2;color:#dc2626;padding:3px 8px;font-size:10px;font-weight:800;border:1px solid #fca5a5;border-radius:6px;cursor:pointer;">🗑️ Delete</button></span>' +

@@ -18,6 +18,11 @@ export const buildPaperResponseData = (paperDoc: any, req?: AuthenticatedRequest
 
   const cleanCloudinaryUrl = getSignedCloudinaryUrl(data.publicId, data.fileUrl, data.fileType);
   data.rawCloudinaryUrl = cleanCloudinaryUrl;
+  if (data.ttsTextPublicId || data.ttsTextUrl) {
+    // Keep the uploaded TXT extension from the stored URL. A raw public ID without
+    // an extension is otherwise interpreted as a PDF by the generic URL helper.
+    data.ttsTextUrl = getSignedCloudinaryUrl(undefined, data.ttsTextUrl, 'text');
+  }
 
   const protocol = req ? (req.headers['x-forwarded-proto'] || req.protocol || 'http') : 'http';
   const host = req ? (req.get ? req.get('host') : (req.headers ? req.headers.host : 'localhost:5000')) || 'localhost:5000' : 'localhost:5000';

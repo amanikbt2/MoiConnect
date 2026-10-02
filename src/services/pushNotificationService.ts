@@ -247,9 +247,9 @@ export const sendCommunityMessagePush = async (messagePayload: {
     let bodyText = messagePayload.text?.trim() || '';
     if (!bodyText) {
       if (messagePayload.fileAttachment?.name || messagePayload.fileAttachment?.url) {
-        bodyText = `📎 Sent a file: ${messagePayload.fileAttachment.name || 'Attachment'}`;
+        bodyText = `\u{1F4CE} Sent a file: ${messagePayload.fileAttachment.name || 'Attachment'}`;
       } else if (messagePayload.stickerId) {
-        bodyText = '🎨 Sent a sticker';
+        bodyText = '\u{1F3A8} Sent a sticker';
       } else {
         bodyText = 'New message in Community';
       }
@@ -259,7 +259,7 @@ export const sendCommunityMessagePush = async (messagePayload: {
       bodyText = bodyText.slice(0, 117) + '...';
     }
 
-    const title = `💬 ${messagePayload.senderName || 'Moi Student'}`;
+    const title = `\u{1F4AC} ${messagePayload.senderName || 'Moi Student'}`;
 
     await sendPushToTokens(recipientTokens, title, bodyText, {
       screen: 'community',
@@ -298,7 +298,7 @@ export const sendDirectMessagePush = async (
       bodyText = bodyText.slice(0, 117) + '...';
     }
 
-    const title = `💬 ${sender.name || 'Direct Message'}`;
+    const title = `\u{1F4AC} ${sender.name || 'Direct Message'}`;
 
     await sendPushToTokens(recipientTokens, title, bodyText, {
       screen: 'chat',

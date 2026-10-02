@@ -4,6 +4,8 @@ import { Paper } from '../models/Paper';
 import { House } from '../models/House';
 import { User } from '../models/User';
 import { Report } from '../models/Report';
+import { CommunityMessage } from '../models/CommunityMessage';
+import { getSocketIO } from '../socket';
 import { AuthenticatedRequest } from '../middleware/auth';
 import {
   listTempFiles,
@@ -452,5 +454,37 @@ export const reviewReport = async (req: AuthenticatedRequest, res: Response): Pr
     });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message || 'Report review failed' });
+  }
+};
+
+export const deleteReportedItem = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const report = await Report.findById(id);
+    if (!report) {
+      res.status(404).json({ success: false, error: 'Report not found' });
+      return;
+    }
+
+    if (report.targetType === 'community_message') {
+      await CommunityMessage.findByIdAndDelete(report.targetId);
+      try {
+        const io = getSocketIO();
+        io?.emit('community:message_deleted', { messageId: report.targetId });
+      } catch {}
+    } else if (report.targetType === 'paper') {
+      await Paper.findByIdAndDelete(report.targetId);
+    } else if (report.targetType === 'house') {
+      await House.findByIdAndDelete(report.targetId);
+    }
+
+    report.status = 'reviewed';
+    report.reviewedBy = req.user!._id;
+    report.reviewedAt = new Date();
+    await report.save();
+
+    res.json({ success: true, message: 'Reported item deleted successfully.' });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message || 'Failed to delete reported item.' });
   }
 };

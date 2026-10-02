@@ -208,7 +208,8 @@ export const getAuthenticatedCloudinaryPdfUrl = (publicId: string, format = 'pdf
 export const uploadTempFileToCloudinary = async (
   filenameOrUrl: string,
   folder: string = 'MoiConnect/pdf',
-  resourceTypeOverride?: 'image' | 'video' | 'raw'
+  resourceTypeOverride?: 'image' | 'video' | 'raw',
+  publicIdOverride?: string
 ): Promise<{ secure_url: string; public_id: string }> => {
   const filename = path.basename(filenameOrUrl.split('?')[0]);
   const filePath = path.join(TEMP_UPLOADS_DIR, filename);
@@ -236,8 +237,10 @@ export const uploadTempFileToCloudinary = async (
     type: 'upload',
     access_mode: 'public',
     access_control: [{ access_type: 'anonymous' }],
-    use_filename: true,
-    unique_filename: true
+    use_filename: !publicIdOverride,
+    unique_filename: !publicIdOverride,
+    overwrite: Boolean(publicIdOverride),
+    ...(publicIdOverride ? { public_id: publicIdOverride } : {})
   });
 
   // After successful Cloudinary upload, remove file from local server disk
@@ -249,8 +252,12 @@ export const uploadTempFileToCloudinary = async (
     console.error(`Warning: Could not remove temp file ${filePath} after Cloudinary upload:`, unlinkErr);
   }
 
+  const publicIdForUrl = resourceType === 'raw' && path.extname(filename) && !path.extname(result.public_id)
+    ? `${result.public_id}${path.extname(filename)}`
+    : result.public_id;
+
   return {
-    secure_url: getSignedCloudinaryUrl(result.public_id, result.secure_url, resourceType === 'raw' ? 'pdf' : 'image'),
+    secure_url: getSignedCloudinaryUrl(publicIdForUrl, result.secure_url, resourceType === 'raw' ? 'text' : 'image'),
     public_id: result.public_id
   };
 };

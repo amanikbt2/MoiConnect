@@ -5,6 +5,7 @@ import { getSocketIO } from '../socket';
 import { dispatchPushNotification, sendCommunityMessagePush } from '../services/pushNotificationService';
 import { uploadTempFileToCloudinary } from '../services/tempFileService';
 import { getCampusBotsGeneration, isBotStopCommand, runCampusBotConversation, shouldCampusBotRespond, stopCampusBots } from '../services/campusBotService';
+import { getAppSettingValue } from '../models/AppSetting';
 
 // 1. Get Community Messages (Support Incremental Delta Sync via ?since=)
 export const getCommunityMessages = async (req: Request, res: Response): Promise<void> => {
@@ -29,10 +30,13 @@ export const getCommunityMessages = async (req: Request, res: Response): Promise
 
     if (!isDeltaSync) messages = messages.reverse();
 
+    const allowCommunityChat = await getAppSettingValue('allowCommunityChat', true);
+
     res.json({
       success: true,
       data: messages,
       count: messages.length,
+      allowCommunityChat,
       syncedAt: new Date().toISOString()
     });
   } catch (error: any) {
@@ -69,6 +73,11 @@ export const getMentionUsers = async (req: Request, res: Response): Promise<void
 // 2. Post Community Message via HTTP Fallback (Fast Non-Blocking Endpoint)
 export const postCommunityMessage = async (req: Request, res: Response): Promise<void> => {
   try {
+    const allowChat = await getAppSettingValue('allowCommunityChat', true);
+    if (!allowChat) {
+      res.status(403).json({ success: false, error: 'Community chat disabled by administrator' });
+      return;
+    }
     const { clientMsgId, text, fileAttachment, stickerId, replyTo, senderName, senderEmail, senderFaculty, senderCourse, senderPhone, senderAvatarUrl, avatarBg, senderId } = req.body;
     const user = (req as any).user;
 
@@ -220,6 +229,11 @@ export const toggleCommunityReaction = async (req: Request, res: Response): Prom
 // 4. Upload Community Chat Media File to Cloudinary (folder: moiconnect/chat_media)
 export const uploadCommunityMedia = async (req: Request, res: Response): Promise<void> => {
   try {
+    const allowChat = await getAppSettingValue('allowCommunityChat', true);
+    if (!allowChat) {
+      res.status(403).json({ success: false, error: 'Community chat disabled by administrator' });
+      return;
+    }
     if (!req.file) {
       res.status(400).json({ success: false, error: 'No media file provided.' });
       return;
@@ -258,5 +272,39 @@ export const uploadCommunityMedia = async (req: Request, res: Response): Promise
     });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message || 'Media upload failed' });
+  }
+};
+
+// 4. Delete Community Message (For Everyone)
+export const deleteCommunityMessage = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const userId = (req as any).user?._id?.toString();
+    const userRole = (req as any).user?.role;
+
+    const msg = await CommunityMessage.findById(id);
+    if (!msg) {
+      res.status(404).json({ success: false, error: 'Message not found' });
+      return;
+    }
+
+    const isSender = msg.senderId && msg.senderId.toString() === userId;
+    const isAdmin = userRole === 'admin';
+
+    if (!isSender && !isAdmin) {
+      res.status(403).json({ success: false, error: 'You can only delete your own messages.' });
+      return;
+    }
+
+    await CommunityMessage.findByIdAndDelete(id);
+
+    try {
+      const io = getSocketIO();
+      io?.emit('community:message_deleted', { messageId: id });
+    } catch {}
+
+    res.json({ success: true, messageId: id });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message || 'Failed to delete message' });
   }
 };

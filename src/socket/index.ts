@@ -8,6 +8,7 @@ import { Message } from '../models/Message';
 import { CommunityMessage } from '../models/CommunityMessage';
 import { getCampusBotsGeneration, isBotStopCommand, runCampusBotConversation, shouldCampusBotRespond, stopCampusBots } from '../services/campusBotService';
 import { sendCommunityMessagePush, sendDirectMessagePush } from '../services/pushNotificationService';
+import { getAppSettingValue } from '../models/AppSetting';
 
 export interface AuthenticatedSocket extends Socket {
   userId?: string;
@@ -230,7 +231,7 @@ export const setupSocketIO = (io: SocketIOServer): void => {
     });
 
     // Real-Time Community Chat Socket Handler (Sub-5ms Lightning Speed Broadcast)
-    socket.on('community:send_message', (data: {
+    socket.on('community:send_message', async (data: {
       clientMsgId?: string;
       senderId?: string;
       text: string;
@@ -246,6 +247,11 @@ export const setupSocketIO = (io: SocketIOServer): void => {
       avatarBg?: string;
     }, ack?: (result: { success: boolean; id?: string; error?: string }) => void) => {
       try {
+        const allowChat = await getAppSettingValue('allowCommunityChat', true);
+        if (!allowChat) {
+          ack?.({ success: false, error: 'Community chat disabled by administrator' });
+          return;
+        }
         const { clientMsgId, text, fileAttachment, stickerId, replyTo, senderName, senderEmail, senderFaculty, senderCourse, senderPhone, senderAvatarUrl, avatarBg } = data;
         if (!text?.trim() && !fileAttachment && !stickerId) return;
 

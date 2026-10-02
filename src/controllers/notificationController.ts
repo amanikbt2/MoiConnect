@@ -43,6 +43,8 @@ export const getNotifications = async (req: Request, res: Response): Promise<voi
     let query: any = {
       $or: [
         { target: 'all' },
+        { target: { $in: [null, undefined] } },
+        { target: { $exists: false } },
         ...(userEmail ? [{ target: 'emails', recipientEmails: userEmail }] : [])
       ]
     };
@@ -55,7 +57,9 @@ export const getNotifications = async (req: Request, res: Response): Promise<voi
 
     // Resolve magic placeholders for this specific user in response
     const formatted = notifications.map((n) => {
-      const isRead = userId ? n.readBy.includes(userId) : false;
+      const isRead = userId && Array.isArray(n.readBy)
+        ? n.readBy.some((id: any) => String(id) === String(userId))
+        : false;
       return {
         _id: n._id,
         title: resolveMagicPlaceholders(n.title, userObj),
@@ -115,6 +119,8 @@ export const markAllNotificationsRead = async (req: Request, res: Response): Pro
     const query: any = {
       $or: [
         { target: 'all' },
+        { target: { $in: [null, undefined] } },
+        { target: { $exists: false } },
         ...(userEmail ? [{ target: 'emails', recipientEmails: userEmail }] : [])
       ]
     };
@@ -182,9 +188,28 @@ export const getRegisteredDeviceCount = async (_req: Request, res: Response): Pr
   }
 };
 
+export function fixMojibake(str: string): string {
+  if (!str) return '';
+  return str
+    .replace(/Ã°Å¸â€™Â¬/g, '💬')
+    .replace(/Ã°Å¸â€™/g, '💬')
+    .replace(/Ã°Å¸ÂÂ/g, '💬')
+    .replace(/Ã°Å¸/g, '💬')
+    .replace(/â€™/g, "'")
+    .replace(/â€"/g, '–')
+    .replace(/â€\u009d/g, '"')
+    .replace(/â€\u009c/g, '"');
+}
+
 export const getAdminNotificationHistory = async (_req: Request, res: Response): Promise<void> => {
   try {
-    const history = await Notification.find().sort({ createdAt: -1 }).limit(30);
+    const rawHistory = await Notification.find().sort({ createdAt: -1 }).limit(30).lean();
+    const history = rawHistory.map((item) => ({
+      ...item,
+      title: fixMojibake(item.title || ''),
+      subtitle: fixMojibake(item.subtitle || ''),
+      body: fixMojibake(item.body || '')
+    }));
     res.json({ success: true, history });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message || 'Failed to fetch history' });
