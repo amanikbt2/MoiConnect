@@ -3338,7 +3338,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
               <div style="grid-column: 1 / -1;">
                 <label style="display: block; font-size: 11px; font-weight: 800; color: #475569; margin-bottom: 4px;">Replace TTS Lecture Text (Optional)</label>
                 <input type="file" id="smart-edit-tts-file" accept=".txt,text/plain" class="form-control" style="width: 100%; font-size: 11px;" />
-                <div id="smart-edit-tts-status" style="font-size: 11px; color: #64748b; margin-top: 8px;">Upload a new text file to replace the current MTID_text.txt reading.</div>
+                <div id="smart-edit-tts-status" style="font-size: 11px; color: #64748b; margin-top: 8px; word-break: break-all;">Current file: (none)</div>
               </div>
             </div>
           </div>
@@ -5149,7 +5149,10 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       }
       const ttsStatus = document.getElementById('smart-edit-tts-status');
       if (ttsStatus) {
-        ttsStatus.innerText = paper.ttsTextUrl ? 'Current TTS text attached. Upload a new file to replace it.' : 'No TTS text attached yet.';
+        const ttsFileName = getSmartEditFileName(paper.ttsTextUrl, 'lecture.txt');
+        ttsStatus.innerText = paper.ttsTextUrl
+          ? 'Current file: ' + ttsFileName + ' • Upload a new text file to replace it.'
+          : 'No TTS text file attached yet.';
       }
 
       document.getElementById('smart-edit-modal').classList.remove('hidden');
@@ -5158,6 +5161,18 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
     function closeSmartEditModal() {
       const modal = document.getElementById('smart-edit-modal');
       if (modal) modal.classList.add('hidden');
+    }
+
+    function getSmartEditFileName(fileUrl, fallbackName) {
+      if (!fileUrl) return fallbackName;
+      try {
+        const pathname = new URL(fileUrl, window.location.href).pathname;
+        const fileName = decodeURIComponent(pathname.split('/').pop() || '').trim();
+        return fileName || fallbackName;
+      } catch (error) {
+        const fileName = String(fileUrl).split(/[?#]/)[0].split('/').pop();
+        return fileName || fallbackName;
+      }
     }
 
     function previewSmartEditThumbnail(input) {
