@@ -63,7 +63,8 @@ export const getPapers = async (req: AuthenticatedRequest, res: Response): Promi
   res.setHeader('Expires', '0');
   try {
     const page = parseInt(req.query.page as string || '1', 10);
-    const limit = parseInt(req.query.limit as string || '50', 10);
+    const requestedLimit = parseInt(req.query.limit as string || '50', 10);
+    const limit = Number.isFinite(requestedLimit) ? Math.min(500, Math.max(1, requestedLimit)) : 50;
     const skip = (page - 1) * limit;
 
     const { school, courseCode, unitCode, type, semester, year, search, includePending } = req.query;
@@ -87,30 +88,29 @@ export const getPapers = async (req: AuthenticatedRequest, res: Response): Promi
 
     if (search) {
       const searchStr = (search as string).trim();
-      const searchRegex = new RegExp(searchStr, 'i');
+      const searchTokens = searchStr.split(/\s+/).filter(Boolean);
+      const searchConditionsFor = (token: string) => {
+        const escapedToken = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const searchRegex = new RegExp(escapedToken, 'i');
+        const conditions: any[] = [
+          { title: searchRegex },
+          { unitCode: searchRegex },
+          { unitName: searchRegex },
+          { courseCode: searchRegex },
+          { school: searchRegex },
+          { department: searchRegex },
+          { type: searchRegex },
+          { semester: searchRegex },
+          { academicYear: searchRegex },
+          { description: searchRegex },
+          { mtid: searchRegex }
+        ];
+        const yearNum = Number(token);
+        if (yearNum > 1900 && yearNum < 2100) conditions.push({ examYear: yearNum });
+        return conditions;
+      };
       
-      const isYearNum = !isNaN(Number(searchStr));
-      const yearNum = isYearNum ? Number(searchStr) : null;
-
-      const searchConditions: any[] = [
-        { title: searchRegex },
-        { unitCode: searchRegex },
-        { unitName: searchRegex },
-        { courseCode: searchRegex },
-        { school: searchRegex },
-        { department: searchRegex },
-        { type: searchRegex },
-        { semester: searchRegex },
-        { academicYear: searchRegex },
-        { description: searchRegex },
-        { mtid: searchRegex }
-      ];
-
-      if (yearNum && yearNum > 1900 && yearNum < 2100) {
-        searchConditions.push({ examYear: yearNum });
-      }
-
-      query.$or = searchConditions;
+      query.$and = searchTokens.map((token) => ({ $or: searchConditionsFor(token) }));
     }
 
     const total = await Paper.countDocuments(query);

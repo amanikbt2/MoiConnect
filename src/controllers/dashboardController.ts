@@ -378,7 +378,7 @@ const destroyCloudinaryAsset = async (publicId: string, fileType?: string, fileU
   return false;
 };
 
-const destroyMaterialCloudinaryAssets = async (paper: any): Promise<number> => {
+export const destroyMaterialCloudinaryAssets = async (paper: any): Promise<number> => {
   const assets = new Map<string, { fileType?: string; fileUrl?: string }>();
   const addAsset = (publicId?: string | null, fileType?: string, fileUrl?: string) => {
     if (publicId) assets.set(publicId, { fileType, fileUrl });
@@ -752,10 +752,9 @@ export const quickRejectPaper = async (req: Request, res: Response): Promise<voi
       return;
     }
 
-    paper.status = 'rejected';
-    paper.rejectionReason = reason || 'Does not meet document upload guidelines.';
+    const rejectionReason = reason || 'Does not meet document upload guidelines.';
 
-    // Clean up temporary server storage if file was stored locally
+    await destroyMaterialCloudinaryAssets(paper);
     if (paper.tempFilename || paper.fileUrl?.includes('/uploads/temp/')) {
       deleteTempFile(paper.tempFilename || paper.fileUrl);
       paper.tempFilename = undefined;
@@ -769,9 +768,6 @@ export const quickRejectPaper = async (req: Request, res: Response): Promise<voi
       }
     }
 
-    paper.reviewedAt = new Date();
-    await paper.save();
-
     // Send in-app and push notification to the student submitter with rejection reason
     if (paper.submittedBy) {
       try {
@@ -780,11 +776,11 @@ export const quickRejectPaper = async (req: Request, res: Response): Promise<voi
           await dispatchPushNotification({
             title: 'Paper Submission Update',
             subtitle: 'Submission Rejected',
-            body: `Your paper submission "${paper.title}" (${paper.unitCode}) was rejected due to: ${paper.rejectionReason}`,
+            body: `Your paper submission "${paper.title}" (${paper.unitCode}) was rejected due to: ${rejectionReason}`,
             icon: 'alert',
             target: 'emails',
             recipientEmails: [submitter.email],
-            data: { paperId: paper._id, status: 'rejected', rejectionReason: paper.rejectionReason }
+            data: { paperId: paper._id, status: 'rejected', rejectionReason }
           });
         }
       } catch (notifErr) {
@@ -792,10 +788,11 @@ export const quickRejectPaper = async (req: Request, res: Response): Promise<voi
       }
     }
 
+    await Paper.deleteOne({ _id: paper._id });
+
     res.json({
       success: true,
-      message: `Rejected "${paper.title}". Rejection reason notification sent to student.`,
-      data: paper
+      message: `Rejected "${paper.title}" and permanently removed its files and submission record.`
     });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message || 'Rejection failed' });
@@ -854,8 +851,6 @@ export const smartEditMaterial = async (req: Request, res: Response): Promise<vo
       academicYear,
       semester,
       description,
-      mtid,
-      autoGenerateMtid
     } = req.body;
 
     const paper = await Paper.findById(id);
@@ -879,23 +874,6 @@ export const smartEditMaterial = async (req: Request, res: Response): Promise<vo
     if (academicYear !== undefined) paper.academicYear = String(academicYear).trim();
     if (semester !== undefined) paper.semester = String(semester).trim();
     if (description !== undefined) paper.description = String(description).trim();
-
-    // Auto-generate or manual MTID update
-    if (autoGenerateMtid === 'true' || autoGenerateMtid === true || (mtid === 'AUTO' && !paper.mtid)) {
-      let prefix = 'N';
-      let typesToCount = ['notes', 'revision', 'lecture_notes'];
-      if (paper.type === 'cat') {
-        prefix = 'C';
-        typesToCount = ['cat'];
-      } else if ((paper.type as string) === 'past_paper' || (paper.type as string) === 'solution') {
-        prefix = 'P';
-        typesToCount = ['past_paper', 'solution'];
-      }
-      const count = await Paper.countDocuments({ status: 'approved', type: { $in: typesToCount } });
-      paper.mtid = `${prefix}${String(count + 1).padStart(4, '0')}`;
-    } else if (mtid !== undefined && String(mtid).trim()) {
-      paper.mtid = String(mtid).trim().toUpperCase();
-    }
 
     // Handle files uploaded via multipart/form-data
     const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
@@ -1805,6 +1783,9 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
     .material-card.hidden-material { border-color: #f59e0b; background: #fffbeb; }
     .material-cover { height: 84px; display: flex; align-items: center; justify-content: space-between; padding: 16px; background: linear-gradient(135deg, #064e3b, #15803d); color: #ffffff; }
     .material-cover.pdf { background: linear-gradient(135deg, #1e293b, #475569); }
+    .material-cover.notes { background: linear-gradient(135deg, #334155, #64748b); }
+    .material-cover.cat { background: linear-gradient(135deg, #1d4ed8, #60a5fa); }
+    .material-cover.past-paper { background: linear-gradient(135deg, #047857, #34d399); }
     .material-cover-icon { font-size: 28px; font-weight: 900; opacity: .9; }
     .material-check { width: 18px; height: 18px; accent-color: #15803d; cursor: pointer; }
     .material-body { padding: 14px; }
@@ -3258,7 +3239,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
             </div>
             <div>
               <label style="display: block; font-size: 11px; font-weight: 800; color: #334155; margin-bottom: 4px;">Material Type *</label>
-              <select id="smart-edit-type" onchange="autoGenerateSmartEditMtid()" class="form-control" style="width: 100%; font-weight: 700;">
+              <select id="smart-edit-type" class="form-control" style="width: 100%; font-weight: 700;">
                 <option value="past_paper">Past Paper</option>
                 <option value="cat">CAT Paper</option>
                 <option value="lecture_notes">Lecture Notes</option>
@@ -3269,14 +3250,14 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
             </div>
           </div>
 
-          <!-- MTID Auto-Generation & Code -->
+          <!-- MTID is permanently assigned and cannot be edited -->
           <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
             <div>
               <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-                <label style="font-size: 11px; font-weight: 800; color: #334155;">Smart MTID *</label>
-                <button type="button" onclick="autoGenerateSmartEditMtid(true)" style="background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd; font-size: 10px; font-weight: 800; padding: 2px 8px; border-radius: 6px; cursor: pointer;">⚡ Auto-Gen MTID</button>
+                <label style="font-size: 11px; font-weight: 800; color: #334155;">Smart MTID (locked)</label>
+                <span style="background: #f1f5f9; color: #64748b; border: 1px solid #cbd5e1; font-size: 10px; font-weight: 800; padding: 2px 8px; border-radius: 6px;">🔒 Permanent ID</span>
               </div>
-              <input type="text" id="smart-edit-mtid" class="form-control" style="width: 100%; font-weight: 800; font-family: monospace; letter-spacing: 0.5px;" placeholder="e.g. P0001 or C0001 or N0001" required />
+              <input type="text" id="smart-edit-mtid" class="form-control" style="width: 100%; font-weight: 800; font-family: monospace; letter-spacing: 0.5px; background: #f1f5f9; color: #475569; cursor: not-allowed;" readonly aria-readonly="true" title="MTID is permanently assigned and cannot be edited" />
             </div>
             <div>
               <label style="display: block; font-size: 11px; font-weight: 800; color: #334155; margin-bottom: 4px;">Unit / Course Code *</label>
@@ -3575,11 +3556,35 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         return;
       }
 
+      const searchInput = document.getElementById('materials-search');
+      const typeFilter = document.getElementById('materials-type-filter');
+      const searchValue = searchInput ? String(searchInput.value || '').trim().toLowerCase() : '';
+      const selectedType = typeFilter ? String(typeFilter.value || 'all') : 'all';
+      const filteredMaterials = materialsManagementData.filter(function(material) {
+        const searchable = [material.title, material.unitCode, material.courseCode, material.unitName, material.school, material.department, material.mtid, material.status, material.type, material.fileType]
+          .filter(Boolean).join(' ').toLowerCase();
+        const matchesSearch = !searchValue || searchable.includes(searchValue);
+        const materialType = String(material.type || '').toLowerCase();
+        const matchesType = selectedType === 'all'
+          || (selectedType === 'past_paper' && (materialType === 'past_paper' || materialType === 'solution'))
+          || (selectedType === 'cat' && materialType === 'cat')
+          || (selectedType === 'notes' && ['notes', 'lecture_notes', 'revision'].indexOf(materialType) !== -1);
+        return matchesSearch && matchesType;
+      });
+
       const selectedCount = document.querySelectorAll('.material-select:checked').length;
       container.innerHTML = '<div class="materials-toolbar">' +
-        '<label style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:800; color:#334155;"><input id="materials-select-all" type="checkbox" class="material-check" onchange="toggleAllMaterials(this.checked)"> Select all <span style="font-weight:600; color:#64748b;">(' + materialsManagementData.length + ')</span></label>' +
+        '<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; width:100%; margin-bottom:12px;">' +
+        '<input id="materials-search" value="' + escapeMaterialHtml(searchValue) + '" oninput="filterMaterialsManagement()" placeholder="Search by MTID, unit code, title, school, or keyword..." style="flex:1; min-width:240px; padding:10px 12px; border:1px solid #cbd5e1; border-radius:10px; font-size:13px;">' +
+        '<select id="materials-type-filter" onchange="filterMaterialsManagement()" style="min-width:170px; padding:10px 12px; border:1px solid #cbd5e1; border-radius:10px; font-size:13px; font-weight:700; color:#334155;">' +
+        '<option value="all"' + (selectedType === 'all' ? ' selected' : '') + '>All materials</option>' +
+        '<option value="past_paper"' + (selectedType === 'past_paper' ? ' selected' : '') + '>Past papers</option>' +
+        '<option value="cat"' + (selectedType === 'cat' ? ' selected' : '') + '>CATs</option>' +
+        '<option value="notes"' + (selectedType === 'notes' ? ' selected' : '') + '>Notes PDF</option>' +
+        '</select></div>' +
+        '<label style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:800; color:#334155;"><input id="materials-select-all" type="checkbox" class="material-check" onchange="toggleAllMaterials(this.checked)"> Select all <span style="font-weight:600; color:#64748b;">(' + filteredMaterials.length + ' shown of ' + materialsManagementData.length + ')</span></label>' +
         '<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;"><span id="materials-selected-count" style="font-size:12px; color:#64748b;">' + selectedCount + ' selected</span><button onclick="setSelectedMaterialsVisibility(false)" class="btn btn-view">Show selected</button><button onclick="setSelectedMaterialsVisibility(true)" class="btn btn-view">Hide selected</button><button onclick="deleteSelectedMaterials()" class="btn btn-reject">Delete selected</button></div>' +
-        '</div><div class="materials-grid">' + materialsManagementData.map(function(material) {
+        '</div>' + (filteredMaterials.length ? '<div class="materials-grid">' + filteredMaterials.map(function(material) {
           const hidden = material.isHidden === true;
           const type = escapeMaterialHtml((material.fileType || material.type || 'file').toUpperCase());
           const title = escapeMaterialHtml(material.title || 'Untitled material');
@@ -3587,12 +3592,32 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
           const school = escapeMaterialHtml(material.school || 'No school');
           const status = escapeMaterialHtml(material.status || 'unknown');
           const id = escapeMaterialHtml(material._id);
+          const materialCategory = ['past_paper', 'solution'].indexOf(String(material.type || '').toLowerCase()) !== -1
+            ? 'past-paper'
+            : String(material.type || '').toLowerCase() === 'cat'
+              ? 'cat'
+              : 'notes';
           return '<article class="material-card ' + (hidden ? 'hidden-material' : '') + '">' +
-            '<div class="material-cover ' + (material.fileType === 'pdf' ? 'pdf' : '') + '"><span class="material-cover-icon">' + (material.fileType === 'pdf' ? 'PDF' : 'DOC') + '</span><input type="checkbox" class="material-check material-select" data-id="' + id + '" onchange="updateMaterialsSelection()" aria-label="Select ' + title + '"></div>' +
+            '<div class="material-cover ' + (material.fileType === 'pdf' ? 'pdf ' : '') + materialCategory + '"><span class="material-cover-icon">' + (material.fileType === 'pdf' ? 'PDF' : 'DOC') + '</span><input type="checkbox" class="material-check material-select" data-id="' + id + '" onchange="updateMaterialsSelection()" aria-label="Select ' + title + '"></div>' +
             '<div class="material-body"><div class="material-title">' + title + '</div><div class="material-meta"><strong>' + unit + '</strong> &middot; ' + school + '<br>' + type + ' &middot; ' + status + (material.mtid ? ' &middot; ' + escapeMaterialHtml(material.mtid) : '') + '</div><span class="material-status ' + (hidden ? 'hidden-status' : '') + '">' + (hidden ? 'Hidden from students' : 'Visible to students') + '</span></div>' +
             '<div class="material-actions"><button data-material-id="' + id + '" data-hidden="' + (!hidden) + '" onclick="toggleMaterialVisibility(this.dataset.materialId, this.dataset.hidden === &quot;true&quot;)" class="btn btn-view">' + (hidden ? 'Show' : 'Hide') + '</button><button data-edit-id="' + id + '" onclick="openSmartEditModal(this.dataset.editId)" class="btn btn-view" style="color: #d97706; border-color: #fcd34d;">✏️ Edit</button><button data-delete-id="' + id + '" onclick="deleteMaterials([this.dataset.deleteId])" class="btn btn-reject">Delete</button></div>' +
           '</article>';
-        }).join('') + '</div>';
+        }).join('') + '</div>' : '<div class="fetch-start-card" style="padding:32px;"><h3 style="font-size:16px; color:#0f172a; margin-bottom:6px;">No matching materials</h3><p style="font-size:13px; color:#64748b;">Try another keyword or material type.</p></div>');
+    }
+
+    function filterMaterialsManagement() {
+      const currentInput = document.getElementById('materials-search');
+      const cursorPosition = currentInput && typeof currentInput.selectionStart === 'number'
+        ? currentInput.selectionStart
+        : null;
+      renderMaterialsManagement();
+      const refreshedInput = document.getElementById('materials-search');
+      if (refreshedInput) {
+        refreshedInput.focus();
+        if (cursorPosition !== null && typeof refreshedInput.setSelectionRange === 'function') {
+          refreshedInput.setSelectionRange(cursorPosition, cursorPosition);
+        }
+      }
     }
 
     function updateMaterialsSelection() {
@@ -5251,12 +5276,6 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       }
     }
 
-    function autoGenerateSmartEditMtid(force) {
-      const mtidInput = document.getElementById('smart-edit-mtid');
-      if (!force && mtidInput.value && mtidInput.value !== 'AUTO') return;
-      mtidInput.value = 'AUTO';
-    }
-
     async function handleSmartEditSubmit(event) {
       event.preventDefault();
       const id = document.getElementById('smart-edit-paper-id').value;
@@ -5270,10 +5289,6 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         const formData = new FormData();
         formData.append('title', document.getElementById('smart-edit-title').value.trim());
         formData.append('type', document.getElementById('smart-edit-type').value);
-        formData.append('mtid', document.getElementById('smart-edit-mtid').value.trim());
-        if (document.getElementById('smart-edit-mtid').value.trim() === 'AUTO') {
-          formData.append('autoGenerateMtid', 'true');
-        }
         formData.append('unitCode', document.getElementById('smart-edit-unit-code').value.trim());
         formData.append('courseCode', document.getElementById('smart-edit-unit-code').value.trim());
         formData.append('unitName', document.getElementById('smart-edit-unit-name').value.trim());

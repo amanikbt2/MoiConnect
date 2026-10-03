@@ -15,6 +15,7 @@ import {
 } from '../services/tempFileService';
 import { dispatchPushNotification } from '../services/pushNotificationService';
 import { awardPaperApprovalPoints } from '../services/rewardService';
+import { destroyMaterialCloudinaryAssets } from './dashboardController';
 
 export const getStats = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
@@ -74,26 +75,51 @@ export const reviewPaper = async (req: AuthenticatedRequest, res: Response): Pro
       return;
     }
 
-    paper.status = status;
     if (status === 'rejected') {
-      paper.rejectionReason = rejectionReason;
-      // Delete temporary file from server disk if present
+      const reason = rejectionReason.trim();
+      await destroyMaterialCloudinaryAssets(paper);
       if (paper.tempFilename || paper.fileUrl?.includes('/uploads/temp/')) {
         deleteTempFile(paper.tempFilename || paper.fileUrl);
-        paper.tempFilename = undefined;
       }
       if (Array.isArray(paper.attachments)) {
         for (const att of paper.attachments) {
           if (att.tempFilename || att.fileUrl?.includes('/uploads/temp/')) {
             deleteTempFile(att.tempFilename || att.fileUrl);
-            att.tempFilename = undefined;
           }
         }
       }
-    } else {
-      paper.rejectionReason = undefined;
 
-      // If document is in temporary server storage, upload to Cloudinary under MoiConnect/pdf
+      if (paper.submittedBy) {
+        try {
+          const submitter = await User.findById(paper.submittedBy);
+          if (submitter?.email) {
+            await dispatchPushNotification({
+              title: 'Paper Submission Update',
+              subtitle: 'Submission Rejected',
+              body: `Your paper submission "${paper.title}" (${paper.unitCode}) was rejected due to: ${reason}`,
+              icon: 'alert',
+              target: 'emails',
+              recipientEmails: [submitter.email],
+              data: { paperId: paper._id, status: 'rejected', rejectionReason: reason }
+            });
+          }
+        } catch (notifErr) {
+          console.error('[Admin Review Paper] Rejection notification error:', notifErr);
+        }
+      }
+
+      await Paper.deleteOne({ _id: paper._id });
+      res.json({
+        success: true,
+        message: `Rejected "${paper.title}" and permanently removed its files and submission record.`
+      });
+      return;
+    }
+
+    paper.status = status;
+    paper.rejectionReason = undefined;
+
+    // If document is in temporary server storage, upload to Cloudinary under MoiConnect/pdf
       if (paper.tempFilename || paper.fileUrl?.includes('/uploads/temp/')) {
         try {
           const fileToUpload = paper.tempFilename || paper.fileUrl;
@@ -158,7 +184,6 @@ export const reviewPaper = async (req: AuthenticatedRequest, res: Response): Pro
         });
         paper.mtid = `${prefix}${String(approvedCount + 1).padStart(4, '0')}`;
       }
-    }
     paper.reviewedBy = admin._id;
     paper.reviewedAt = new Date();
     await paper.save();
@@ -178,16 +203,6 @@ export const reviewPaper = async (req: AuthenticatedRequest, res: Response): Pro
               target: 'emails',
               recipientEmails: [submitter.email],
               data: { paperId: paper._id, status: 'approved' }
-            });
-          } else if (status === 'rejected') {
-            await dispatchPushNotification({
-              title: 'Paper Submission Update',
-              subtitle: 'Submission Rejected',
-              body: `Your paper submission "${paper.title}" (${paper.unitCode}) was rejected due to: ${paper.rejectionReason}`,
-              icon: 'alert',
-              target: 'emails',
-              recipientEmails: [submitter.email],
-              data: { paperId: paper._id, status: 'rejected', rejectionReason: paper.rejectionReason }
             });
           }
         }
