@@ -103,6 +103,7 @@ router.post('/auth/google', authController.googleAuth);
 router.post('/auth/refresh', validateBody(refreshTokenSchema), authController.refresh);
 router.post('/auth/logout', authenticate, authController.logout);
 router.get('/auth/me', authenticate, authController.me);
+router.patch('/auth/profile', authenticate, authController.updateProfile);
 router.post('/auth/request-landlord', authenticate, validateBody(requestLandlordSchema), authController.requestLandlord);
 router.delete('/auth/delete-account', authenticate, authController.deleteAccount);
 

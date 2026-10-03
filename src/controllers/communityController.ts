@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { CommunityMessage } from '../models/CommunityMessage';
 import { User } from '../models/User';
 import { getSocketIO } from '../socket';
-import { dispatchPushNotification, sendCommunityMessagePush } from '../services/pushNotificationService';
+import { sendCommunityMessagePush } from '../services/pushNotificationService';
 import { uploadTempFileToCloudinary } from '../services/tempFileService';
 import { getCampusBotsGeneration, isBotStopCommand, runCampusBotConversation, shouldCampusBotRespond, stopCampusBots } from '../services/campusBotService';
 import { getAppSettingValue } from '../models/AppSetting';
@@ -128,10 +128,11 @@ export const postCommunityMessage = async (req: Request, res: Response): Promise
         });
       }
 
-      // Asynchronous Push Notifications to offline devices (Non-blocking)
+      // Keep community message alerts as device pushes; the in-app bell is filtered separately.
       setImmediate(() => {
         void sendCommunityMessagePush(message).catch(() => {});
       });
+
     }
 
     if (message && !isBotStopCommand(message.text) && shouldCampusBotRespond(message.text, message.replyTo)) {

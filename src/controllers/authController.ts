@@ -2,6 +2,7 @@ import { Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { User } from '../models/User';
+import { CommunityMessage } from '../models/CommunityMessage';
 import { config } from '../config';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { RegisterInput, LoginInput, RequestLandlordInput } from '@moi/shared';
@@ -198,6 +199,40 @@ export const me = async (req: AuthenticatedRequest, res: Response): Promise<void
     success: true,
     data: req.user
   });
+};
+
+export const updateProfile = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const user = req.user;
+    if (!user) {
+      res.status(401).json({ success: false, error: 'Authentication required.' });
+      return;
+    }
+
+    const { name, phone, avatarUrl } = req.body || {};
+    if (name !== undefined) {
+      const cleanName = String(name).trim();
+      if (!cleanName || cleanName.length > 120) {
+        res.status(400).json({ success: false, error: 'Name must be between 1 and 120 characters.' });
+        return;
+      }
+      user.name = cleanName;
+    }
+    if (phone !== undefined) user.phone = String(phone).trim();
+    if (avatarUrl !== undefined) user.avatarUrl = String(avatarUrl).trim();
+
+    await user.save();
+    const messageUpdates: Record<string, string> = { senderName: user.name, senderEmail: user.email };
+    if (avatarUrl !== undefined) messageUpdates.senderAvatarUrl = user.avatarUrl || '';
+    await CommunityMessage.updateMany({ senderId: user._id }, { $set: messageUpdates });
+    await CommunityMessage.updateMany(
+      { 'replyTo.senderEmail': user.email },
+      { $set: { 'replyTo.senderName': user.name } }
+    );
+    res.json({ success: true, message: 'Profile updated successfully.', data: user });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to update profile.' });
+  }
 };
 
 export const googleAuth = async (req: AuthenticatedRequest, res: Response): Promise<void> => {

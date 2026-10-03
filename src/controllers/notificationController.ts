@@ -3,6 +3,25 @@ import { DeviceToken } from '../models/DeviceToken';
 import { Notification } from '../models/Notification';
 import { dispatchPushNotification, IPushNotificationPayload, resolveMagicPlaceholders } from '../services/pushNotificationService';
 
+const visibleNotificationQuery = (userEmail?: string) => ({
+  $and: [
+    {
+      $or: [
+        { target: 'all' },
+        { target: { $in: [null, undefined] } },
+        { target: { $exists: false } },
+        ...(userEmail ? [{ target: 'emails', recipientEmails: userEmail }] : [])
+      ]
+    },
+    {
+      $nor: [
+        { 'data.screen': 'community' },
+        { 'data.channelId': 'community_chat' }
+      ]
+    }
+  ]
+});
+
 // 1. Register or update device push token
 export const registerDeviceToken = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -39,17 +58,7 @@ export const getNotifications = async (req: Request, res: Response): Promise<voi
     const userEmail = (req as any).user?.email?.toLowerCase();
     const userId = (req as any).user?._id?.toString();
 
-    // Query notifications that are broadcasted to 'all' OR targeted to user's email
-    let query: any = {
-      $or: [
-        { target: 'all' },
-        { target: { $in: [null, undefined] } },
-        { target: { $exists: false } },
-        ...(userEmail ? [{ target: 'emails', recipientEmails: userEmail }] : [])
-      ]
-    };
-
-    const notifications = await Notification.find(query)
+    const notifications = await Notification.find(visibleNotificationQuery(userEmail))
       .sort({ createdAt: -1 })
       .limit(50);
 
@@ -116,16 +125,7 @@ export const markAllNotificationsRead = async (req: Request, res: Response): Pro
       return;
     }
 
-    const query: any = {
-      $or: [
-        { target: 'all' },
-        { target: { $in: [null, undefined] } },
-        { target: { $exists: false } },
-        ...(userEmail ? [{ target: 'emails', recipientEmails: userEmail }] : [])
-      ]
-    };
-
-    await Notification.updateMany(query, { $addToSet: { readBy: userId } });
+    await Notification.updateMany(visibleNotificationQuery(userEmail), { $addToSet: { readBy: userId } });
     res.json({ success: true, message: 'All notifications marked as read.' });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message || 'Failed to mark notifications as read' });

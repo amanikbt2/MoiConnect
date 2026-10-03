@@ -234,7 +234,7 @@ export const sendCommunityMessagePush = async (messagePayload: {
     const senderIdStr = messagePayload.senderId ? String(messagePayload.senderId) : '';
     const senderEmailStr = (messagePayload.senderEmail || '').trim().toLowerCase();
 
-    // Query all device tokens except the sender's own tokens
+    // Send only to other students' registered Android/iOS devices.
     const recipientTokens = await DeviceToken.find({
       $and: [
         ...(senderIdStr ? [{ userId: { $ne: senderIdStr } }] : []),
@@ -255,18 +255,19 @@ export const sendCommunityMessagePush = async (messagePayload: {
       }
     }
 
-    if (bodyText.length > 120) {
-      bodyText = bodyText.slice(0, 117) + '...';
-    }
+    if (bodyText.length > 120) bodyText = bodyText.slice(0, 117) + '...';
 
-    const title = `\u{1F4AC} ${messagePayload.senderName || 'Moi Student'}`;
-
-    await sendPushToTokens(recipientTokens, title, bodyText, {
-      screen: 'community',
-      channelId: 'community_chat',
-      senderId: senderIdStr,
-      messageId: messagePayload._id
-    });
+    await sendPushToTokens(
+      recipientTokens,
+      `\u{1F4AC} ${messagePayload.senderName || 'Moi Student'}`,
+      bodyText,
+      {
+        screen: 'community',
+        channelId: 'community_chat',
+        senderId: senderIdStr,
+        messageId: messagePayload._id
+      }
+    );
   } catch (err) {
     console.error('[Community Push Notification Error]:', err);
   }

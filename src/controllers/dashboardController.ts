@@ -1740,7 +1740,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>MoiConnect Admin Control Center</title>
+  <title>MConnect Admin Control Center</title>
   <link rel="icon" type="image/png" href="/favicon.png">
   <link rel="shortcut icon" href="/favicon.ico">
   <style>
@@ -1907,7 +1907,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         </div>
         <div>
           <div class="brand-title">
-            MoiConnect <span class="brand-badge">Admin Hub</span>
+            MConnect <span class="brand-badge">Admin Hub</span>
           </div>
           <div class="brand-sub">Official Control Panel for Revision Materials, Users & Hostels</div>
         </div>
@@ -4307,6 +4307,10 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
     function renderAppSettings(statsOrSettings) {
       const isDemoOn = statsOrSettings && statsOrSettings.showDemoMaterials !== undefined ? statsOrSettings.showDemoMaterials : true;
       const isChatOn = statsOrSettings && statsOrSettings.allowCommunityChat !== undefined ? statsOrSettings.allowCommunityChat : true;
+      const aiToggleInput = document.getElementById('toggle-disable-ai');
+      const isAiDisabled = statsOrSettings && statsOrSettings.disableAiFeatures !== undefined
+        ? statsOrSettings.disableAiFeatures
+        : !!(aiToggleInput && aiToggleInput.checked);
       const toggleInput = document.getElementById('toggle-demo-materials');
       const statusBadge = document.getElementById('demo-status-badge');
       const slider = document.getElementById('toggle-slider');
@@ -4350,6 +4354,25 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       if (chatLabel) {
         chatLabel.innerText = isChatOn ? 'Saved in Database (Community Chat Enabled)' : 'Saved in Database (Community Chat Disabled)';
         chatLabel.style.color = isChatOn ? '#15803d' : '#dc2626';
+      }
+
+      const aiBadge = document.getElementById('ai-status-badge');
+      const aiSlider = document.getElementById('ai-toggle-slider');
+      const aiKnob = document.getElementById('ai-toggle-knob');
+      const aiLabel = document.getElementById('ai-toggle-status-label');
+      if (aiToggleInput) aiToggleInput.checked = isAiDisabled;
+      if (aiBadge) {
+        aiBadge.innerText = isAiDisabled ? 'AI DISABLED' : 'AI ACTIVE';
+        aiBadge.style.background = isAiDisabled ? '#fee2e2' : '#dcfce7';
+        aiBadge.style.color = isAiDisabled ? '#dc2626' : '#15803d';
+      }
+      if (aiSlider) aiSlider.style.backgroundColor = isAiDisabled ? '#ef4444' : '#cbd5e1';
+      if (aiKnob) aiKnob.style.left = isAiDisabled ? '29px' : '3px';
+      if (aiLabel) {
+        aiLabel.innerText = isAiDisabled
+          ? 'Saved in Database (AI Features Disabled -> "Sorry, Im disabled for now")'
+          : 'Saved in Database (AI Features Active)';
+        aiLabel.style.color = isAiDisabled ? '#dc2626' : '#15803d';
       }
     }
 
@@ -4396,6 +4419,29 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         const toggleInput = document.getElementById('toggle-community-chat');
         if (toggleInput) toggleInput.checked = !enabled;
         renderAppSettings({ allowCommunityChat: !enabled });
+      }
+    }
+
+    async function handleDisableAiToggle(disabled) {
+      const label = document.getElementById('ai-toggle-status-label');
+      if (label) label.innerText = 'Saving setting to database...';
+
+      try {
+        const res = await fetch('/api/v1/dashboard/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: 'disableAiFeatures', value: disabled })
+        });
+        const json = await res.json();
+        if (!json.success) throw new Error(json.message || 'Update failed');
+
+        showToast('AI features ' + (disabled ? 'disabled' : 'enabled') + '!');
+        renderAppSettings({ disableAiFeatures: disabled });
+      } catch (err) {
+        showToast('AI setting update failed: ' + err.message, true);
+        const toggleInput = document.getElementById('toggle-disable-ai');
+        if (toggleInput) toggleInput.checked = !disabled;
+        renderAppSettings({ disableAiFeatures: !disabled });
       }
     }
 
