@@ -53,6 +53,7 @@ router.post('/dashboard/restore', tempUpload.single('backup'), dashboardControll
 
 // Web Dashboard API Routes
 router.get('/dashboard/overview', dashboardController.getDashboardOverview);
+router.get('/dashboard/user-emails.csv', dashboardController.downloadUserEmailsCsv);
 router.get('/dashboard/ai-overages', dashboardController.getAiOverages);
 router.delete('/dashboard/ai-overages', dashboardController.clearAiOverages);
 router.get('/dashboard/ai-context', dashboardController.getAiContextSettings);

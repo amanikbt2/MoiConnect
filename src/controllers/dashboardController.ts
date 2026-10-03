@@ -10,7 +10,7 @@ import { Report } from '../models/Report';
 import { CommunityMessage } from '../models/CommunityMessage';
 import { getAppSettingValue, setAppSettingValue } from '../models/AppSetting';
 import cloudinary from '../config/cloudinary';
-import { getOnlineStats } from '../socket';
+import { getOnlineStats, getSocketIO } from '../socket';
 import {
   listTempFiles,
   deleteTempFile,
@@ -359,6 +359,24 @@ const getCloudinaryResourceTypes = (fileType?: string, fileUrl?: string): string
   if (fileType === 'video' || fileUrl?.includes('/video/upload/')) return ['video', 'raw', 'image'];
   if (fileType === 'image' || fileUrl?.includes('/image/upload/')) return ['image', 'raw', 'video'];
   return ['raw', 'image', 'video'];
+};
+
+// CSV API: Export registered user email addresses for admin use.
+export const downloadUserEmailsCsv = async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const users = await User.find({ email: { $exists: true, $ne: '' } }).select('email -_id').lean();
+    const emails = Array.from(new Set(
+      users
+        .map((user: any) => String(user.email || '').trim().toLowerCase())
+        .filter(Boolean)
+    )).sort();
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="moiconnect-user-emails.csv"');
+    res.send(emails.join(','));
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to export user emails' });
+  }
 };
 
 const destroyCloudinaryAsset = async (publicId: string, fileType?: string, fileUrl?: string): Promise<boolean> => {
@@ -1184,6 +1202,17 @@ export const deleteDashboardCommunityMessages = async (req: Request, res: Respon
 
     // Delete from MongoDB database completely with no trace
     await CommunityMessage.deleteMany({ _id: { $in: ids } });
+
+    // Remove the deleted messages immediately from every connected client's cache.
+    // The database delete above remains authoritative for future API fetches.
+    try {
+      const io = getSocketIO();
+      for (const id of ids) {
+        io?.to('community_room').emit('community:message_deleted', { messageId: String(id) });
+      }
+    } catch (socketErr) {
+      console.warn('[Admin Community Delete] Could not broadcast deletion:', socketErr);
+    }
 
     res.json({
       success: true,
@@ -2408,16 +2437,19 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
             </h2>
             <p class="card-sub">Students, Landlords, and Admin accounts</p>
           </div>
-          <div class="search-input-wrapper">
-            <svg class="search-input-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-            <input
-              type="text"
-              id="user-search"
-              oninput="filterUsers()"
-              placeholder="Search user by name or email..."
-              class="form-control search-input"
-              style="width: 260px;"
-            />
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
+            <button id="download-user-emails-btn" type="button" onclick="downloadUserEmailsCsv()" class="btn btn-view" style="font-size:11px;white-space:nowrap;">✉ Download Emails CSV</button>
+            <div class="search-input-wrapper">
+              <svg class="search-input-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input
+                type="text"
+                id="user-search"
+                oninput="filterUsers()"
+                placeholder="Search user by name or email..."
+                class="form-control search-input"
+                style="width: 260px;"
+              />
+            </div>
           </div>
         </div>
 
@@ -5505,6 +5537,36 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         (u.email && u.email.toLowerCase().includes(q))
       );
       renderUsers(filtered);
+    }
+
+    async function downloadUserEmailsCsv() {
+      const button = document.getElementById('download-user-emails-btn');
+      if (!button) return;
+      const originalText = button.innerText;
+      button.disabled = true;
+      button.innerText = '⏳ Preparing CSV...';
+      try {
+        const response = await fetch('/api/v1/dashboard/user-emails.csv');
+        if (!response.ok) {
+          const errorBody = await response.json().catch(function() { return {}; });
+          throw new Error(errorBody.error || 'Could not prepare email CSV');
+        }
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'moiconnect-user-emails.csv';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+        showToast('User email CSV downloaded.');
+      } catch (error) {
+        showToast('Email CSV download failed: ' + error.message, true);
+      } finally {
+        button.disabled = false;
+        button.innerText = originalText;
+      }
     }
 
     function renderHouses(houses) {
