@@ -12,6 +12,7 @@ export interface IUserDocument extends Document {
   landlordStatus: LandlordStatus;
   accountStatus: AccountStatus;
   points: number;
+  paymentBlacklisted: boolean;
   landlordRequestDetails?: {
     idNumber: string;
     proofDetails: string;
@@ -53,6 +54,11 @@ const userSchema = new Schema<IUserDocument>(
       type: Number,
       default: 5,
       min: 0
+    },
+    paymentBlacklisted: {
+      type: Boolean,
+      default: false,
+      index: true
     },
     landlordRequestDetails: {
       idNumber: String,

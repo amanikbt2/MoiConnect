@@ -31,9 +31,20 @@ import * as popupController from '../controllers/popupController';
 import * as notificationController from '../controllers/notificationController';
 import * as communityController from '../controllers/communityController';
 import * as liveController from '../controllers/liveController';
+import { handleB2CResult } from '../services/mpesaB2CService';
 import { tempUpload } from '../middleware/upload';
 
 const router = Router();
+
+// Safaricom B2C callbacks. These endpoints must be publicly reachable by Daraja.
+router.post('/payments/mpesa/b2c/result', async (req, res) => {
+  await handleB2CResult(req.body);
+  res.json({ ResultCode: 0, ResultDesc: 'Accepted' });
+});
+router.post('/payments/mpesa/b2c/timeout', async (req, res) => {
+  await handleB2CResult(req.body, true);
+  res.json({ ResultCode: 0, ResultDesc: 'Accepted' });
+});
 
 // Community Real-Time Chat API Routes
 router.get('/community/messages', communityController.getCommunityMessages);
@@ -54,6 +65,9 @@ router.post('/dashboard/restore', tempUpload.single('backup'), dashboardControll
 // Web Dashboard API Routes
 router.get('/dashboard/overview', dashboardController.getDashboardOverview);
 router.get('/dashboard/user-emails.csv', dashboardController.downloadUserEmailsCsv);
+router.get('/dashboard/direct-payments', dashboardController.getDirectPaymentUsers);
+router.post('/dashboard/direct-payments/:id/pay', dashboardController.createDirectPayment);
+router.patch('/dashboard/direct-payments/:id/blacklist', dashboardController.setPaymentBlacklist);
 router.get('/dashboard/ai-overages', dashboardController.getAiOverages);
 router.delete('/dashboard/ai-overages', dashboardController.clearAiOverages);
 router.get('/dashboard/ai-context', dashboardController.getAiContextSettings);

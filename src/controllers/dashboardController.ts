@@ -5,6 +5,7 @@ import path from 'path';
 import fs from 'fs';
 import { User } from '../models/User';
 import { Paper } from '../models/Paper';
+import { RewardPayout } from '../models/RewardPayout';
 import { House } from '../models/House';
 import { Report } from '../models/Report';
 import { CommunityMessage } from '../models/CommunityMessage';
@@ -18,6 +19,7 @@ import {
   uploadTempFileToCloudinary
 } from '../services/tempFileService';
 import { dispatchPushNotification } from '../services/pushNotificationService';
+import { attemptB2CPayout, createOriginatorConversationId } from '../services/mpesaB2CService';
 import { awardPaperApprovalPoints } from '../services/rewardService';
 import { randomDownloadCount, randomRatingScore } from '../utils/materialStats';
 import { clearAiTelemetry, getAiPromptSettings, getAiTelemetry, saveAiPromptSettings } from '../services/campusBotService';
@@ -97,6 +99,17 @@ export const getDashboardOverview = async (_req: Request, res: Response): Promis
       .sort({ createdAt: -1 })
       .limit(50);
 
+    const userIds = userList.map((user) => user._id);
+    const rewardedTotals = await RewardPayout.aggregate([
+      { $match: { userId: { $in: userIds }, status: 'success' } },
+      { $group: { _id: '$userId', total: { $sum: '$amount' } } }
+    ]);
+    const rewardedByUser = new Map(rewardedTotals.map((item) => [String(item._id), Number(item.total || 0)]));
+    const usersWithRewards = userList.map((user: any) => ({
+      ...user.toObject(),
+      rewardedAmount: rewardedByUser.get(String(user._id)) || 0
+    }));
+
     const houseList = await House.find()
       .populate('landlordId', 'name email phone')
       .sort({ createdAt: -1 })
@@ -106,6 +119,7 @@ export const getDashboardOverview = async (_req: Request, res: Response): Promis
     const showDemoMaterials = await getAppSettingValue('showDemoMaterials', false);
     const allowCommunityChat = await getAppSettingValue('allowCommunityChat', true);
     const disableAiFeatures = await getAppSettingValue('disableAiFeatures', false);
+    const allowPayments = await getAppSettingValue('allowPayments', true);
 
     res.json({
       success: true,
@@ -121,6 +135,7 @@ export const getDashboardOverview = async (_req: Request, res: Response): Promis
         totalDepartments,
         showDemoMaterials,
         allowCommunityChat,
+        allowPayments,
         totalOnline: onlineStats.totalOnline,
         authenticatedOnline: onlineStats.authenticatedCount,
         guestOnline: onlineStats.guestCount,
@@ -131,11 +146,12 @@ export const getDashboardOverview = async (_req: Request, res: Response): Promis
       },
       settings: {
         showDemoMaterials,
-        allowCommunityChat
+        allowCommunityChat,
+        allowPayments
       },
       pendingPapers: pendingPaperList,
       approvedPapers: approvedPaperList,
-      users: userList,
+      users: usersWithRewards,
       houses: houseList
     });
   } catch (error: any) {
@@ -159,12 +175,15 @@ export const getAppSettings = async (_req: Request, res: Response): Promise<void
 
 export const updateDashboardSettings = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { key, value, showDemoMaterials, allowCommunityChat, disableAiFeatures } = req.body;
+    const { key, value, showDemoMaterials, allowCommunityChat, allowPayments, disableAiFeatures } = req.body;
     if (showDemoMaterials !== undefined) {
       await setAppSettingValue('showDemoMaterials', Boolean(showDemoMaterials), (req as any).user?._id);
     }
     if (allowCommunityChat !== undefined) {
       await setAppSettingValue('allowCommunityChat', Boolean(allowCommunityChat), (req as any).user?._id);
+    }
+    if (allowPayments !== undefined) {
+      await setAppSettingValue('allowPayments', Boolean(allowPayments), (req as any).user?._id);
     }
     if (disableAiFeatures !== undefined) {
       await setAppSettingValue('disableAiFeatures', Boolean(disableAiFeatures), (req as any).user?._id);
@@ -174,12 +193,13 @@ export const updateDashboardSettings = async (req: Request, res: Response): Prom
     }
     const currentShowDemo = await getAppSettingValue('showDemoMaterials', false);
     const currentAllowChat = await getAppSettingValue('allowCommunityChat', true);
+    const currentAllowPayments = await getAppSettingValue('allowPayments', true);
     const currentDisableAi = await getAppSettingValue('disableAiFeatures', false);
 
     res.json({
       success: true,
       message: 'App settings updated successfully.',
-      settings: { showDemoMaterials: currentShowDemo, allowCommunityChat: currentAllowChat, disableAiFeatures: currentDisableAi }
+      settings: { showDemoMaterials: currentShowDemo, allowCommunityChat: currentAllowChat, allowPayments: currentAllowPayments, disableAiFeatures: currentDisableAi }
     });
     return;
 
@@ -359,6 +379,80 @@ const getCloudinaryResourceTypes = (fileType?: string, fileUrl?: string): string
   if (fileType === 'video' || fileUrl?.includes('/video/upload/')) return ['video', 'raw', 'image'];
   if (fileType === 'image' || fileUrl?.includes('/image/upload/')) return ['image', 'raw', 'video'];
   return ['raw', 'image', 'video'];
+};
+
+export const getDirectPaymentUsers = async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const users = await User.find().select('name email phone points paymentBlacklisted createdAt').sort({ createdAt: -1 }).limit(500).lean();
+    const userIds = users.map((user) => user._id);
+    const totals = await RewardPayout.aggregate([
+      { $match: { userId: { $in: userIds }, status: 'success' } },
+      { $group: { _id: '$userId', amount: { $sum: '$amount' } } }
+    ]);
+    const totalByUser = new Map(totals.map((item) => [String(item._id), Number(item.amount || 0)]));
+    res.json({
+      success: true,
+      users: users.map((user) => ({
+        ...user,
+        rewardedAmount: totalByUser.get(String(user._id)) || 0
+      }))
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to load direct payment users.' });
+  }
+};
+
+export const createDirectPayment = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const allowPayments = await getAppSettingValue('allowPayments', true);
+    if (!allowPayments) { res.status(403).json({ success: false, error: 'Payments are currently disabled by the administrator.' }); return; }
+    const user = await User.findById(req.params.id).select('name email phone points paymentBlacklisted');
+    if (!user) { res.status(404).json({ success: false, error: 'User not found.' }); return; }
+    if (user.paymentBlacklisted) { res.status(403).json({ success: false, error: 'This user is blacklisted from receiving payments.' }); return; }
+    if (!user.phone) { res.status(400).json({ success: false, error: 'This user has no phone number.' }); return; }
+    const amount = Number(req.body?.amount);
+    if (!Number.isInteger(amount) || amount < 1 || amount > 150000) {
+      res.status(400).json({ success: false, error: 'Enter a whole-number amount between KSh 1 and KSh 150,000.' });
+      return;
+    }
+
+    const payout = await RewardPayout.create({
+      userId: user._id,
+      milestonePoints: Date.now(),
+      payoutType: 'manual',
+      amount,
+      phone: user.phone,
+      status: 'pending',
+      originatorConversationId: createOriginatorConversationId()
+    });
+    const submission = await attemptB2CPayout(payout);
+    if (!submission.submitted) {
+      res.status(502).json({
+        success: false,
+        error: submission.error || 'M-Pesa rejected the payment request.',
+        payoutId: payout._id
+      });
+      return;
+    }
+    res.json({
+      success: true,
+      message: `Payment request accepted for ${user.name || user.email}. Final status will update after the M-Pesa callback.`,
+      payoutId: payout._id
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to queue direct payment.' });
+  }
+};
+
+export const setPaymentBlacklist = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const blacklisted = Boolean(req.body?.blacklisted);
+    const user = await User.findByIdAndUpdate(req.params.id, { $set: { paymentBlacklisted: blacklisted } }, { new: true }).select('name email paymentBlacklisted');
+    if (!user) { res.status(404).json({ success: false, error: 'User not found.' }); return; }
+    res.json({ success: true, message: blacklisted ? 'User blacklisted from payments.' : 'User payment access restored.', user });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to update payment blacklist.' });
+  }
 };
 
 // CSV API: Export registered user email addresses for admin use.
@@ -736,7 +830,7 @@ export const quickApprovePaper = async (req: Request, res: Response): Promise<vo
           await dispatchPushNotification({
             title: 'Paper Submission Approved 🎉',
             subtitle: 'Resource Published',
-            body: `Your paper submission "${paper.title}" (${paper.unitCode}) has been approved and published to MoiConnect! You earned +${awardedPoints} reward points.`,
+            body: `Your paper submission "${paper.title}" (${paper.unitCode}) has been approved and published to MConnect! You earned +${awardedPoints} reward points.`,
             icon: 'academic',
             target: 'emails',
             recipientEmails: [submitter.email],
@@ -1728,6 +1822,16 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
   const chatLabelText = initialAllowChat
     ? 'Saved in Database (Community Chat Enabled)'
     : 'Saved in Database (Community Chat Disabled)';
+  const initialAllowPayments = await getAppSettingValue('allowPayments', true);
+  const isPaymentsCheckedAttr = initialAllowPayments ? 'checked' : '';
+  const paymentsBadgeText = initialAllowPayments ? 'PAYMENTS ACTIVE' : 'PAYMENTS DISABLED';
+  const paymentsBadgeBg = initialAllowPayments ? '#dcfce7' : '#fee2e2';
+  const paymentsBadgeColor = initialAllowPayments ? '#15803d' : '#dc2626';
+  const paymentsSliderBg = initialAllowPayments ? '#22c55e' : '#cbd5e1';
+  const paymentsKnobLeft = initialAllowPayments ? '29px' : '3px';
+  const paymentsLabelText = initialAllowPayments
+    ? 'Saved in Database (Daraja payments enabled)'
+    : 'Saved in Database (All payments disabled)';
   const initialDisableAi = await getAppSettingValue('disableAiFeatures', false);
   const aiIsCheckedAttr = initialDisableAi ? 'checked' : '';
   const aiBadgeText = initialDisableAi ? 'AI DISABLED' : 'AI ACTIVE';
@@ -1980,6 +2084,11 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       <button id="tab-btn-stats" onclick="switchTab('stats')" class="tab-btn">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>
         Stats & Registered Users
+      </button>
+
+      <button id="tab-btn-direct-payments" onclick="switchTab('direct-payments')" class="tab-btn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/><path d="M6 15h3"/></svg>
+        Direct Payments
       </button>
 
       <button id="tab-btn-houses" onclick="switchTab('houses')" class="tab-btn">
@@ -2461,13 +2570,37 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
                 <th>Email</th>
                 <th>Role</th>
                 <th>Landlord Status</th>
+                <th>Points</th>
+                <th>Rewarded</th>
                 <th>Presence</th>
                 <th>Joined Date</th>
               </tr>
             </thead>
             <tbody id="users-table-body">
-              <tr><td colspan="5" style="text-align: center; padding: 32px; color: #94a3b8;">Loading user database...</td></tr>
+              <tr><td colspan="8" style="text-align: center; padding: 32px; color: #94a3b8;">Loading user database...</td></tr>
             </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB: DIRECT PAYMENTS -->
+    <section id="tab-content-direct-payments" class="tab-content hidden">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">Direct Payment Management</h2>
+            <p class="card-sub">Manually send sandbox or production B2C payments and control payment eligibility.</p>
+          </div>
+          <button type="button" class="btn btn-view" onclick="loadDirectPayments()">↻ Refresh Users</button>
+        </div>
+        <div style="margin: 0 0 14px; padding: 12px 14px; border-radius: 10px; background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; font-size: 12px;">
+          Payments are sent to the phone number saved on the user profile. Blacklisted users are blocked from manual and automatic milestone payouts.
+        </div>
+        <div class="table-responsive">
+          <table>
+            <thead><tr><th>User</th><th>Email</th><th>Points</th><th>Rewarded</th><th>Payment status</th><th>Manual payment</th><th>Access</th></tr></thead>
+            <tbody id="direct-payments-table-body"><tr><td colspan="7" style="text-align:center;padding:32px;color:#94a3b8;">Open this tab to load payment users.</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -3014,6 +3147,31 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
                 </label>
               </div>
               <span id="chat-toggle-status-label" style="font-size: 11px; font-weight: 700; color: ${chatBadgeColor};">${chatLabelText}</span>
+            </div>
+          </div>
+
+          <!-- Setting Card: Allow Payments Toggle -->
+          <div style="background: #fff7ed; border: 1px solid #fed7aa; border-radius: 14px; padding: 22px; margin-top: 16px; display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap;">
+            <div style="flex: 1; min-width: 280px;">
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+                <span style="font-size: 18px;">💸</span>
+                <h3 style="margin: 0; font-size: 16px; font-weight: 800; color: #7c2d12;">Allow Payments</h3>
+              </div>
+              <p style="margin: 0; font-size: 13px; color: #9a3412; line-height: 1.5;">
+                When <b>ON</b>, manual and automatic milestone payments can use the configured Daraja B2C API.<br/>
+                When <b>OFF</b>, every payment request is blocked safely before it reaches M-Pesa.
+              </p>
+            </div>
+            <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 8px;">
+              <div style="display: flex; align-items: center; gap: 12px;">
+                <span id="payments-status-badge" style="font-size: 11px; font-weight: 800; padding: 4px 10px; border-radius: 20px; background: ${paymentsBadgeBg}; color: ${paymentsBadgeColor}; text-transform: uppercase;">${paymentsBadgeText}</span>
+                <label style="position: relative; display: inline-block; width: 54px; height: 28px; cursor: pointer;">
+                  <input type="checkbox" id="toggle-allow-payments" ${isPaymentsCheckedAttr} onchange="handleAllowPaymentsToggle(this.checked)" style="opacity: 0; width: 0; height: 0;">
+                  <span id="payments-toggle-slider" style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: ${paymentsSliderBg}; transition: .3s; border-radius: 34px;"></span>
+                  <span id="payments-toggle-knob" style="position: absolute; height: 22px; width: 22px; left: ${paymentsKnobLeft}; bottom: 3px; background-color: white; transition: .3s; border-radius: 50%; box-shadow: 0 2px 4px rgba(0,0,0,0.2);"></span>
+                </label>
+              </div>
+              <span id="payments-toggle-status-label" style="font-size: 11px; font-weight: 700; color: ${paymentsBadgeColor};">${paymentsLabelText}</span>
             </div>
           </div>
         </div>
@@ -3714,6 +3872,8 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         loadRegisteredPushDevices();
       } else if (tabId === 'ai-overages') {
         loadAiOverages();
+      } else if (tabId === 'direct-payments') {
+        loadDirectPayments();
       } else if (tabId === 'community') {
         loadCommunityMessagesAdmin();
       } else if (tabId === 'temp') {
@@ -3721,6 +3881,81 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       } else if (tabId === 'feedbacks') {
         loadReportsTab();
       }
+    }
+
+    function directPaymentEscape(value) {
+      return String(value == null ? '' : value).replace(/[&<>"']/g, function(char) {
+        return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char];
+      });
+    }
+
+    async function loadDirectPayments() {
+      const tbody = document.getElementById('direct-payments-table-body');
+      if (!tbody) return;
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:28px;color:#94a3b8;">Loading payment users...</td></tr>';
+      try {
+        const response = await fetch('/api/v1/dashboard/direct-payments');
+        const json = await response.json();
+        if (!response.ok || !json.success) throw new Error(json.error || 'Failed to load users');
+        if (!json.users || !json.users.length) {
+          tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:28px;color:#94a3b8;">No users found.</td></tr>';
+          return;
+        }
+        tbody.innerHTML = json.users.map(function(user) {
+          const id = directPaymentEscape(user._id);
+          const name = directPaymentEscape(user.name || 'Student');
+          const email = directPaymentEscape(user.email || '');
+          const phone = directPaymentEscape(user.phone || 'No phone number');
+          const isBlacklisted = Boolean(user.paymentBlacklisted);
+          const canPay = Boolean(user.phone) && !isBlacklisted;
+          return '<tr>' +
+            '<td style="font-weight:700;color:#0f172a;">' + name + '</td>' +
+            '<td style="font-family:monospace;font-size:12px;">' + email + '</td>' +
+            '<td style="font-weight:800;color:#15803d;">' + Number(user.points || 0) + '</td>' +
+            '<td style="font-weight:800;color:#0f766e;">KSh ' + Number(user.rewardedAmount || 0).toFixed(2) + '</td>' +
+            '<td style="font-size:11px;color:' + (user.phone ? '#475569' : '#dc2626') + ';">' + phone + '</td>' +
+            '<td><div style="display:flex;gap:5px;align-items:center;min-width:150px;">' +
+              '<input id="direct-amount-' + id + '" type="number" min="1" step="1" placeholder="KSh" ' + (!canPay ? 'disabled' : '') + ' style="width:72px;padding:7px;border:1px solid #cbd5e1;border-radius:7px;" />' +
+              '<button type="button" class="btn btn-approve direct-pay-btn" data-payment-id="' + id + '" data-payment-name="' + name + '" ' + (!canPay ? 'disabled' : '') + ' style="padding:6px 9px;font-size:11px;">Pay</button>' +
+            '</div></td>' +
+            '<td><button type="button" class="btn direct-blacklist-btn" data-payment-id="' + id + '" data-blacklisted="' + (!isBlacklisted) + '" style="padding:6px 9px;font-size:11px;background:' + (isBlacklisted ? '#dcfce7;color:#166534;border:1px solid #86efac;' : '#fee2e2;color:#b91c1c;border:1px solid #fca5a5;') + '">' + (isBlacklisted ? 'Restore' : 'Blacklist') + '</button></td>' +
+          '</tr>';
+        }).join('');
+        tbody.querySelectorAll('.direct-pay-btn').forEach(function(button) {
+          button.addEventListener('click', function() { sendDirectPayment(button.dataset.paymentId, button.dataset.paymentName); });
+        });
+        tbody.querySelectorAll('.direct-blacklist-btn').forEach(function(button) {
+          button.addEventListener('click', function() { togglePaymentBlacklist(button.dataset.paymentId, button.dataset.blacklisted === 'true'); });
+        });
+      } catch (error) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:28px;color:#dc2626;">' + directPaymentEscape(error.message || 'Failed to load payment users') + '</td></tr>';
+      }
+    }
+
+    async function sendDirectPayment(id, name) {
+      const input = document.getElementById('direct-amount-' + id);
+      const amount = Number(input && input.value);
+      if (!Number.isInteger(amount) || amount < 1) { showToast('Enter a whole-number payment amount.', true); return; }
+      if (!confirm('Send KSh ' + amount + ' to ' + name + '?')) return;
+      try {
+        const response = await fetch('/api/v1/dashboard/direct-payments/' + id + '/pay', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ amount: amount }) });
+        const json = await response.json();
+        if (!response.ok || !json.success) throw new Error(json.error || 'Payment failed');
+        showToast(json.message || 'Payment queued.');
+        loadDirectPayments();
+      } catch (error) { showToast(error.message || 'Payment failed.', true); }
+    }
+
+    async function togglePaymentBlacklist(id, blacklisted) {
+      const action = blacklisted ? 'blacklist' : 'restore payments for';
+      if (!confirm('Are you sure you want to ' + action + ' this user?')) return;
+      try {
+        const response = await fetch('/api/v1/dashboard/direct-payments/' + id + '/blacklist', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ blacklisted: blacklisted }) });
+        const json = await response.json();
+        if (!response.ok || !json.success) throw new Error(json.error || 'Update failed');
+        showToast(json.message || 'Payment access updated.');
+        loadDirectPayments();
+      } catch (error) { showToast(error.message || 'Update failed.', true); }
     }
 
     async function loadReportsTab() {
@@ -4364,6 +4599,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
     function renderAppSettings(statsOrSettings) {
       const isDemoOn = statsOrSettings && statsOrSettings.showDemoMaterials !== undefined ? statsOrSettings.showDemoMaterials : true;
       const isChatOn = statsOrSettings && statsOrSettings.allowCommunityChat !== undefined ? statsOrSettings.allowCommunityChat : true;
+      const arePaymentsOn = statsOrSettings && statsOrSettings.allowPayments !== undefined ? statsOrSettings.allowPayments : true;
       const aiToggleInput = document.getElementById('toggle-disable-ai');
       const isAiDisabled = statsOrSettings && statsOrSettings.disableAiFeatures !== undefined
         ? statsOrSettings.disableAiFeatures
@@ -4411,6 +4647,24 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       if (chatLabel) {
         chatLabel.innerText = isChatOn ? 'Saved in Database (Community Chat Enabled)' : 'Saved in Database (Community Chat Disabled)';
         chatLabel.style.color = isChatOn ? '#15803d' : '#dc2626';
+      }
+
+      const paymentsToggleInput = document.getElementById('toggle-allow-payments');
+      const paymentsBadge = document.getElementById('payments-status-badge');
+      const paymentsSlider = document.getElementById('payments-toggle-slider');
+      const paymentsKnob = document.getElementById('payments-toggle-knob');
+      const paymentsLabel = document.getElementById('payments-toggle-status-label');
+      if (paymentsToggleInput) paymentsToggleInput.checked = arePaymentsOn;
+      if (paymentsBadge) {
+        paymentsBadge.innerText = arePaymentsOn ? 'PAYMENTS ACTIVE' : 'PAYMENTS DISABLED';
+        paymentsBadge.style.background = arePaymentsOn ? '#dcfce7' : '#fee2e2';
+        paymentsBadge.style.color = arePaymentsOn ? '#15803d' : '#dc2626';
+      }
+      if (paymentsSlider) paymentsSlider.style.backgroundColor = arePaymentsOn ? '#22c55e' : '#cbd5e1';
+      if (paymentsKnob) paymentsKnob.style.left = arePaymentsOn ? '29px' : '3px';
+      if (paymentsLabel) {
+        paymentsLabel.innerText = arePaymentsOn ? 'Saved in Database (Daraja payments enabled)' : 'Saved in Database (All payments disabled)';
+        paymentsLabel.style.color = arePaymentsOn ? '#15803d' : '#dc2626';
       }
 
       const aiBadge = document.getElementById('ai-status-badge');
@@ -4476,6 +4730,27 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         const toggleInput = document.getElementById('toggle-community-chat');
         if (toggleInput) toggleInput.checked = !enabled;
         renderAppSettings({ allowCommunityChat: !enabled });
+      }
+    }
+
+    async function handleAllowPaymentsToggle(enabled) {
+      const label = document.getElementById('payments-toggle-status-label');
+      if (label) label.innerText = 'Saving payment setting to database...';
+      try {
+        const res = await fetch('/api/v1/dashboard/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: 'allowPayments', value: enabled })
+        });
+        const json = await res.json();
+        if (!json.success) throw new Error(json.message || 'Update failed');
+        showToast('Payments ' + (enabled ? 'enabled' : 'disabled') + '!');
+        renderAppSettings({ allowPayments: enabled });
+      } catch (err) {
+        showToast('Payment setting update failed: ' + err.message, true);
+        const toggleInput = document.getElementById('toggle-allow-payments');
+        if (toggleInput) toggleInput.checked = !enabled;
+        renderAppSettings({ allowPayments: !enabled });
       }
     }
 
@@ -5487,7 +5762,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
     function renderUsers(users) {
       const tbody = document.getElementById('users-table-body');
       if (!users || users.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 32px; color: #94a3b8;">No users found.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; padding: 32px; color: #94a3b8;">No users found.</td></tr>';
         return;
       }
 
@@ -5520,6 +5795,8 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
             '</span>' +
           '</td>' +
           '<td>' + landlordBadge + '</td>' +
+          '<td style="font-weight: 800; color: #15803d;">' + (Number(u.points || 0)) + '</td>' +
+          '<td style="font-weight: 800; color: #0f766e;">KSh ' + (Number(u.rewardedAmount || 0).toFixed(2)) + '</td>' +
           '<td>' + onlineBadge + '</td>' +
           '<td style="color: #94a3b8; font-size: 12px;">' +
             new Date(u.createdAt).toLocaleDateString() +

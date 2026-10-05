@@ -198,7 +198,7 @@ export const reviewPaper = async (req: AuthenticatedRequest, res: Response): Pro
             await dispatchPushNotification({
               title: 'Paper Submission Approved 🎉',
               subtitle: 'Resource Published',
-              body: `Your paper submission "${paper.title}" (${paper.unitCode}) has been approved and published to MoiConnect! You earned +${awardedPoints} reward points.`,
+        body: `Your paper submission "${paper.title}" (${paper.unitCode}) has been approved and published to MConnect! You earned +${awardedPoints} reward points.`,
               icon: 'academic',
               target: 'emails',
               recipientEmails: [submitter.email],
