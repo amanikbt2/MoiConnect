@@ -12,6 +12,8 @@ export const getCommunityMessages = async (req: Request, res: Response): Promise
   try {
     const { since, before, limit } = req.query;
     const query: any = {};
+    const userId = (req as any).user?._id;
+    if (userId) query.hiddenForUserIds = { $ne: userId };
     let isDeltaSync = false;
     let isOlderPage = false;
 
@@ -30,6 +32,7 @@ export const getCommunityMessages = async (req: Request, res: Response): Promise
     }
 
     const maxLimit = Math.min(parseInt(limit as string, 10) || 30, 50);
+    const matchingCount = isDeltaSync ? await CommunityMessage.countDocuments(query) : 0;
 
     let messages = await CommunityMessage.find(query).select('-reactionUsers')
       .sort(isDeltaSync ? { updatedAt: 1 } : { createdAt: -1 })
@@ -53,7 +56,9 @@ export const getCommunityMessages = async (req: Request, res: Response): Promise
       success: true,
       data: responseMessages,
       count: responseMessages.length,
-      hasMore: isOlderPage ? responseMessages.length === maxLimit : undefined,
+      hasMore: isDeltaSync
+        ? matchingCount > responseMessages.length
+        : (isOlderPage ? responseMessages.length === maxLimit : undefined),
       allowCommunityChat,
       syncedAt: new Date().toISOString()
     });
@@ -348,5 +353,30 @@ export const deleteCommunityMessage = async (req: Request, res: Response): Promi
     res.json({ success: true, messageId: id });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message || 'Failed to delete message' });
+  }
+};
+
+// Hide a community message for the signed-in user without deleting it for everyone.
+// This is persisted server-side so an uninstall/reinstall cannot make it reappear.
+export const deleteCommunityMessageForMe = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = (req as any).user?._id;
+    const { id } = req.params;
+    if (!userId) {
+      res.status(401).json({ success: false, error: 'Sign in to delete messages for your account.' });
+      return;
+    }
+    const message = await CommunityMessage.findByIdAndUpdate(
+      id,
+      { $addToSet: { hiddenForUserIds: userId } },
+      { new: true }
+    ).select('_id');
+    if (!message) {
+      res.status(404).json({ success: false, error: 'Message not found.' });
+      return;
+    }
+    res.json({ success: true, message: 'Message removed for you.' });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message || 'Failed to remove message for you.' });
   }
 };

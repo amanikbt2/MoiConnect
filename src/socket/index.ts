@@ -153,6 +153,7 @@ export const setupSocketIO = (io: SocketIOServer): void => {
           socket.to('community_room').emit('community:system_event', {
             id: `sys_conn_${socket.id}_${Date.now()}`,
             event: 'user_connected',
+            userId,
             userName: u.name,
             text: `${u.name} logged into MConnect`,
             timestamp: new Date().toISOString()
@@ -506,6 +507,7 @@ export const setupSocketIO = (io: SocketIOServer): void => {
             socket.to('community_room').emit('community:system_event', {
               id: `sys_disc_${socket.id}_${Date.now()}`,
               event: 'user_disconnected',
+              userId,
               userName: u.name,
               text: `${u.name} went offline`,
               timestamp: new Date().toISOString()

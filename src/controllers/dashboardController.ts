@@ -1624,6 +1624,7 @@ export const renderSmartPreviewPage = (req: Request, res: Response): void => {
   const fileUrl = (req.query.url as string) || '';
   const title = (req.query.title as string) || 'Document Preview';
   const rawType = ((req.query.type as string) || '').toLowerCase();
+  const ttsTextUrl = (req.query.tts as string) || '';
 
   const cleanUrl = fileUrl.split('?')[0];
   const ext = (path.extname(cleanUrl) || '').toLowerCase().replace('.', '') || rawType;
@@ -1637,6 +1638,13 @@ export const renderSmartPreviewPage = (req: Request, res: Response): void => {
     category = 'text';
   } else {
     category = 'pdf';
+  }
+
+  // Keep older admin/bookmark links on the same student-style reader.
+  if (category === 'pdf') {
+    const query = new URLSearchParams({ url: fileUrl, title, type: rawType, tts: ttsTextUrl });
+    res.redirect(`/smart-pdf-preview?${query.toString()}`);
+    return;
   }
 
   const html = `<!DOCTYPE html>
@@ -1683,6 +1691,11 @@ export const renderSmartPreviewPage = (req: Request, res: Response): void => {
 
     /* PDF Viewer */
     .pdf-frame { width: 100%; height: 100%; border: none; }
+    .reader-panel { position: absolute; right: 18px; bottom: 18px; width: min(360px, calc(100% - 36px)); background: rgba(15, 23, 42, 0.96); border: 1px solid #475569; border-radius: 14px; padding: 14px; box-shadow: 0 12px 35px rgba(0,0,0,0.45); z-index: 20; }
+    .reader-panel-title { font-size: 12px; font-weight: 800; color: #f8fafc; margin-bottom: 8px; }
+    .reader-panel-status { font-size: 11px; color: #cbd5e1; line-height: 1.4; margin-bottom: 10px; }
+    .reader-panel-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+    .reader-panel select { background: #1e293b; color: #f8fafc; border: 1px solid #475569; border-radius: 7px; padding: 6px; font-size: 11px; }
 
     /* Word DOCX Viewer */
     .docx-viewport { width: 100%; height: 100%; overflow-y: auto; padding: 32px 16px; background: #334155; display: flex; flex-direction: column; align-items: center; }
@@ -1725,6 +1738,7 @@ export const renderSmartPreviewPage = (req: Request, res: Response): void => {
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
         Raw URL
       </a>
+      ${ttsTextUrl && category === 'pdf' ? `<button type="button" class="btn btn-primary" onclick="toggleReaderPanel()">▶ Voice & Copy</button>` : ''}
     </div>
   </div>
 
@@ -1777,6 +1791,45 @@ export const renderSmartPreviewPage = (req: Request, res: Response): void => {
       </script>
     ` : category === 'pdf' ? `
       <iframe src="${fileUrl}#toolbar=1" class="pdf-frame"></iframe>
+      ${ttsTextUrl ? `<div id="reader-panel" class="reader-panel">
+        <div class="reader-panel-title">Reader preview tools</div>
+        <div id="reader-panel-status" class="reader-panel-status">Reading text is attached. Voice playback uses the device/browser’s local speech engine.</div>
+        <div class="reader-panel-actions">
+          <button type="button" class="btn btn-primary" onclick="readAttachedText()">▶ Read aloud</button>
+          <button type="button" class="btn btn-tool" onclick="stopAttachedText()">■ Stop</button>
+          <button type="button" class="btn btn-tool" onclick="copyAttachedText()">Copy text</button>
+          <select id="reader-speed" aria-label="Reading speed">
+            <option value="0.8">0.8×</option><option value="1" selected>1.0×</option><option value="1.2">1.2×</option><option value="1.4">1.4×</option>
+          </select>
+        </div>
+      </div>
+      <script>
+        var attachedTextUrl = ${JSON.stringify(ttsTextUrl)};
+        var attachedText = '';
+        var attachedTextLoaded = false;
+        function toggleReaderPanel() { var panel = document.getElementById('reader-panel'); if (panel) panel.style.display = panel.style.display === 'none' ? 'block' : 'none'; }
+        function loadAttachedText() {
+          if (attachedTextLoaded) return Promise.resolve(attachedText);
+          return fetch(attachedTextUrl).then(function(r) { if (!r.ok) throw new Error('Could not load reading text'); return r.text(); }).then(function(t) { attachedText = t; attachedTextLoaded = true; return t; });
+        }
+        function readAttachedText() {
+          var status = document.getElementById('reader-panel-status');
+          if (!('speechSynthesis' in window)) { status.textContent = 'Speech playback is not available in this browser.'; return; }
+          stopAttachedText();
+          status.textContent = 'Loading reading text…';
+          loadAttachedText().then(function(text) {
+            if (!text.trim()) throw new Error('The attached reading text is empty.');
+            var utterance = new SpeechSynthesisUtterance(text);
+            utterance.rate = Number(document.getElementById('reader-speed').value || 1);
+            utterance.onstart = function() { status.textContent = 'Reading aloud with the device/browser voice.'; };
+            utterance.onend = function() { status.textContent = 'Reading complete.'; };
+            utterance.onerror = function() { status.textContent = 'Voice playback could not start.'; };
+            window.speechSynthesis.speak(utterance);
+          }).catch(function(err) { status.textContent = err.message; });
+        }
+        function stopAttachedText() { if ('speechSynthesis' in window) window.speechSynthesis.cancel(); }
+        function copyAttachedText() { loadAttachedText().then(function(text) { return navigator.clipboard.writeText(text); }).then(function() { document.getElementById('reader-panel-status').textContent = 'Reading text copied to clipboard.'; }).catch(function() { document.getElementById('reader-panel-status').textContent = 'Could not copy reading text.'; }); }
+      </script>` : ''}
     ` : category === 'docx' ? `
       <div class="docx-viewport">
         <div class="docx-external-bar">
@@ -1858,6 +1911,99 @@ export const renderSmartPreviewPage = (req: Request, res: Response): void => {
 </body>
 </html>`;
 
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(html);
+};
+
+// Student-style PDF reader preview for administrators reviewing a pending material.
+// This deliberately stays a standalone page so the admin can compare the material
+// with the mobile reader before approving it.
+export const renderSmartPdfPreviewPage = (req: Request, res: Response): void => {
+  const fileUrl = String(req.query.url || '');
+  const title = String(req.query.title || 'PDF Document');
+  const ttsUrl = String(req.query.tts || '');
+  const safeTitle = title.replace(/[<>"']/g, '');
+  const pdfViewerUrl = `https://mozilla.github.io/pdf.js/web/viewer.html?file=${encodeURIComponent(fileUrl)}`;
+  const ttsJson = JSON.stringify(ttsUrl);
+
+  const html = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${safeTitle} • MConnect PDF Reader</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; overflow: hidden; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #eef2f7; color: #0f172a; }
+    .reader { height: 100%; display: flex; flex-direction: column; }
+    .reader-header { height: 56px; flex: 0 0 56px; display: flex; align-items: center; gap: 10px; padding: 7px 14px; background: #15803d; color: #fff; box-shadow: 0 2px 8px rgba(15,23,42,.18); z-index: 5; }
+    .back-btn, .round-action { width: 40px; height: 40px; border: 0; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; color: #fff; }
+    .back-btn { background: rgba(255,255,255,.18); font-size: 25px; }
+    .round-action { background: rgba(255,255,255,.18); border: 1px solid rgba(255,255,255,.3); font-size: 20px; }
+    .round-action:hover, .back-btn:hover { background: rgba(255,255,255,.3); }
+    .header-copy { min-width: 0; flex: 1; }
+    .header-title { display: block; font-size: 14px; font-weight: 900; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .header-sub { display: block; font-size: 10px; font-weight: 600; color: #bbf7d0; margin-top: 1px; }
+    .header-actions { display: flex; align-items: center; gap: 8px; }
+    .reader-body { position: relative; flex: 1; background: #dbe3ea; min-height: 0; }
+    .pdf-frame { width: 100%; height: 100%; border: 0; background: #fff; }
+    .loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #64748b; font-size: 13px; pointer-events: none; }
+    .tts-banner { position: absolute; left: 8px; right: 8px; top: 8px; display: none; align-items: center; gap: 9px; padding: 8px 10px; border-radius: 5px; background: #0787c1; color: #fff; box-shadow: 0 3px 10px rgba(15,23,42,.25); z-index: 4; }
+    .tts-banner.active { display: flex; }
+    .tts-copy { flex: 1; min-width: 0; }
+    .tts-title { font-size: 10px; font-weight: 900; }
+    .tts-status { font-size: 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: .9; }
+    .tts-btn { border: 0; border-radius: 5px; padding: 6px 9px; cursor: pointer; font-size: 10px; font-weight: 800; color: #075985; background: #fff; }
+    .tts-panel { position: absolute; right: 12px; top: 12px; display: none; width: min(330px, calc(100% - 24px)); padding: 13px; background: #0f172a; color: #fff; border-radius: 12px; box-shadow: 0 12px 30px rgba(15,23,42,.35); z-index: 6; }
+    .tts-panel.open { display: block; }
+    .tts-panel h3 { margin: 0 0 7px; font-size: 13px; }
+    .tts-panel p { margin: 0 0 10px; color: #cbd5e1; font-size: 11px; line-height: 1.4; }
+    .tts-controls { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
+    .tts-controls button, .tts-controls select { border: 1px solid #475569; border-radius: 7px; background: #1e293b; color: #fff; padding: 7px 9px; cursor: pointer; font-size: 11px; font-weight: 800; }
+    .tts-controls button.primary { background: #16a34a; border-color: #22c55e; }
+    @media (max-width: 560px) { .header-title { font-size: 12px; } .tts-banner { left: 5px; right: 5px; } }
+  </style>
+</head>
+<body>
+  <main class="reader">
+    <header class="reader-header">
+      <button class="back-btn" type="button" onclick="window.history.length > 1 ? window.history.back() : window.close()" aria-label="Back">‹</button>
+      <div class="header-copy">
+        <span class="header-title">${safeTitle}</span>
+        <span class="header-sub">Lightning PDF Reader • PDF document</span>
+      </div>
+      <div class="header-actions">
+        <button class="round-action" type="button" onclick="toggleTtsPanel()" aria-label="Read text aloud">🔊</button>
+        <a class="round-action" href="${fileUrl}" download aria-label="Download PDF" style="text-decoration:none;">⇩</a>
+      </div>
+    </header>
+    <section class="reader-body">
+      <div id="loading" class="loading">Loading PDF reader…</div>
+      <iframe class="pdf-frame" src="${pdfViewerUrl}" title="${safeTitle} PDF reader" onload="document.getElementById('loading').style.display='none'"></iframe>
+      <div id="tts-banner" class="tts-banner">
+        <span style="font-size:18px;">🔊</span><div class="tts-copy"><div class="tts-title">Prof. Campus AI explaining...</div><div id="tts-status" class="tts-status">Ready to read the attached lecture text</div></div>
+        <button class="tts-btn" type="button" onclick="stopTts()">■ Stop</button>
+      </div>
+      <div id="tts-panel" class="tts-panel">
+        <h3>🎙️ Voice & Speech</h3>
+        <p id="tts-panel-status">Use the same attached reading text students will hear. Playback uses the device/browser’s local voice engine.</p>
+        <div class="tts-controls"><button class="primary" type="button" onclick="readTts()">▶ Read aloud</button><button type="button" onclick="stopTts()">■ Stop</button><button type="button" onclick="copyTts()">Copy text</button><select id="tts-speed" aria-label="Speech speed"><option value="0.8">0.8×</option><option value="1" selected>1.0×</option><option value="1.2">1.2×</option><option value="1.4">1.4×</option></select></div>
+      </div>
+      <script>
+        var ttsUrl = ${ttsJson};
+        var ttsText = '';
+        var ttsLoaded = false;
+        function toggleTtsPanel() { document.getElementById('tts-panel').classList.toggle('open'); }
+        function loadTts() { if (ttsLoaded) return Promise.resolve(ttsText); return fetch(ttsUrl).then(function(r) { if (!r.ok) throw new Error('Reading text could not be loaded.'); return r.text(); }).then(function(t) { ttsText = t; ttsLoaded = true; return t; }); }
+        function setTtsStatus(text) { document.getElementById('tts-panel-status').textContent = text; document.getElementById('tts-status').textContent = text; }
+        function readTts() { if (!('speechSynthesis' in window)) { setTtsStatus('This browser has no local speech engine.'); return; } stopTts(); setTtsStatus('Loading reading text…'); loadTts().then(function(text) { if (!text.trim()) throw new Error('The reading text is empty.'); var u = new SpeechSynthesisUtterance(text); u.rate = Number(document.getElementById('tts-speed').value || 1); u.onstart = function() { document.getElementById('tts-banner').classList.add('active'); setTtsStatus('Reading aloud with the local device voice.'); }; u.onend = function() { setTtsStatus('Reading complete.'); document.getElementById('tts-banner').classList.remove('active'); }; u.onerror = function() { setTtsStatus('Voice playback failed.'); document.getElementById('tts-banner').classList.remove('active'); }; window.speechSynthesis.speak(u); }).catch(function(e) { setTtsStatus(e.message); }); }
+        function stopTts() { if ('speechSynthesis' in window) window.speechSynthesis.cancel(); document.getElementById('tts-banner').classList.remove('active'); }
+        function copyTts() { loadTts().then(function(text) { return navigator.clipboard.writeText(text); }).then(function() { setTtsStatus('Reading text copied.'); }).catch(function() { setTtsStatus('Could not copy reading text.'); }); }
+      </script>
+    </section>
+  </main>
+</body>
+</html>`;
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(html);
 };
@@ -3290,8 +3436,8 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
               Download Media File
             </a>
             <a id="modal-preview-btn" href="#" target="_blank" class="btn btn-view" style="font-weight: 800; color: #0f172a;">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-              Open & Preview in Tab
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.14v13.72a1 1 0 0 0 1.53.85l10.2-6.86a1 1 0 0 0 0-1.7L9.53 4.29A1 1 0 0 0 8 5.14z"/></svg>
+              Play Reader Preview
             </a>
             <button type="button" id="modal-copy-url-btn" onclick="copyModalFileUrl()" class="btn btn-view" style="font-size: 11px;">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
@@ -5115,9 +5261,10 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
 
       // Smart preview URL in web tab
       const previewBtn = document.getElementById('modal-preview-btn');
-      const smartPreviewUrl = '/admin/preview?url=' + encodeURIComponent(paper.fileUrl) + 
-        '&title=' + encodeURIComponent(paper.title || 'Paper') + 
-        '&type=' + encodeURIComponent(paper.fileType || fmt.category) + 
+      const smartPreviewUrl = '/smart-pdf-preview?url=' + encodeURIComponent(paper.fileUrl) +
+        '&title=' + encodeURIComponent(paper.title || 'Paper') +
+        '&type=' + encodeURIComponent(paper.fileType || fmt.category) +
+        '&tts=' + encodeURIComponent(paper.ttsTextUrl || '') +
         '&id=' + encodeURIComponent(paper._id);
       previewBtn.href = smartPreviewUrl;
 
@@ -5134,9 +5281,10 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
           paper.attachments.forEach(function(att, idx) {
             const attFmt = detectFormat(att.fileUrl, att.fileType);
             const attName = att.originalName || ('Document ' + (idx + 1));
-            const attPrevUrl = '/admin/preview?url=' + encodeURIComponent(att.fileUrl) + 
+          const attPrevUrl = '/smart-pdf-preview?url=' + encodeURIComponent(att.fileUrl) +
               '&title=' + encodeURIComponent(attName) + 
               '&type=' + encodeURIComponent(att.fileType || attFmt.category) + 
+              '&tts=' + encodeURIComponent(paper.ttsTextUrl || '') +
               '&id=' + encodeURIComponent(paper._id + '_' + idx);
 
             attachmentsHtml += '<div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px;">' +
@@ -5187,7 +5335,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
               '</div>' +
             '</div>' +
             '<a href="' + smartPreviewUrl + '" target="_blank" class="btn btn-view" style="font-size: 11px;">' +
-              'Launch PDF Viewer' +
+              '▶ Play Reader Preview' +
             '</a>' +
           '</div>';
         } else if (fmt.category === 'docx') {
@@ -5448,7 +5596,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
           
           // Update download & preview links
           document.getElementById('modal-download-btn').href = json.data.fileUrl;
-          const smartPreviewUrl = '/admin/preview?url=' + encodeURIComponent(json.data.fileUrl) + 
+          const smartPreviewUrl = '/smart-pdf-preview?url=' + encodeURIComponent(json.data.fileUrl) +
             '&title=' + encodeURIComponent(json.data.title || 'Paper') + 
             '&type=' + encodeURIComponent(json.data.fileType || '') + 
             '&id=' + encodeURIComponent(json.data._id);
@@ -6067,12 +6215,41 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
             '<div style="color: #475569; margin-bottom: 6px; line-height: 1.4;">' + String(item.body || '').replace(/Ã°Å¸â€™Â¬/g, '💬').replace(/Ã°Å¸â€™/g, '💬').replace(/Ã°Å¸/g, '💬') + '</div>' +
             '<div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; color: #94a3b8; font-size: 11px;">' +
               '<span>Target: ' + targetText + '</span>' +
-              '<span style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;"><span>' + new Date(item.createdAt).toLocaleString() + '</span><button type="button" onclick="deletePushHistoryItem(&quot;' + item._id + '&quot;)" class="btn" style="background:#fee2e2;color:#dc2626;padding:3px 8px;font-size:10px;font-weight:800;border:1px solid #fca5a5;border-radius:6px;cursor:pointer;">🗑️ Delete</button></span>' +
+              '<span style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;"><span>' + new Date(item.createdAt).toLocaleString() + '</span><button type="button" onclick="reusePushHistory(&quot;' + item._id + '&quot;)" class="btn" style="background:#dcfce7;color:#166534;padding:3px 8px;font-size:10px;font-weight:800;border:1px solid #86efac;border-radius:6px;cursor:pointer;">↻ Reuse</button><button type="button" onclick="deletePushHistoryItem(&quot;' + item._id + '&quot;)" class="btn" style="background:#fee2e2;color:#dc2626;padding:3px 8px;font-size:10px;font-weight:800;border:1px solid #fca5a5;border-radius:6px;cursor:pointer;">🗑️ Delete</button></span>' +
             '</div>' +
           '</div>';
         }).join('');
       } catch (err) {
         console.error('Failed to load push history:', err);
+      }
+    }
+
+    async function reusePushHistory(id) {
+      try {
+        const res = await fetch('/api/v1/admin/push-history');
+        const json = await res.json();
+        const item = (json.history || []).find(function(notification) { return notification._id === id; });
+        if (!item) throw new Error('Notification history item was not found.');
+
+        document.getElementById('push-title').value = item.title || '';
+        document.getElementById('push-subtitle').value = item.subtitle || '';
+        document.getElementById('push-body').value = item.body || '';
+        document.getElementById('push-emails').value = Array.isArray(item.recipientEmails)
+          ? item.recipientEmails.join(', ')
+          : (item.recipientEmails || '');
+
+        const iconInput = document.querySelector('input[name="push-icon"][value="' + (item.icon || 'bell') + '"]');
+        if (iconInput) iconInput.checked = true;
+        const targetInput = document.querySelector('input[name="push-target"][value="' + (item.target || 'all') + '"]');
+        if (targetInput) targetInput.checked = true;
+        toggleEmailBox();
+
+        const form = document.getElementById('push-form');
+        if (form) form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        document.getElementById('push-title').focus();
+        showToast('Notification copied into the composer. Review it and dispatch to create a new notification ID.');
+      } catch (error) {
+        showToast('Could not reuse notification: ' + error.message, true);
       }
     }
 

@@ -60,8 +60,8 @@ export const saveAiContext = async (context: string): Promise<string> => (await 
 type AssistantKind = 'bot' | 'ai';
 type Assistant = { kind: AssistantKind; name: string; email: string; id: Types.ObjectId; avatarBg: string; aliases: RegExp };
 const assistants: Record<AssistantKind, Assistant> = {
-  bot: { kind: 'bot', name: 'Campus Bot', email: CAMPUS_BOT_EMAIL, id: new Types.ObjectId('000000000000000000000001'), avatarBg: '#6366f1', aliases: /(^|\s)@(bot|campusbot|campus\s+bot)\b|\bcampus\s+bot\b/i },
-  ai: { kind: 'ai', name: 'Campus AI', email: CAMPUS_AI_EMAIL, id: new Types.ObjectId('000000000000000000000002'), avatarBg: '#d4a017', aliases: /(^|\s)@(ai|campusai|campus\s+ai)\b|\bcampus\s+ai\b/i }
+  bot: { kind: 'bot', name: 'Campus Bot', email: CAMPUS_BOT_EMAIL, id: new Types.ObjectId('000000000000000000000001'), avatarBg: '#6366f1', aliases: /(^|\s)@(bot|campusbot|campus[\s_]+bot)\b|\bcampus[\s_]+bot\b/i },
+  ai: { kind: 'ai', name: 'Campus AI', email: CAMPUS_AI_EMAIL, id: new Types.ObjectId('000000000000000000000002'), avatarBg: '#d4a017', aliases: /(^|\s)@(ai|campusai|campus[\s_]+ai)\b|\bcampus[\s_]+ai\b/i }
 };
 const REQUEST_TIMEOUT_MS = 8000;
 const KEY_COOLDOWN_MS = 60_000;
@@ -177,7 +177,7 @@ const getMentionedAssistant = (text = ''): Assistant | undefined => {
 };
 
 export const isBotStopCommand = (text?: string): boolean =>
-  /^\s*@(bot|campusbot|campus\s+bot|ai|campusai|campus\s+ai)\s+stop\b/i.test(text || '');
+  /^\s*@(bot|campusbot|campus[\s_]+bot|ai|campusai|campus[\s_]+ai)\s+stop\b/i.test(text || '');
 
 export const stopCampusBots = (): void => {
   stopGeneration += 1;
@@ -222,7 +222,7 @@ const extractGeminiText = (payload: any): string => {
   return Array.isArray(parts) ? parts.map((part: any) => typeof part?.text === 'string' ? part.text : '').join('').trim() : '';
 };
 const stripAssistantMentions = (text: string): string => text
-  .replace(/^\s*@(bot|campusbot|campus\s+bot|ai|campusai|campus\s+ai)\b\s*/i, '').trim();
+  .replace(/^\s*@(bot|campusbot|campus[\s_]+bot|ai|campusai|campus[\s_]+ai)\b\s*/i, '').trim();
 
 const getConversationPrompt = async (message: any, _assistant: Assistant): Promise<string> => {
   const studentName = String(message.senderName || 'Student').trim();

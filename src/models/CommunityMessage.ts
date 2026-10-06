@@ -34,6 +34,7 @@ export interface ICommunityMessage extends Document {
   reactions?: Map<string, number>;
   reactionUsers?: Map<string, string[]>;
   readBy?: Types.ObjectId[];
+  hiddenForUserIds?: Types.ObjectId[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -76,7 +77,8 @@ const communityMessageSchema = new Schema<ICommunityMessage>(
       of: [String],
       default: {}
     },
-    readBy: [{ type: Schema.Types.ObjectId, ref: 'User' }]
+    readBy: [{ type: Schema.Types.ObjectId, ref: 'User' }],
+    hiddenForUserIds: [{ type: Schema.Types.ObjectId, ref: 'User', index: true }]
   },
   {
     timestamps: true

@@ -53,6 +53,7 @@ router.post('/community/messages', optionalAuthenticate, communityController.pos
 router.post('/community/messages/:id/read', authenticate, communityController.markCommunityMessageRead);
 router.post('/community/messages/:id/reaction', optionalAuthenticate, communityController.toggleCommunityReaction);
 router.delete('/community/messages/:id', authenticate, communityController.deleteCommunityMessage);
+router.post('/community/messages/:id/delete-for-me', authenticate, communityController.deleteCommunityMessageForMe);
 router.post('/community/upload-media', tempUpload.single('file'), communityController.uploadCommunityMedia);
 router.get('/community/live/token', optionalAuthenticate, liveController.createCommunityLiveToken);
 

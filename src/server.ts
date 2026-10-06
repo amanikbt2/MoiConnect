@@ -13,7 +13,8 @@ import path from 'path';
 import {
   renderAdminDashboard,
   renderPublicTempFolder,
-  renderSmartPreviewPage
+  renderSmartPreviewPage,
+  renderSmartPdfPreviewPage
 } from './controllers/dashboardController';
 
 const app = express();
@@ -99,6 +100,7 @@ app.get([
 
 // Smart Document & Media Preview Route (Images, PDF, Word DOCX/DOC, Text)
 app.get(['/admin/preview', '/preview'], renderSmartPreviewPage);
+app.get(['/smart-pdf-preview', '/admin/smart-pdf-preview'], renderSmartPdfPreviewPage);
 
 // API Base Route
 app.use('/api/v1', routes);
