@@ -6,12 +6,16 @@ export interface IUserDocument extends Document {
   email: string;
   passwordHash: string;
   phone?: string;
+  school: string;
+  course: string;
+  yearOfStudy: string;
   avatarUrl?: string;
   roles: UserRole[];
   activeRole: UserRole;
   landlordStatus: LandlordStatus;
   accountStatus: AccountStatus;
   points: number;
+  badge?: 'blue' | 'red' | 'green';
   paymentBlacklisted: boolean;
   landlordRequestDetails?: {
     idNumber: string;
@@ -28,7 +32,10 @@ const userSchema = new Schema<IUserDocument>(
     name: { type: String, required: true, trim: true },
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
     passwordHash: { type: String, required: true },
-    phone: { type: String, trim: true },
+    phone: { type: String, trim: true, default: '' },
+    school: { type: String, trim: true, default: 'Unset' },
+    course: { type: String, trim: true, default: 'Unset' },
+    yearOfStudy: { type: String, trim: true, default: 'Unset' },
     avatarUrl: { type: String },
     roles: {
       type: [String],
@@ -54,6 +61,10 @@ const userSchema = new Schema<IUserDocument>(
       type: Number,
       default: 5,
       min: 0
+    },
+    badge: {
+      type: String,
+      enum: ['blue', 'red', 'green']
     },
     paymentBlacklisted: {
       type: Boolean,

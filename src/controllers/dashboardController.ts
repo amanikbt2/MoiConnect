@@ -24,6 +24,34 @@ import { awardPaperApprovalPoints } from '../services/rewardService';
 import { randomDownloadCount, randomRatingScore } from '../utils/materialStats';
 import { clearAiTelemetry, getAiPromptSettings, getAiTelemetry, saveAiPromptSettings } from '../services/campusBotService';
 
+const COMMUNITY_ASSISTANT_USERS = [
+  {
+    _id: new mongoose.Types.ObjectId('000000000000000000000001'),
+    name: 'Campus Bot',
+    email: 'campusbot@moiconnect.app'
+  },
+  {
+    _id: new mongoose.Types.ObjectId('000000000000000000000002'),
+    name: 'Campus AI',
+    email: 'campusai@moiconnect.app'
+  }
+];
+
+const ensureCommunityAssistantUsers = async (): Promise<void> => {
+  await User.bulkWrite(COMMUNITY_ASSISTANT_USERS.map((assistant) => ({
+    updateOne: {
+      filter: { _id: assistant._id },
+      update: {
+        $setOnInsert: {
+          ...assistant,
+          passwordHash: '$system-assistant-account$'
+        }
+      },
+      upsert: true
+    }
+  })));
+};
+
 // Secret-safe AI pool telemetry for the admin dashboard. API keys themselves are never returned.
 export const getAiOverages = async (_req: Request, res: Response): Promise<void> => {
   try {
@@ -71,6 +99,7 @@ export const updateAiContextSettings = async (req: Request, res: Response): Prom
 // 1. JSON API: Get full dashboard data
 export const getDashboardOverview = async (_req: Request, res: Response): Promise<void> => {
   try {
+    await ensureCommunityAssistantUsers();
     const totalUsers = await User.countDocuments();
     const pendingLandlords = await User.countDocuments({ landlordStatus: 'pending' });
     const pendingPapers = await Paper.countDocuments({ status: 'pending' });
@@ -383,7 +412,8 @@ const getCloudinaryResourceTypes = (fileType?: string, fileUrl?: string): string
 
 export const getDirectPaymentUsers = async (_req: Request, res: Response): Promise<void> => {
   try {
-    const users = await User.find().select('name email phone points paymentBlacklisted createdAt').sort({ createdAt: -1 }).limit(500).lean();
+    await ensureCommunityAssistantUsers();
+    const users = await User.find().select('name email phone points badge paymentBlacklisted createdAt').sort({ createdAt: -1 }).limit(500).lean();
     const userIds = users.map((user) => user._id);
     const totals = await RewardPayout.aggregate([
       { $match: { userId: { $in: userIds }, status: 'success' } },
@@ -452,6 +482,35 @@ export const setPaymentBlacklist = async (req: Request, res: Response): Promise<
     res.json({ success: true, message: blacklisted ? 'User blacklisted from payments.' : 'User payment access restored.', user });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message || 'Failed to update payment blacklist.' });
+  }
+};
+
+export const setUserBadge = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const requestedBadge = String(req.body?.badge || '').trim().toLowerCase();
+    const badge = requestedBadge === 'blue' || requestedBadge === 'red' || requestedBadge === 'green'
+      ? requestedBadge
+      : undefined;
+    const badgeUpdate = badge ? { $set: { badge } } : { $unset: { badge: 1 } };
+    const user = await User.findByIdAndUpdate(
+      req.params.id,
+      badgeUpdate,
+      { new: true, runValidators: true }
+    ).select('name email badge');
+    if (!user) { res.status(404).json({ success: false, error: 'User not found.' }); return; }
+
+    await CommunityMessage.updateMany(
+      { senderId: user._id },
+      { $set: { senderBadge: badge } }
+    );
+    getSocketIO()?.to('community_room').emit('community:user_updated', {
+      userId: String(user._id),
+      email: user.email,
+      badge: badge || null
+    });
+    res.json({ success: true, message: badge ? `${badge} badge awarded.` : 'User badge removed.', user });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to update user badge.' });
   }
 };
 
@@ -2572,12 +2631,13 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
                 <th>Landlord Status</th>
                 <th>Points</th>
                 <th>Rewarded</th>
+                <th>Badge</th>
                 <th>Presence</th>
                 <th>Joined Date</th>
               </tr>
             </thead>
             <tbody id="users-table-body">
-              <tr><td colspan="8" style="text-align: center; padding: 32px; color: #94a3b8;">Loading user database...</td></tr>
+              <tr><td colspan="9" style="text-align: center; padding: 32px; color: #94a3b8;">Loading user database...</td></tr>
             </tbody>
           </table>
         </div>
@@ -2599,8 +2659,8 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         </div>
         <div class="table-responsive">
           <table>
-            <thead><tr><th>User</th><th>Email</th><th>Points</th><th>Rewarded</th><th>Payment status</th><th>Manual payment</th><th>Access</th></tr></thead>
-            <tbody id="direct-payments-table-body"><tr><td colspan="7" style="text-align:center;padding:32px;color:#94a3b8;">Open this tab to load payment users.</td></tr></tbody>
+            <thead><tr><th>User</th><th>Email</th><th>Points</th><th>Rewarded</th><th>Award badge</th><th>Payment status</th><th>Manual payment</th><th>Access</th></tr></thead>
+            <tbody id="direct-payments-table-body"><tr><td colspan="8" style="text-align:center;padding:32px;color:#94a3b8;">Open this tab to load payment users.</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -3892,13 +3952,13 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
     async function loadDirectPayments() {
       const tbody = document.getElementById('direct-payments-table-body');
       if (!tbody) return;
-      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:28px;color:#94a3b8;">Loading payment users...</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:28px;color:#94a3b8;">Loading payment users...</td></tr>';
       try {
         const response = await fetch('/api/v1/dashboard/direct-payments');
         const json = await response.json();
         if (!response.ok || !json.success) throw new Error(json.error || 'Failed to load users');
         if (!json.users || !json.users.length) {
-          tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:28px;color:#94a3b8;">No users found.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:28px;color:#94a3b8;">No users found.</td></tr>';
           return;
         }
         tbody.innerHTML = json.users.map(function(user) {
@@ -3906,6 +3966,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
           const name = directPaymentEscape(user.name || 'Student');
           const email = directPaymentEscape(user.email || '');
           const phone = directPaymentEscape(user.phone || 'No phone number');
+          const badge = directPaymentEscape(user.badge || '');
           const isBlacklisted = Boolean(user.paymentBlacklisted);
           const canPay = Boolean(user.phone) && !isBlacklisted;
           return '<tr>' +
@@ -3913,6 +3974,12 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
             '<td style="font-family:monospace;font-size:12px;">' + email + '</td>' +
             '<td style="font-weight:800;color:#15803d;">' + Number(user.points || 0) + '</td>' +
             '<td style="font-weight:800;color:#0f766e;">KSh ' + Number(user.rewardedAmount || 0).toFixed(2) + '</td>' +
+            '<td><select class="direct-badge-select" data-badge-id="' + id + '" style="padding:7px 8px;border:1px solid #cbd5e1;border-radius:7px;background:#ffffff;font-size:11px;font-weight:700;min-width:96px;">' +
+              '<option value="" ' + (!badge ? 'selected' : '') + '>None</option>' +
+              '<option value="blue" ' + (badge === 'blue' ? 'selected' : '') + '>Blue badge</option>' +
+              '<option value="red" ' + (badge === 'red' ? 'selected' : '') + '>Red badge</option>' +
+              '<option value="green" ' + (badge === 'green' ? 'selected' : '') + '>Green badge</option>' +
+            '</select></td>' +
             '<td style="font-size:11px;color:' + (user.phone ? '#475569' : '#dc2626') + ';">' + phone + '</td>' +
             '<td><div style="display:flex;gap:5px;align-items:center;min-width:150px;">' +
               '<input id="direct-amount-' + id + '" type="number" min="1" step="1" placeholder="KSh" ' + (!canPay ? 'disabled' : '') + ' style="width:72px;padding:7px;border:1px solid #cbd5e1;border-radius:7px;" />' +
@@ -3927,8 +3994,11 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         tbody.querySelectorAll('.direct-blacklist-btn').forEach(function(button) {
           button.addEventListener('click', function() { togglePaymentBlacklist(button.dataset.paymentId, button.dataset.blacklisted === 'true'); });
         });
+        tbody.querySelectorAll('.direct-badge-select').forEach(function(select) {
+          select.addEventListener('change', function() { awardUserBadge(select.dataset.badgeId, select.value); });
+        });
       } catch (error) {
-        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:28px;color:#dc2626;">' + directPaymentEscape(error.message || 'Failed to load payment users') + '</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:28px;color:#dc2626;">' + directPaymentEscape(error.message || 'Failed to load payment users') + '</td></tr>';
       }
     }
 
@@ -3958,12 +4028,24 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       } catch (error) { showToast(error.message || 'Update failed.', true); }
     }
 
+    async function awardUserBadge(id, badge) {
+      try {
+        const response = await fetch('/api/v1/dashboard/direct-payments/' + id + '/badge', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ badge: badge }) });
+        const json = await response.json();
+        if (!response.ok || !json.success) throw new Error(json.error || 'Badge update failed');
+        showToast(json.message || 'Badge updated.');
+      } catch (error) {
+        showToast(error.message || 'Badge update failed.', true);
+        loadDirectPayments();
+      }
+    }
+
     async function loadReportsTab() {
       const tbody = document.getElementById('reports-table-body');
       if (!tbody) return;
       tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 24px; color: #94a3b8;">Fetching user feedbacks...</td></tr>';
       try {
-        const res = await fetch('/admin/reports?status=pending');
+        const res = await fetch('/api/v1/admin/reports?status=pending');
         const json = await res.json();
         const reports = json.data || [];
         const badge = document.getElementById('badge-feedbacks-count');
@@ -4016,7 +4098,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
     async function handleDeleteReportedTarget(reportId) {
       if (!confirm('Are you sure you want to delete the reported content from the database?')) return;
       try {
-        const res = await fetch('/admin/reports/' + reportId + '/delete-target', { method: 'DELETE' });
+        const res = await fetch('/api/v1/admin/reports/' + reportId + '/delete-target', { method: 'DELETE' });
         const json = await res.json();
         if (json.success) {
           showToast('Reported content deleted successfully.');
@@ -4031,7 +4113,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
 
     async function handleDismissReport(reportId) {
       try {
-        const res = await fetch('/admin/reports/' + reportId, {
+        const res = await fetch('/api/v1/admin/reports/' + reportId, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ status: 'dismissed' })
@@ -5762,7 +5844,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
     function renderUsers(users) {
       const tbody = document.getElementById('users-table-body');
       if (!users || users.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; padding: 32px; color: #94a3b8;">No users found.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; padding: 32px; color: #94a3b8;">No users found.</td></tr>';
         return;
       }
 
@@ -5779,6 +5861,11 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         const onlineBadge = isOnline
           ? '<span style="font-size: 10px; font-weight: 800; background: #dcfce7; color: #15803d; padding: 3px 8px; border-radius: 12px; border: 1px solid #bbf7d0; display: inline-flex; align-items: center; gap: 4px;"><span style="width: 6px; height: 6px; background-color: #22c55e; border-radius: 50%;"></span> Online</span>'
           : '<span style="font-size: 10px; font-weight: 600; color: #94a3b8; display: inline-flex; align-items: center; gap: 4px;"><span style="width: 6px; height: 6px; background-color: #cbd5e1; border-radius: 50%;"></span> Offline</span>';
+
+        const badgeColors = { blue: '#2563eb', red: '#dc2626', green: '#16a34a' };
+        const userBadge = badgeColors[u.badge]
+          ? '<span title="' + u.badge + ' badge" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:' + badgeColors[u.badge] + ';color:#fff;border:2px solid #fff;box-shadow:0 0 0 1px ' + badgeColors[u.badge] + ';font-size:12px;font-weight:900;">✓</span>'
+          : '<span style="color:#94a3b8;font-size:11px;">None</span>';
 
         return '<tr>' +
           '<td style="font-weight: 700; color: #0f172a; display: flex; align-items: center; gap: 8px;">' +
@@ -5797,6 +5884,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
           '<td>' + landlordBadge + '</td>' +
           '<td style="font-weight: 800; color: #15803d;">' + (Number(u.points || 0)) + '</td>' +
           '<td style="font-weight: 800; color: #0f766e;">KSh ' + (Number(u.rewardedAmount || 0).toFixed(2)) + '</td>' +
+          '<td>' + userBadge + '</td>' +
           '<td>' + onlineBadge + '</td>' +
           '<td style="color: #94a3b8; font-size: 12px;">' +
             new Date(u.createdAt).toLocaleDateString() +

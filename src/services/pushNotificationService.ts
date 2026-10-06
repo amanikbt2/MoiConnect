@@ -192,12 +192,14 @@ export const sendPushToTokens = async (
   data: Record<string, any> = {}
 ): Promise<void> => {
   if (!tokens || tokens.length === 0) return;
+  const { categoryId, ...notificationData } = data as any;
   const messages = tokens.map((to) => ({
     to,
     sound: 'default',
     title,
     body,
-    data,
+    data: notificationData,
+    ...(categoryId ? { categoryId } : {}),
     priority: 'high',
     channelId: 'default'
   }));
@@ -229,6 +231,7 @@ export const sendCommunityMessagePush = async (messagePayload: {
   fileAttachment?: any;
   stickerId?: string;
   _id?: string;
+  senderAvatarUrl?: string;
 }): Promise<void> => {
   try {
     const senderIdStr = messagePayload.senderId ? String(messagePayload.senderId) : '';
@@ -259,13 +262,17 @@ export const sendCommunityMessagePush = async (messagePayload: {
 
     await sendPushToTokens(
       recipientTokens,
-      `\u{1F4AC} ${messagePayload.senderName || 'Moi Student'}`,
+      messagePayload.senderName || 'Moi Student',
       bodyText,
       {
         screen: 'community',
         channelId: 'community_chat',
+        categoryId: 'community_message',
         senderId: senderIdStr,
-        messageId: messagePayload._id
+        senderName: messagePayload.senderName || 'Moi Student',
+        avatarUrl: messagePayload.senderAvatarUrl || null,
+        messageId: messagePayload._id,
+        messagePreview: bodyText
       }
     );
   } catch (err) {

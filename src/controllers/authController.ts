@@ -209,7 +209,7 @@ export const updateProfile = async (req: AuthenticatedRequest, res: Response): P
       return;
     }
 
-    const { name, phone, avatarUrl } = req.body || {};
+    const { name, phone, avatarUrl, school, course, yearOfStudy } = req.body || {};
     if (name !== undefined) {
       const cleanName = String(name).trim();
       if (!cleanName || cleanName.length > 120) {
@@ -220,6 +220,9 @@ export const updateProfile = async (req: AuthenticatedRequest, res: Response): P
     }
     if (phone !== undefined) user.phone = String(phone).trim();
     if (avatarUrl !== undefined) user.avatarUrl = String(avatarUrl).trim();
+    if (school !== undefined) user.school = String(school).trim() || 'Unset';
+    if (course !== undefined) user.course = String(course).trim() || 'Unset';
+    if (yearOfStudy !== undefined) user.yearOfStudy = String(yearOfStudy).trim() || 'Unset';
 
     await user.save();
     const messageUpdates: Record<string, string> = { senderName: user.name, senderEmail: user.email };
@@ -229,6 +232,14 @@ export const updateProfile = async (req: AuthenticatedRequest, res: Response): P
       { 'replyTo.senderEmail': user.email },
       { $set: { 'replyTo.senderName': user.name } }
     );
+    const io = require('../socket').getSocketIO();
+    io?.to('community_room').emit('community:user_updated', {
+      userId: String(user._id),
+      email: user.email,
+      name: user.name,
+      avatarUrl: user.avatarUrl || '',
+      badge: user.badge || null
+    });
     res.json({ success: true, message: 'Profile updated successfully.', data: user });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message || 'Failed to update profile.' });

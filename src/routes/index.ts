@@ -50,6 +50,7 @@ router.post('/payments/mpesa/b2c/timeout', async (req, res) => {
 router.get('/community/messages', communityController.getCommunityMessages);
 router.get('/community/mention-users', communityController.getMentionUsers);
 router.post('/community/messages', optionalAuthenticate, communityController.postCommunityMessage);
+router.post('/community/messages/:id/read', authenticate, communityController.markCommunityMessageRead);
 router.post('/community/messages/:id/reaction', optionalAuthenticate, communityController.toggleCommunityReaction);
 router.delete('/community/messages/:id', authenticate, communityController.deleteCommunityMessage);
 router.post('/community/upload-media', tempUpload.single('file'), communityController.uploadCommunityMedia);
@@ -68,6 +69,7 @@ router.get('/dashboard/user-emails.csv', dashboardController.downloadUserEmailsC
 router.get('/dashboard/direct-payments', dashboardController.getDirectPaymentUsers);
 router.post('/dashboard/direct-payments/:id/pay', dashboardController.createDirectPayment);
 router.patch('/dashboard/direct-payments/:id/blacklist', dashboardController.setPaymentBlacklist);
+router.patch('/dashboard/direct-payments/:id/badge', dashboardController.setUserBadge);
 router.get('/dashboard/ai-overages', dashboardController.getAiOverages);
 router.delete('/dashboard/ai-overages', dashboardController.clearAiOverages);
 router.get('/dashboard/ai-context', dashboardController.getAiContextSettings);

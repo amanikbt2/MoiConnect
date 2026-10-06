@@ -25,6 +25,7 @@ export interface ICommunityMessage extends Document {
   senderCourse?: string;
   senderPhone?: string;
   senderAvatarUrl?: string;
+  senderBadge?: 'blue' | 'red' | 'green';
   avatarBg: string;
   text: string;
   stickerId?: string;
@@ -32,6 +33,7 @@ export interface ICommunityMessage extends Document {
   replyTo?: IReplyTo;
   reactions?: Map<string, number>;
   reactionUsers?: Map<string, string[]>;
+  readBy?: Types.ObjectId[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -47,6 +49,7 @@ const communityMessageSchema = new Schema<ICommunityMessage>(
     senderCourse: { type: String, trim: true },
     senderPhone: { type: String, trim: true },
     senderAvatarUrl: { type: String, trim: true },
+    senderBadge: { type: String, enum: ['blue', 'red', 'green'] },
     avatarBg: { type: String, default: '#15803d' },
     text: { type: String, default: '' },
     stickerId: { type: String, trim: true },
@@ -72,7 +75,8 @@ const communityMessageSchema = new Schema<ICommunityMessage>(
       type: Map,
       of: [String],
       default: {}
-    }
+    },
+    readBy: [{ type: Schema.Types.ObjectId, ref: 'User' }]
   },
   {
     timestamps: true

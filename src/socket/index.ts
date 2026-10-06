@@ -154,7 +154,7 @@ export const setupSocketIO = (io: SocketIOServer): void => {
             id: `sys_conn_${socket.id}_${Date.now()}`,
             event: 'user_connected',
             userName: u.name,
-            text: `${u.name} logged into MoiConnect`,
+            text: `${u.name} logged into MConnect`,
             timestamp: new Date().toISOString()
           });
         }
@@ -214,16 +214,36 @@ export const setupSocketIO = (io: SocketIOServer): void => {
     });
 
     // Typing Indicator Socket Handlers (Zero-DB In-Memory Sub-1ms Broadcast)
-    socket.on('community:start_typing', (data: { userName?: string; userId?: string }) => {
+    socket.on('community:start_typing', (data: { userName?: string; userId?: string; avatarUrl?: string; avatarBg?: string }) => {
       socket.to('community_room').emit('community:user_typing', {
         userId: userId || data?.userId || socket.id,
         userName: data?.userName || 'Moi Student',
+        avatarUrl: data?.avatarUrl,
+        avatarBg: data?.avatarBg,
         socketId: socket.id
       });
     });
 
     socket.on('community:stop_typing', (data: { userName?: string; userId?: string }) => {
       socket.to('community_room').emit('community:user_stop_typing', {
+        userId: userId || data?.userId || socket.id,
+        userName: data?.userName || 'Moi Student',
+        socketId: socket.id
+      });
+    });
+
+    socket.on('community:start_deleting', (data: { userName?: string; userId?: string; avatarUrl?: string; avatarBg?: string }) => {
+      socket.to('community_room').emit('community:user_deleting', {
+        userId: userId || data?.userId || socket.id,
+        userName: data?.userName || 'Moi Student',
+        avatarUrl: data?.avatarUrl,
+        avatarBg: data?.avatarBg,
+        socketId: socket.id
+      });
+    });
+
+    socket.on('community:stop_deleting', (data: { userName?: string; userId?: string }) => {
+      socket.to('community_room').emit('community:user_stop_deleting', {
         userId: userId || data?.userId || socket.id,
         userName: data?.userName || 'Moi Student',
         socketId: socket.id
@@ -244,6 +264,7 @@ export const setupSocketIO = (io: SocketIOServer): void => {
       senderCourse?: string;
       senderPhone?: string;
       senderAvatarUrl?: string;
+      senderBadge?: 'blue' | 'red' | 'green';
       avatarBg?: string;
     }, ack?: (result: { success: boolean; id?: string; error?: string }) => void) => {
       try {
@@ -252,7 +273,7 @@ export const setupSocketIO = (io: SocketIOServer): void => {
           ack?.({ success: false, error: 'Community chat disabled by administrator' });
           return;
         }
-        const { clientMsgId, text, fileAttachment, stickerId, replyTo, senderName, senderEmail, senderFaculty, senderCourse, senderPhone, senderAvatarUrl, avatarBg } = data;
+        const { clientMsgId, text, fileAttachment, stickerId, replyTo, senderName, senderEmail, senderFaculty, senderCourse, senderPhone, senderAvatarUrl, senderBadge, avatarBg } = data;
         if (!text?.trim() && !fileAttachment && !stickerId) return;
 
         if (clientMsgId && processedClientMsgIds.has(clientMsgId)) {
@@ -275,6 +296,9 @@ export const setupSocketIO = (io: SocketIOServer): void => {
 
         const sEmail = (socket as any).user?.email || senderEmail || '';
         const isCampusBot = sEmail.trim().toLowerCase() === 'dev@gmail.com';
+        const senderUser = userId && Types.ObjectId.isValid(userId)
+          ? await User.findById(userId).select('badge').lean()
+          : null;
         const effectiveSenderName = isCampusBot ? 'Campus bot' : (senderName || 'Moi Student');
         const generatedId = new Types.ObjectId().toString();
         const nowISO = new Date().toISOString();
@@ -297,6 +321,7 @@ export const setupSocketIO = (io: SocketIOServer): void => {
           senderCourse,
           senderPhone,
           senderAvatarUrl,
+          senderBadge: senderUser?.badge || senderBadge,
           avatarBg: avatarBg || '#15803d',
           text: text?.trim() || '',
           waitForBot: !stopBots && shouldCampusBotRespond(text, replyTo),
@@ -339,6 +364,7 @@ export const setupSocketIO = (io: SocketIOServer): void => {
               senderCourse: messagePayload.senderCourse,
               senderPhone: messagePayload.senderPhone,
               senderAvatarUrl: messagePayload.senderAvatarUrl,
+              senderBadge: messagePayload.senderBadge,
               avatarBg: messagePayload.avatarBg,
               text: messagePayload.text,
               stickerId: messagePayload.stickerId,

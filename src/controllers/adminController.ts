@@ -1,5 +1,6 @@
 import { Response } from 'express';
 import path from 'path';
+import mongoose from 'mongoose';
 import { Paper } from '../models/Paper';
 import { House } from '../models/House';
 import { User } from '../models/User';
@@ -481,15 +482,16 @@ export const deleteReportedItem = async (req: AuthenticatedRequest, res: Respons
       return;
     }
 
-    if (report.targetType === 'community_message') {
+    const targetIsMongoId = mongoose.Types.ObjectId.isValid(report.targetId);
+    if (targetIsMongoId && report.targetType === 'community_message') {
       await CommunityMessage.findByIdAndDelete(report.targetId);
       try {
         const io = getSocketIO();
         io?.emit('community:message_deleted', { messageId: report.targetId });
       } catch {}
-    } else if (report.targetType === 'paper') {
+    } else if (targetIsMongoId && report.targetType === 'paper') {
       await Paper.findByIdAndDelete(report.targetId);
-    } else if (report.targetType === 'house') {
+    } else if (targetIsMongoId && report.targetType === 'house') {
       await House.findByIdAndDelete(report.targetId);
     }
 

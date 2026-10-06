@@ -10,11 +10,18 @@ import { getAppSettingValue } from '../models/AppSetting';
 // 1. Get Community Messages (Support Incremental Delta Sync via ?since=)
 export const getCommunityMessages = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { since, limit } = req.query;
+    const { since, before, limit } = req.query;
     const query: any = {};
     let isDeltaSync = false;
+    let isOlderPage = false;
 
-    if (since) {
+    if (before) {
+      const beforeDate = new Date(before as string);
+      if (!isNaN(beforeDate.getTime())) {
+        query.createdAt = { $lt: beforeDate };
+        isOlderPage = true;
+      }
+    } else if (since) {
       const sinceDate = new Date(since as string);
       if (!isNaN(sinceDate.getTime())) {
         query.updatedAt = { $gt: sinceDate };
@@ -22,7 +29,7 @@ export const getCommunityMessages = async (req: Request, res: Response): Promise
       }
     }
 
-    const maxLimit = Math.min(parseInt(limit as string, 10) || 100, 200);
+    const maxLimit = Math.min(parseInt(limit as string, 10) || 30, 50);
 
     let messages = await CommunityMessage.find(query).select('-reactionUsers')
       .sort(isDeltaSync ? { updatedAt: 1 } : { createdAt: -1 })
@@ -30,12 +37,23 @@ export const getCommunityMessages = async (req: Request, res: Response): Promise
 
     if (!isDeltaSync) messages = messages.reverse();
 
+    const senderIds = Array.from(new Set(messages.map((message: any) => String(message.senderId || '')).filter(Boolean)));
+    const badgeUsers = senderIds.length > 0
+      ? await User.find({ _id: { $in: senderIds } }).select('_id badge').lean()
+      : [];
+    const badgeByUserId = new Map(badgeUsers.map((user: any) => [String(user._id), user.badge]));
+    const responseMessages = messages.map((message: any) => ({
+      ...message,
+      senderBadge: badgeByUserId.get(String(message.senderId || '')) || undefined
+    }));
+
     const allowCommunityChat = await getAppSettingValue('allowCommunityChat', true);
 
     res.json({
       success: true,
-      data: messages,
-      count: messages.length,
+      data: responseMessages,
+      count: responseMessages.length,
+      hasMore: isOlderPage ? responseMessages.length === maxLimit : undefined,
       allowCommunityChat,
       syncedAt: new Date().toISOString()
     });
@@ -78,7 +96,7 @@ export const postCommunityMessage = async (req: Request, res: Response): Promise
       res.status(403).json({ success: false, error: 'Community chat disabled by administrator' });
       return;
     }
-    const { clientMsgId, text, fileAttachment, stickerId, replyTo, senderName, senderEmail, senderFaculty, senderCourse, senderPhone, senderAvatarUrl, avatarBg, senderId } = req.body;
+    const { clientMsgId, text, fileAttachment, stickerId, replyTo, senderName, senderEmail, senderFaculty, senderCourse, senderPhone, senderAvatarUrl, senderBadge, avatarBg, senderId } = req.body;
     const user = (req as any).user;
 
     if (isBotStopCommand(text)) {
@@ -110,6 +128,7 @@ export const postCommunityMessage = async (req: Request, res: Response): Promise
         senderCourse,
         senderPhone,
         senderAvatarUrl,
+        senderBadge: user?.badge || senderBadge,
         avatarBg: avatarBg || '#15803d',
         text: text?.trim() || '',
         stickerId,
@@ -225,6 +244,28 @@ export const toggleCommunityReaction = async (req: Request, res: Response): Prom
     res.json({ success: true, data: { messageId: id, reactions, myReaction } });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message || 'Failed to react to message' });
+  }
+};
+
+export const markCommunityMessageRead = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = (req as any).user?._id;
+    if (!userId) {
+      res.status(401).json({ success: false, error: 'Authentication required.' });
+      return;
+    }
+    const message = await CommunityMessage.findByIdAndUpdate(
+      req.params.id,
+      { $addToSet: { readBy: userId } },
+      { new: true }
+    ).select('_id');
+    if (!message) {
+      res.status(404).json({ success: false, error: 'Message not found.' });
+      return;
+    }
+    res.json({ success: true, message: 'Community message marked as read.' });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to mark message as read.' });
   }
 };
 // 4. Upload Community Chat Media File to Cloudinary (folder: moiconnect/chat_media)

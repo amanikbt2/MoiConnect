@@ -11,7 +11,7 @@ export const createReport = async (req: AuthenticatedRequest, res: Response): Pr
     const report = await Report.create({
       reporterId: user._id,
       targetType,
-      targetId,
+      targetId: String(targetId),
       reason,
       details,
       status: 'pending'
