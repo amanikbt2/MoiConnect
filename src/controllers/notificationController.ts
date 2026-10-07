@@ -165,7 +165,7 @@ export const sendAdminPushNotification = async (req: Request, res: Response): Pr
 
     res.json({
       success: true,
-      message: `Push notification dispatched! Target: ${target}, Sent to ${result.sentCount} devices.`,
+      message: `Push notification dispatched! Target: ${target}, delivered to ${result.sentCount} of ${result.totalTokens || 0} matched devices${result.totalTokens && result.sentCount < result.totalTokens ? ` (${result.totalTokens - result.sentCount} delivery failures).` : '.'}`,
       result
     });
   } catch (error: any) {
@@ -184,6 +184,7 @@ export const getRegisteredDeviceCount = async (_req: Request, res: Response): Pr
     ]);
     res.json({ success: true, total, byPlatform: { android, ios, web } });
   } catch (error: any) {
+    console.error('Failed to count registered push devices:', error);
     res.status(500).json({ success: false, error: error.message || 'Failed to count registered devices' });
   }
 };
@@ -212,6 +213,7 @@ export const getAdminNotificationHistory = async (_req: Request, res: Response):
     }));
     res.json({ success: true, history });
   } catch (error: any) {
+    console.error('Failed to load admin notification history:', error);
     res.status(500).json({ success: false, error: error.message || 'Failed to fetch history' });
   }
 };

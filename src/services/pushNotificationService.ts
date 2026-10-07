@@ -190,8 +190,8 @@ export const sendPushToTokens = async (
   title: string,
   body: string,
   data: Record<string, any> = {}
-): Promise<void> => {
-  if (!tokens || tokens.length === 0) return;
+): Promise<{ totalTokens: number; sentCount: number; failedCount: number }> => {
+  if (!tokens || tokens.length === 0) return { totalTokens: 0, sentCount: 0, failedCount: 0 };
   const { categoryId, ...notificationData } = data as any;
   const messages = tokens.map((to) => ({
     to,
@@ -205,10 +205,12 @@ export const sendPushToTokens = async (
   }));
 
   const CHUNK_SIZE = 100;
+  let sentCount = 0;
+  let failedCount = 0;
   for (let i = 0; i < messages.length; i += CHUNK_SIZE) {
     const chunk = messages.slice(i, i + CHUNK_SIZE);
     try {
-      await fetch('https://exp.host/--/api/v2/push/send', {
+      const response = await fetch('https://exp.host/--/api/v2/push/send', {
         method: 'POST',
         headers: {
           'Accept': 'application/json',
@@ -217,10 +219,37 @@ export const sendPushToTokens = async (
         },
         body: JSON.stringify(chunk)
       });
+      const responseBody = await response.json().catch(() => null);
+      const tickets = Array.isArray(responseBody?.data) ? responseBody.data : [];
+      if (!response.ok || tickets.length !== chunk.length) {
+        failedCount += chunk.length;
+        console.error('[Push Notification]: Expo rejected push batch.', { status: response.status, response: responseBody });
+        continue;
+      }
+      const invalidTokens: string[] = [];
+      tickets.forEach((ticket: any, index: number) => {
+        if (ticket?.status === 'ok') {
+          sentCount += 1;
+        } else {
+          failedCount += 1;
+          const errorCode = ticket?.details?.error;
+          if (errorCode === 'DeviceNotRegistered' || errorCode === 'InvalidCredentials') {
+            invalidTokens.push(chunk[index].to);
+          }
+          console.error('[Push Notification]: Expo ticket failed.', { token: chunk[index]?.to, error: errorCode || ticket?.message || 'Unknown Expo push error' });
+        }
+      });
+      if (invalidTokens.length > 0) {
+        await DeviceToken.deleteMany({ token: { $in: invalidTokens } }).catch((cleanupError) => {
+          console.warn('[Push Notification]: Could not remove invalid device tokens:', cleanupError);
+        });
+      }
     } catch (err) {
+      failedCount += chunk.length;
       console.error('[Push Notification Error]:', err);
     }
   }
+  return { totalTokens: tokens.length, sentCount, failedCount };
 };
 
 export const sendCommunityMessagePush = async (messagePayload: {
@@ -260,7 +289,7 @@ export const sendCommunityMessagePush = async (messagePayload: {
 
     if (bodyText.length > 120) bodyText = bodyText.slice(0, 117) + '...';
 
-    await sendPushToTokens(
+    const result = await sendPushToTokens(
       recipientTokens,
       messagePayload.senderName || 'Moi Student',
       bodyText,
@@ -275,6 +304,9 @@ export const sendCommunityMessagePush = async (messagePayload: {
         messagePreview: bodyText
       }
     );
+    if (result.failedCount > 0) {
+      console.warn('[Community Push Notification]: Delivery summary:', result);
+    }
   } catch (err) {
     console.error('[Community Push Notification Error]:', err);
   }

@@ -1474,7 +1474,7 @@ export const renderPublicTempFolder = async (_req: Request, res: Response): Prom
     <div class="header-container">
       <div class="brand-title">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-        <span>MoiConnect Server • Public Temporary Storage</span>
+        <span>MConnect Server • Public Temporary Storage</span>
       </div>
       <div style="display: flex; gap: 10px; align-items: center;">
         <a href="/admin" class="btn btn-green">
@@ -2276,7 +2276,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
 
       <button id="tab-btn-community" onclick="switchTab('community')" class="tab-btn">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-        Community Chat
+        Uni Forum
         <span id="badge-community-count" class="tab-badge hidden">0</span>
       </button>
 
@@ -2319,6 +2319,11 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       <button id="tab-btn-settings" onclick="switchTab('settings')" class="tab-btn">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
         App Settings
+      </button>
+
+      <button id="tab-btn-admin2" onclick="switchTab('admin2'); loadAdmin2Credentials()" class="tab-btn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7l8-4z"/><path d="M9 12l2 2 4-4"/></svg>
+        Manage Admin2
       </button>
     </div>
 
@@ -2487,12 +2492,12 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
             <div style="grid-column: 1 / -1;">
               <label style="display: block; font-size: 13px; font-weight: 700; color: #334155; margin-bottom: 6px;">Main Document File <span style="color: #dc2626;">*</span></label>
               <div id="pub-file-dropzone" style="border: 2px dashed #cbd5e1; background-color: #f8fafc; border-radius: 14px; padding: 24px; text-align: center; cursor: pointer; transition: all 0.2s;" onclick="document.getElementById('pub-file-input').click()">
-                <input type="file" id="pub-file-input" name="file" onchange="handleAdminPubFileSelect(this)" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,.txt" style="display: none;" required />
+                <input type="file" id="pub-file-input" name="file" onchange="handleAdminPubFileSelect(this)" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,.txt" style="display: none;" />
                 <div style="width: 48px; height: 48px; border-radius: 50%; background-color: #dcfce7; color: #15803d; display: flex; align-items: center; justify-content: center; margin: 0 auto 12px;">
                   <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                 </div>
                 <div id="pub-file-label" style="font-size: 15px; font-weight: 800; color: #0f172a;">Click to select or drop document file</div>
-                <div id="pub-file-sub" style="font-size: 12px; color: #64748b; margin-top: 4px;">Supports PDF, Word (.doc/.docx), Images (.png/.jpg), Text files up to 50MB</div>
+                <div id="pub-file-sub" style="font-size: 12px; color: #64748b; margin-top: 4px;">Supports PDF, Word (.doc/.docx), Images (.png/.jpg), Text files up to 50MB — Single file only</div>
               </div>
             </div>
 
@@ -2594,9 +2599,9 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
           <div>
             <h2 class="card-title">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#15803d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-              Community Chat Messages Management
+              Uni Forum Messages Management
             </h2>
-            <p class="card-sub">Inspect all community chat messages, search, and completely wipe unwanted messages and Cloudinary media attachments with zero trace.</p>
+            <p class="card-sub">Inspect all Uni Forum messages, search, and completely wipe unwanted messages and Cloudinary media attachments with zero trace.</p>
           </div>
           <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
             <div class="search-input-wrapper">
@@ -2842,7 +2847,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
           <div style="font-size: 13px;">
             <div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #f1f5f9;">
               <span style="color: #64748b;">Service Name</span>
-              <span style="font-weight: 700;">MoiConnect Node.js API</span>
+              <span style="font-weight: 700;">MConnect Node.js API</span>
             </div>
             <div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #f1f5f9;">
               <span style="color: #64748b;">MongoDB Database</span>
@@ -3112,7 +3117,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
                 <div style="display: flex; flex-wrap: wrap; gap: 10px;">
                   <label style="display: flex; align-items: center; gap: 6px; background: #f8fafc; border: 1px solid #cbd5e1; padding: 8px 12px; border-radius: 10px; cursor: pointer; font-size: 12px; font-weight: 700;">
                     <input type="radio" name="push-icon" value="moiconnect" checked />
-                    🟢 MoiConnect App
+                    🟢 MConnect App
                   </label>
                   <label style="display: flex; align-items: center; gap: 6px; background: #f8fafc; border: 1px solid #cbd5e1; padding: 8px 12px; border-radius: 10px; cursor: pointer; font-size: 12px; font-weight: 700;">
                     <input type="radio" name="push-icon" value="bell" />
@@ -3258,6 +3263,22 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         <div id="ai-logs-container" style="display:flex; flex-direction:column; gap:8px; max-height:520px; overflow-y:auto;">
           <div style="text-align:center; padding:28px; color:#94a3b8;">No AI logs loaded.</div>
         </div>
+      </div>
+    </section>
+
+    <!-- TAB: MANAGE ADMIN2 -->
+    <section id="tab-content-admin2" class="tab-content hidden">
+      <div class="card">
+        <div class="card-header"><div><h2 class="card-title">Manage Admin2 Credentials</h2><p class="card-sub">Create role-scoped credentials for the separate Admin2 material-submission portal. Secrets are hashed and never displayed.</p></div></div>
+        <div style="display:grid; grid-template-columns: repeat(auto-fit,minmax(200px,1fr)); gap:12px; align-items:end;">
+          <label style="font-size:12px;font-weight:700;color:#334155;">Role<select id="admin2-role" class="form-control" style="display:block;width:100%;margin-top:6px;"><option>Material manager</option><option>System Analyst</option><option>Security supervisor</option><option>General administrator</option><option>API manager</option><option>Payment analyst</option></select></label>
+          <label style="font-size:12px;font-weight:700;color:#334155;">Admin code<input id="admin2-code" class="form-control" style="display:block;width:100%;margin-top:6px;" placeholder="e.g. MAT-001" /></label>
+          <label style="font-size:12px;font-weight:700;color:#334155;">Admin email<input id="admin2-email" type="email" class="form-control" style="display:block;width:100%;margin-top:6px;" placeholder="e.g. manager@moiconnect.app" /></label>
+          <label style="font-size:12px;font-weight:700;color:#334155;">Admin secret<input id="admin2-secret" type="password" class="form-control" style="display:block;width:100%;margin-top:6px;" placeholder="At least 8 characters" /></label>
+          <button class="btn-refresh" style="background:#15803d;color:#fff;border-color:#15803d;" onclick="createAdmin2Credential()">Add Credential</button>
+        </div>
+        <div id="admin2-credentials-status" style="margin-top:14px;color:#64748b;font-size:12px;"></div>
+        <div style="overflow:auto;margin-top:14px;"><table style="width:100%;border-collapse:collapse;font-size:13px;"><thead><tr style="text-align:left;border-bottom:1px solid #e2e8f0;"><th style="padding:10px;">Role</th><th style="padding:10px;">Admin code</th><th style="padding:10px;">Email</th><th style="padding:10px;">Status</th><th style="padding:10px;">Action</th></tr></thead><tbody id="admin2-credentials-body"><tr><td colspan="5" style="padding:20px;text-align:center;color:#64748b;">Open this tab to load credentials.</td></tr></tbody></table></div>
       </div>
     </section>
 
@@ -3750,13 +3771,20 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
   </main>
 
   <footer>
-    MoiConnect Student Hub • Admin Panel v1.0.0 • Moi University
+    MConnect Student Hub • Admin Panel v1.0.0 • Moi University
   </footer>
 
   <!-- Dashboard JavaScript Logic -->
   <script>
+    function escapeMaterialHtml(value) {
+      return String(value == null ? '' : value).replace(/[&<>"']/g, function(character) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character];
+      });
+    }
+
     let globalData = null;
     let adminPublishInFlight = false;
+    let selectedAdminPubFile = null;
 
     const SVG_CHECK = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
     const SVG_CROSS = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
@@ -3780,26 +3808,53 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
     }
 
     function handleAdminPubFileSelect(inputElem) {
-      const dropzone = document.getElementById('pub-file-dropzone');
-      const label = document.getElementById('pub-file-label');
-      const sub = document.getElementById('pub-file-sub');
-
-      if (inputElem.files && inputElem.files[0]) {
-        const file = inputElem.files[0];
-        const sizeFormatted = formatBytesJS(file.size);
-        label.innerText = 'Selected: ' + file.name;
-        sub.innerText = 'Size: ' + sizeFormatted + ' | Ready for direct Cloudinary upload';
-        dropzone.style.borderColor = '#15803d';
-        dropzone.style.backgroundColor = '#f0fdf4';
-      } else {
-        label.innerText = 'Click to select or drop document file';
-        sub.innerText = 'Supports PDF, Word (.doc/.docx), Images (.png/.jpg), Text files up to 50MB';
-        dropzone.style.borderColor = '#cbd5e1';
-        dropzone.style.backgroundColor = '#f8fafc';
+        if (inputElem && inputElem.files && inputElem.files.length > 0) {
+          selectedAdminPubFile = inputElem.files[0];
+          inputElem.value = '';
+        }
+        renderAdminPubFilesUI();
       }
-    }
 
-    function resetAdminPublishForm() {
+      function removeAdminPubFile() {
+        selectedAdminPubFile = null;
+        renderAdminPubFilesUI();
+      }
+
+      function renderAdminPubFilesUI() {
+        const dropzone = document.getElementById('pub-file-dropzone');
+        const label = document.getElementById('pub-file-label');
+        const sub = document.getElementById('pub-file-sub');
+
+        if (!dropzone || !label || !sub) return;
+
+        if (selectedAdminPubFile) {
+          dropzone.style.borderColor = '#16a34a';
+          dropzone.style.backgroundColor = '#f0fdf4';
+          dropzone.style.boxShadow = '0 0 16px rgba(22, 163, 74, 0.45), inset 0 0 8px rgba(22, 163, 74, 0.15)';
+
+          label.innerText = 'Document File Selected';
+          
+          let listHtml = '<div style="margin-top: 10px; display: flex; flex-wrap: wrap; gap: 8px; justify-content: center;" onclick="event.stopPropagation()">' +
+            '<div style="background: #ffffff; border: 1px solid #bbf7d0; color: #15803d; border-radius: 20px; padding: 4px 10px; font-size: 12px; font-weight: 700; display: inline-flex; align-items: center; gap: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">' +
+              '<span>📄 ' + selectedAdminPubFile.name + ' (' + formatBytesJS(selectedAdminPubFile.size) + ')</span>' +
+              '<span onclick="removeAdminPubFile()" style="cursor: pointer; color: #ef4444; font-weight: 900; margin-left: 4px; padding: 0 4px;" title="Remove file">✕</span>' +
+            '</div>' +
+          '</div>' +
+          '<div style="font-size: 11px; color: #166534; margin-top: 8px; font-weight: 700;">Single file selected (' + formatBytesJS(selectedAdminPubFile.size) + ') • Click box to replace file</div>';
+
+          sub.innerHTML = listHtml;
+        } else {
+          dropzone.style.borderColor = '#cbd5e1';
+          dropzone.style.backgroundColor = '#f8fafc';
+          dropzone.style.boxShadow = 'none';
+
+          label.innerText = 'Click to select or drop document file';
+          sub.innerText = 'Supports PDF, Word (.doc/.docx), Images (.png/.jpg), Text files up to 50MB (Single File Only)';
+        }
+      }
+
+      function resetAdminPublishForm() {
+        selectedAdminPubFile = null;
       const form = document.getElementById('admin-publish-form');
       if (form) form.reset();
       const customInput = document.getElementById('pub-school-custom');
@@ -3822,112 +3877,100 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
     }
 
-    function publishAdminMaterialDirect(event) {
-      event.preventDefault();
-      if (adminPublishInFlight) return;
-      const title = document.getElementById('pub-title').value.trim();
-      const type = document.getElementById('pub-type').value;
-      const schoolSelect = document.getElementById('pub-school-select').value;
-      const schoolCustom = document.getElementById('pub-school-custom').value.trim();
-      const school = schoolSelect === 'custom' ? schoolCustom : schoolSelect;
-      const department = document.getElementById('pub-department').value.trim();
-      const unitCode = document.getElementById('pub-unitCode').value.trim();
-      const unitName = document.getElementById('pub-unitName').value.trim();
-      const academicYear = document.getElementById('pub-academicYear').value.trim();
-      const semester = document.getElementById('pub-semester').value;
-      const examYear = document.getElementById('pub-examYear').value;
-      const description = document.getElementById('pub-description').value.trim();
-      const fileInput = document.getElementById('pub-file-input');
-      const thumbnailInput = document.getElementById('pub-thumbnail-input');
-      const ttsInput = document.getElementById('pub-tts-input');
+    async function publishAdminMaterialDirect(event) {
+        event.preventDefault();
+        if (adminPublishInFlight) return;
+        const title = document.getElementById('pub-title').value.trim();
+        const type = document.getElementById('pub-type').value;
+        const schoolSelect = document.getElementById('pub-school-select').value;
+        const schoolCustom = document.getElementById('pub-school-custom').value.trim();
+        const school = schoolSelect === 'custom' ? schoolCustom : schoolSelect;
+        const department = document.getElementById('pub-department').value.trim();
+        const unitCode = document.getElementById('pub-unitCode').value.trim();
+        const unitName = document.getElementById('pub-unitName').value.trim();
+        const academicYear = document.getElementById('pub-academicYear').value.trim();
+        const semester = document.getElementById('pub-semester').value;
+        const examYear = document.getElementById('pub-examYear').value;
+        const description = document.getElementById('pub-description').value.trim();
+        const thumbnailInput = document.getElementById('pub-thumbnail-input');
+        const ttsInput = document.getElementById('pub-tts-input');
 
-      if (!title || !school || !department || !unitCode || !unitName) {
-        showToast('Please fill out all required fields marked with *', true);
-        return;
-      }
-
-      if (!fileInput.files || !fileInput.files[0]) {
-        showToast('Please attach a document file (PDF/Word/Image)', true);
-        return;
-      }
-
-      const btn = document.getElementById('btn-pub-submit');
-      const clearBtn = document.getElementById('btn-pub-clear');
-      const statusBox = document.getElementById('pub-status-box');
-
-      adminPublishInFlight = true;
-      btn.disabled = true;
-      if (clearBtn) clearBtn.disabled = true;
-      btn.innerHTML = '⏳ Uploading to Cloudinary...';
-
-      statusBox.className = '';
-      statusBox.style.backgroundColor = '#eff6ff';
-      statusBox.style.color = '#1e40af';
-      statusBox.style.border = '1px solid #bfdbfe';
-      statusBox.innerHTML = '⏳ Uploading document directly to Cloudinary and registering database record... Please wait.';
-
-      const formData = new FormData();
-      formData.append('title', title);
-      formData.append('type', type);
-      formData.append('school', school);
-      formData.append('department', department);
-      formData.append('courseCode', unitCode);
-      formData.append('unitCode', unitCode);
-      formData.append('unitName', unitName);
-      if (academicYear) formData.append('academicYear', academicYear);
-      if (semester) formData.append('semester', semester);
-      if (examYear) formData.append('examYear', examYear);
-      if (description) formData.append('description', description);
-      formData.append('file', fileInput.files[0]);
-      if (thumbnailInput.files && thumbnailInput.files[0]) {
-        formData.append('thumbnail', thumbnailInput.files[0]);
-      }
-      if (ttsInput.files && ttsInput.files[0]) {
-        formData.append('ttsFile', ttsInput.files[0]);
-      }
-
-      fetch('/api/v1/dashboard/materials/publish', {
-        method: 'POST',
-        body: formData
-      })
-      .then(res => res.json())
-      .then(json => {
-        if (!json.success) {
-          throw new Error(json.error || 'Failed to publish material.');
+        if (!title || !school || !department || !unitCode || !unitName) {
+          showToast('Please fill out all required fields marked with *', true);
+          return;
         }
 
-        statusBox.style.backgroundColor = '#dcfce7';
-        statusBox.style.color = '#14532d';
-        statusBox.style.border = '1px solid #bbf7d0';
-        statusBox.innerHTML = '✅ <strong>Published!</strong> ' + json.message + (json.data && json.data.mtid ? ' (MTID: ' + json.data.mtid + ')' : '');
+        if (!selectedAdminPubFile) {
+          showToast('Please attach a document file (PDF/Word/Image)', true);
+          return;
+        }
 
-        showToast('Material published directly to Cloudinary & Database!');
+        const btn = document.getElementById('btn-pub-submit');
+        const clearBtn = document.getElementById('btn-pub-clear');
+        const statusBox = document.getElementById('pub-status-box');
 
-        setTimeout(function() {
-          resetAdminPublishForm();
-          switchTab('materials');
-          fetchMaterialsForManagement();
-        }, 1800);
-      })
-      .catch(err => {
-        console.error('Publish material error:', err);
-        statusBox.style.backgroundColor = '#fee2e2';
-        statusBox.style.color = '#991b1b';
-        statusBox.style.border = '1px solid #fecaca';
-        statusBox.innerHTML = '❌ <strong>Upload Failed:</strong> ' + err.message;
-        showToast('Failed to publish material: ' + err.message, true);
-        adminPublishInFlight = false;
-        btn.disabled = false;
-        if (clearBtn) clearBtn.disabled = false;
-        btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Retry Direct Upload';
-      });
-    }
+        adminPublishInFlight = true;
+        btn.disabled = true;
+        if (clearBtn) clearBtn.disabled = true;
 
-    function escapeMaterialHtml(value) {
-      return String(value == null ? '' : value).replace(/[&<>'"]/g, function(char) {
-        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char];
-      });
-    }
+        statusBox.className = '';
+        statusBox.style.backgroundColor = '#eff6ff';
+        statusBox.style.color = '#1e40af';
+        statusBox.style.border = '1px solid #bfdbfe';
+
+        btn.innerHTML = '⏳ Uploading file...';
+        statusBox.innerHTML = '⏳ Uploading <strong>' + selectedAdminPubFile.name + '</strong> to Cloudinary & DB... Please wait.';
+
+        const formData = new FormData();
+        formData.append('title', title);
+        formData.append('type', type);
+        formData.append('school', school);
+        formData.append('department', department);
+        formData.append('courseCode', unitCode);
+        formData.append('unitCode', unitCode);
+        formData.append('unitName', unitName);
+        if (academicYear) formData.append('academicYear', academicYear);
+        if (semester) formData.append('semester', semester);
+        if (examYear) formData.append('examYear', examYear);
+        if (description) formData.append('description', description);
+        formData.append('file', selectedAdminPubFile);
+        if (thumbnailInput && thumbnailInput.files && thumbnailInput.files[0]) {
+          formData.append('thumbnail', thumbnailInput.files[0]);
+        }
+        if (ttsInput && ttsInput.files && ttsInput.files[0]) {
+          formData.append('ttsFile', ttsInput.files[0]);
+        }
+
+        try {
+          const res = await fetch('/api/v1/dashboard/materials/publish', {
+            method: 'POST',
+            body: formData
+          });
+          const json = await res.json();
+          if (!json.success) {
+            throw new Error(json.error || 'Upload failed for ' + selectedAdminPubFile.name);
+          }
+
+          statusBox.style.backgroundColor = '#dcfce7';
+          statusBox.style.color = '#14532d';
+          statusBox.style.border = '1px solid #bbf7d0';
+          statusBox.innerHTML = '✅ <strong>Published!</strong> Successfully uploaded material directly to Cloudinary & DB.';
+          showToast('Material published successfully!');
+          setTimeout(function() {
+            resetAdminPublishForm();
+            switchTab('materials');
+            fetchMaterialsForManagement();
+          }, 1400);
+        } catch (err) {
+          statusBox.style.backgroundColor = '#fef2f2';
+          statusBox.style.color = '#991b1b';
+          statusBox.style.border = '1px solid #fecaca';
+          statusBox.innerHTML = '⚠️ Upload Error: ' + err.message;
+          btn.disabled = false;
+          if (clearBtn) clearBtn.disabled = false;
+          adminPublishInFlight = false;
+        }
+      }
 
     async function fetchMaterialsForManagement() {
       const container = document.getElementById('materials-management-container');
@@ -4065,6 +4108,63 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         renderMaterialsManagement(); showToast(json.message);
       }).catch(function(err) { showToast('Delete failed: ' + err.message, true); });
     }
+
+    function admin2AuthHeaders() {
+      const token = sessionStorage.getItem('admin2_admin_token') || localStorage.getItem('admin2_admin_token');
+      return token ? { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' };
+    }
+
+    async function loadAdmin2Credentials() {
+      const body = document.getElementById('admin2-credentials-body');
+      const status = document.getElementById('admin2-credentials-status');
+      try {
+        const response = await fetch('/api/v1/dashboard/admin2-credentials', { headers: admin2AuthHeaders() });
+        const json = await response.json();
+        if (!response.ok || !json.success) throw new Error(json.error || 'A real administrator session is required.');
+        body.innerHTML = (json.data || []).map(function(item) {
+          return '<tr style="border-bottom:1px solid #f1f5f9;">' +
+            '<td style="padding:10px;font-weight:700;">' + item.role + '</td>' +
+            '<td style="padding:10px;font-family:monospace;">' + item.adminCode + '</td>' +
+            '<td style="padding:10px;color:#475569;">' + (item.email || '—') + '</td>' +
+            '<td style="padding:10px;">' + (item.active ? 'Active' : 'Disabled') + '</td>' +
+            '<td style="padding:10px;"><button class="btn btn-view" data-admin2-id="' + item._id + '" onclick="deleteAdmin2Credential(this.dataset.admin2Id)">Delete</button></td>' +
+            '</tr>';
+        }).join('') || '<tr><td colspan="5" style="padding:20px;text-align:center;color:#64748b;">No Admin2 credentials created yet.</td></tr>';
+        status.innerText = 'Secrets are write-only and are never returned by the server.';
+      } catch (error) {
+        body.innerHTML = '<tr><td colspan="5" style="padding:20px;text-align:center;color:#b91c1c;">' + (error.message || 'Could not load credentials.') + '</td></tr>';
+        status.innerText = 'Sign in to the real backend admin dashboard before managing Admin2 credentials.';
+      }
+    }
+
+    async function createAdmin2Credential() {
+      const role = document.getElementById('admin2-role').value;
+      const adminCode = document.getElementById('admin2-code').value.trim();
+      const email = document.getElementById('admin2-email') ? document.getElementById('admin2-email').value.trim() : '';
+      const adminSecret = document.getElementById('admin2-secret').value;
+      try {
+        const response = await fetch('/api/v1/dashboard/admin2-credentials', { method: 'POST', headers: admin2AuthHeaders(), body: JSON.stringify({ role, adminCode, email, adminSecret }) });
+        const json = await response.json();
+        if (!response.ok || !json.success) throw new Error(json.error || 'Could not create credential.');
+        document.getElementById('admin2-code').value = '';
+        if (document.getElementById('admin2-email')) document.getElementById('admin2-email').value = '';
+        document.getElementById('admin2-secret').value = '';
+        showToast('Admin2 credential created.');
+        loadAdmin2Credentials();
+      } catch (error) { showToast(error.message || 'Could not create Admin2 credential.', true); }
+    }
+
+    async function deleteAdmin2Credential(id) {
+      if (!confirm('Delete this Admin2 credential?')) return;
+      try {
+        const response = await fetch('/api/v1/dashboard/admin2-credentials/' + encodeURIComponent(id), { method: 'DELETE', headers: admin2AuthHeaders() });
+        const json = await response.json();
+        if (!response.ok || !json.success) throw new Error(json.error || 'Could not delete credential.');
+        showToast('Admin2 credential deleted.');
+        loadAdmin2Credentials();
+      } catch (error) { showToast(error.message || 'Could not delete Admin2 credential.', true); }
+    }
+
     function switchTab(tabId) {
       document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
       document.querySelectorAll('.tab-content').forEach(content => content.classList.add('hidden'));
@@ -4433,12 +4533,13 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       try {
         const res = await fetch('/api/v1/admin/registered-devices');
         const json = await res.json();
-        if (!json.success) throw new Error(json.error || 'Unable to load devices');
+        if (!res.ok || !json.success) throw new Error(json.error || 'Unable to load devices (HTTP ' + res.status + ').');
         count.textContent = String(json.total || 0);
         breakdown.textContent = 'Android: ' + (json.byPlatform?.android || 0) + ' • iOS: ' + (json.byPlatform?.ios || 0) + ' • Web: ' + (json.byPlatform?.web || 0);
       } catch (error) {
         count.textContent = '—';
-        breakdown.textContent = 'Could not load registered device tokens';
+        breakdown.textContent = error.message || 'Could not load registered device tokens';
+        console.error('Failed to load registered push devices:', error);
       }
     }
     function setPopupType(type) {
@@ -6183,7 +6284,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       try {
         const res = await fetch('/api/v1/admin/push-history');
         const json = await res.json();
-        if (!json.success || !json.history) return;
+        if (!res.ok || !json.success || !json.history) throw new Error(json.error || 'Unable to load notification history (HTTP ' + res.status + ').');
 
         if (json.history.length === 0) {
           container.innerHTML = '<div style="text-align: center; padding: 24px; color: #94a3b8; font-size: 13px;">No push notifications sent yet.</div>';
@@ -6199,28 +6300,29 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
 
         container.innerHTML = json.history.map(function(item) {
           const iconSymbol = ICON_MAP[item.icon] || '🔔';
-          const subtitleHtml = item.subtitle ? '<div style="font-size: 11px; font-weight: 700; color: #15803d; margin-bottom: 4px;">' + item.subtitle + '</div>' : '';
+          const subtitleHtml = item.subtitle ? '<div style="font-size: 11px; font-weight: 700; color: #15803d; margin-bottom: 4px;">' + escapeMaterialHtml(item.subtitle) + '</div>' : '';
           const targetText = item.target === 'emails' ? (item.recipientEmails || []).join(', ') : 'All Users & Guests';
 
           return '<div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; font-size: 12px;">' +
             '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">' +
               '<span style="font-weight: 800; color: #0f172a; display: flex; align-items: center; gap: 6px;">' +
-                '<span>' + iconSymbol + '</span> ' + String(item.title || '').replace(/Ã°Å¸â€™Â¬/g, '💬').replace(/Ã°Å¸â€™/g, '💬').replace(/Ã°Å¸/g, '💬') +
+                '<span>' + iconSymbol + '</span> ' + escapeMaterialHtml(String(item.title || '').replace(/Ã°Å¸â€™Â¬/g, '💬').replace(/Ã°Å¸â€™/g, '💬').replace(/Ã°Å¸/g, '💬')) +
               '</span>' +
               '<span style="font-size: 10px; font-weight: 800; text-transform: uppercase; background: #e0e7ff; color: #3730a3; padding: 2px 6px; border-radius: 4px;">' +
-                item.target +
+                escapeMaterialHtml(item.target || 'all') +
               '</span>' +
             '</div>' +
             subtitleHtml +
-            '<div style="color: #475569; margin-bottom: 6px; line-height: 1.4;">' + String(item.body || '').replace(/Ã°Å¸â€™Â¬/g, '💬').replace(/Ã°Å¸â€™/g, '💬').replace(/Ã°Å¸/g, '💬') + '</div>' +
+            '<div style="color: #475569; margin-bottom: 6px; line-height: 1.4;">' + escapeMaterialHtml(String(item.body || '').replace(/Ã°Å¸â€™Â¬/g, '💬').replace(/Ã°Å¸â€™/g, '💬').replace(/Ã°Å¸/g, '💬')) + '</div>' +
             '<div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; color: #94a3b8; font-size: 11px;">' +
-              '<span>Target: ' + targetText + '</span>' +
-              '<span style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;"><span>' + new Date(item.createdAt).toLocaleString() + '</span><button type="button" onclick="reusePushHistory(&quot;' + item._id + '&quot;)" class="btn" style="background:#dcfce7;color:#166534;padding:3px 8px;font-size:10px;font-weight:800;border:1px solid #86efac;border-radius:6px;cursor:pointer;">↻ Reuse</button><button type="button" onclick="deletePushHistoryItem(&quot;' + item._id + '&quot;)" class="btn" style="background:#fee2e2;color:#dc2626;padding:3px 8px;font-size:10px;font-weight:800;border:1px solid #fca5a5;border-radius:6px;cursor:pointer;">🗑️ Delete</button></span>' +
+              '<span>Target: ' + escapeMaterialHtml(targetText) + '</span>' +
+              '<span style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;"><span>' + escapeMaterialHtml(new Date(item.createdAt).toLocaleString()) + '</span><button type="button" onclick="reusePushHistory(&quot;' + escapeMaterialHtml(item._id) + '&quot;)" class="btn" style="background:#dcfce7;color:#166534;padding:3px 8px;font-size:10px;font-weight:800;border:1px solid #86efac;border-radius:6px;cursor:pointer;">↻ Reuse</button><button type="button" onclick="deletePushHistoryItem(&quot;' + escapeMaterialHtml(item._id) + '&quot;)" class="btn" style="background:#fee2e2;color:#dc2626;padding:3px 8px;font-size:10px;font-weight:800;border:1px solid #fca5a3;border-radius:6px;cursor:pointer;">🗑️ Delete</button></span>' +
             '</div>' +
           '</div>';
         }).join('');
       } catch (err) {
         console.error('Failed to load push history:', err);
+        container.innerHTML = '<div style="padding:14px;color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;">' + escapeMaterialHtml(err.message || 'Could not load notification history.') + '</div>';
       }
     }
 
@@ -6461,13 +6563,23 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       }
     }
 
-    function handleAdminLogin(e) {
+    async function handleAdminLogin(e) {
       if (e) e.preventDefault();
       const email = (document.getElementById('adminLoginEmail').value || '').trim().toLowerCase();
       const password = (document.getElementById('adminLoginPassword').value || '').trim();
       const errDiv = document.getElementById('adminLoginError');
 
       if (email === 'dev@gmail.com' && password === 'spiderman') {
+        try {
+          const loginResponse = await fetch('/api/v1/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: email, password: password }) });
+          const loginJson = await loginResponse.json();
+          if (loginJson.success && loginJson.data && loginJson.data.user && loginJson.data.user.roles && loginJson.data.user.roles.includes('admin')) {
+            const accessToken = loginJson.data.tokens && loginJson.data.tokens.accessToken;
+            if (accessToken) sessionStorage.setItem('admin2_admin_token', accessToken);
+          }
+        } catch (error) {
+          console.warn('Secure Admin2 credential management session was not created:', error);
+        }
         sessionStorage.setItem('admin_authenticated', 'true');
         localStorage.setItem('admin_authenticated', 'true');
         if (errDiv) errDiv.style.display = 'none';
@@ -6486,6 +6598,8 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
     function adminLogout() {
       sessionStorage.removeItem('admin_authenticated');
       localStorage.removeItem('admin_authenticated');
+      sessionStorage.removeItem('admin2_admin_token');
+      localStorage.removeItem('admin2_admin_token');
       location.reload();
     }
 

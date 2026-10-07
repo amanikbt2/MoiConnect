@@ -31,6 +31,7 @@ import * as popupController from '../controllers/popupController';
 import * as notificationController from '../controllers/notificationController';
 import * as communityController from '../controllers/communityController';
 import * as liveController from '../controllers/liveController';
+import * as admin2Controller from '../controllers/admin2Controller';
 import { handleB2CResult } from '../services/mpesaB2CService';
 import { tempUpload } from '../middleware/upload';
 
@@ -92,6 +93,10 @@ router.delete('/dashboard/temp-files/:filename', dashboardController.deleteDashb
 router.post('/dashboard/temp-files/delete-batch', dashboardController.deleteDashboardBatchTempFiles);
 router.get('/dashboard/community-messages', dashboardController.getDashboardCommunityMessages);
 router.delete('/dashboard/community-messages', dashboardController.deleteDashboardCommunityMessages);
+router.get('/dashboard/admin2-credentials', authenticate, requireRole('admin'), admin2Controller.listCredentials);
+router.post('/dashboard/admin2-credentials', authenticate, requireRole('admin'), admin2Controller.createCredential);
+router.patch('/dashboard/admin2-credentials/:id', authenticate, requireRole('admin'), admin2Controller.updateCredential);
+router.delete('/dashboard/admin2-credentials/:id', authenticate, requireRole('admin'), admin2Controller.deleteCredential);
 
 // Push Notification & Bell Inbox Routes
 router.post('/notifications/register-token', optionalAuthenticate, notificationController.registerDeviceToken);
@@ -119,6 +124,8 @@ router.post('/auth/register', validateBody(registerSchema), authController.regis
 router.post('/auth/login', validateBody(loginSchema), authController.login);
 router.post('/auth/google', authController.googleAuth);
 router.post('/auth/refresh', validateBody(refreshTokenSchema), authController.refresh);
+router.post('/admin2/login', admin2Controller.loginAdmin2);
+router.get('/admin2/session', admin2Controller.validateAdmin2Session);
 router.post('/auth/logout', authenticate, authController.logout);
 router.get('/auth/me', authenticate, authController.me);
 router.patch('/auth/profile', authenticate, authController.updateProfile);

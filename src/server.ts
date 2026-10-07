@@ -108,7 +108,7 @@ app.use('/api', routes);
 
 // Health Check
 app.get('/health', (_req, res) => {
-  res.json({ success: true, service: 'MoiConnect API', status: 'healthy', timestamp: new Date() });
+  res.json({ success: true, service: 'MConnect API', status: 'healthy', timestamp: new Date() });
 });
 
 // Global Error Handler
@@ -133,7 +133,7 @@ if (process.env.NODE_ENV !== 'test') {
   const PORT = config.port;
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`=================================`);
-    console.log(`[MoiConnect Server Running]`);
+    console.log(`[MConnect Server Running]`);
     console.log(`Environment: ${config.nodeEnv}`);
     console.log(`Port: ${PORT}`);
     console.log(`Bound Interface: 0.0.0.0:${PORT}`);

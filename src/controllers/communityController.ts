@@ -10,6 +10,7 @@ import { getAppSettingValue } from '../models/AppSetting';
 // 1. Get Community Messages (Support Incremental Delta Sync via ?since=)
 export const getCommunityMessages = async (req: Request, res: Response): Promise<void> => {
   try {
+    const syncWatermark = new Date();
     const { since, before, limit } = req.query;
     const query: any = {};
     const userId = (req as any).user?._id;
@@ -26,7 +27,16 @@ export const getCommunityMessages = async (req: Request, res: Response): Promise
     } else if (since) {
       const sinceDate = new Date(since as string);
       if (!isNaN(sinceDate.getTime())) {
-        query.updatedAt = { $gt: sinceDate };
+        const requestedUntil = new Date(String(req.query.until || ''));
+        const untilDate = !Number.isNaN(requestedUntil.getTime()) ? requestedUntil : syncWatermark;
+        const requestedSinceId = String(req.query.sinceId || '');
+        const sinceId = /^[a-f\d]{24}$/i.test(requestedSinceId) ? requestedSinceId : '';
+        query.$and = [
+          sinceId
+            ? { $or: [{ updatedAt: { $gt: sinceDate } }, { updatedAt: sinceDate, _id: { $gt: sinceId } }] }
+            : { updatedAt: { $gt: sinceDate } },
+          { updatedAt: { $lte: untilDate } }
+        ];
         isDeltaSync = true;
       }
     }
@@ -35,7 +45,7 @@ export const getCommunityMessages = async (req: Request, res: Response): Promise
     const matchingCount = isDeltaSync ? await CommunityMessage.countDocuments(query) : 0;
 
     let messages = await CommunityMessage.find(query).select('-reactionUsers')
-      .sort(isDeltaSync ? { updatedAt: 1 } : { createdAt: -1 })
+      .sort(isDeltaSync ? { updatedAt: 1, _id: 1 } : { createdAt: -1 })
       .limit(maxLimit);
 
     if (!isDeltaSync) messages = messages.reverse();
@@ -60,7 +70,7 @@ export const getCommunityMessages = async (req: Request, res: Response): Promise
         ? matchingCount > responseMessages.length
         : (isOlderPage ? responseMessages.length === maxLimit : undefined),
       allowCommunityChat,
-      syncedAt: new Date().toISOString()
+      syncedAt: syncWatermark.toISOString()
     });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message || 'Failed to fetch community messages' });
