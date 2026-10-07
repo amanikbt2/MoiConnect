@@ -32,17 +32,19 @@ export const registerDeviceToken = async (req: Request, res: Response): Promise<
     }
 
     const userId = (req as any).user?._id || null;
-    const email = (req as any).user?.email || null;
+    const email = (req as any).user?.email ? (req as any).user.email.toLowerCase().trim() : null;
+
+    const updateData: any = {
+      token,
+      platform,
+      lastActive: new Date()
+    };
+    if (userId) updateData.userId = userId;
+    if (email) updateData.email = email;
 
     const deviceToken = await DeviceToken.findOneAndUpdate(
       { token },
-      {
-        token,
-        userId,
-        email,
-        platform,
-        lastActive: new Date()
-      },
+      { $set: updateData },
       { upsert: true, new: true }
     );
 

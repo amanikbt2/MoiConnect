@@ -1,3 +1,4 @@
+import { Types } from 'mongoose';
 import { DeviceToken } from '../models/DeviceToken';
 import { Notification } from '../models/Notification';
 import { User } from '../models/User';
@@ -75,12 +76,13 @@ export const dispatchPushNotification = async (payload: IPushNotificationPayload
   let query: any = {};
   if (target === 'emails' && recipientEmails.length > 0) {
     const cleanEmails = recipientEmails.map(e => e.trim().toLowerCase());
-    const matchedUsers = await User.find({ email: { $in: cleanEmails } }).select('_id email');
+    const emailRegexes = cleanEmails.map(e => new RegExp('^' + e.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i'));
+    const matchedUsers = await User.find({ email: { $in: emailRegexes } }).select('_id email');
     const matchedUserIds = matchedUsers.map(u => u._id);
 
     query = {
       $or: [
-        { email: { $in: cleanEmails } },
+        { email: { $in: emailRegexes } },
         { userId: { $in: matchedUserIds } }
       ]
     };
@@ -125,7 +127,8 @@ export const dispatchPushNotification = async (payload: IPushNotificationPayload
         icon
       },
       priority: 'high',
-      channelId: 'default'
+      channelId: data?.channelId || 'default',
+      _displayInForeground: true,
     });
   }
 
@@ -153,17 +156,29 @@ export const dispatchPushNotification = async (payload: IPushNotificationPayload
           response: resData
         });
       }
+      const invalidTokens: string[] = [];
       tickets.forEach((ticket: any, index: number) => {
         if (ticket?.status === 'ok') {
           sentCount += 1;
           return;
         }
 
+        const errorCode = ticket?.details?.error;
+        if (errorCode === 'DeviceNotRegistered' || errorCode === 'InvalidCredentials') {
+          invalidTokens.push(chunk[index]?.to);
+        }
+
         console.error('[Push Notification]: Expo ticket failed.', {
           token: chunk[index]?.to,
-          error: ticket?.details?.error || ticket?.message || 'Unknown Expo push error'
+          error: errorCode || ticket?.message || 'Unknown Expo push error'
         });
       });
+
+      if (invalidTokens.length > 0) {
+        await DeviceToken.deleteMany({ token: { $in: invalidTokens.filter(Boolean) } }).catch((cleanupError) => {
+          console.warn('[Push Notification]: Could not remove invalid device tokens:', cleanupError);
+        });
+      }
     } catch (err) {
       console.error(`[Push Notification Batch Error]:`, err);
     }
@@ -201,7 +216,8 @@ export const sendPushToTokens = async (
     data: notificationData,
     ...(categoryId ? { categoryId } : {}),
     priority: 'high',
-    channelId: 'default'
+    channelId: notificationData?.channelId || 'community_chat' || 'default',
+    _displayInForeground: true,
   }));
 
   const CHUNK_SIZE = 100;
@@ -265,14 +281,17 @@ export const sendCommunityMessagePush = async (messagePayload: {
   try {
     const senderIdStr = messagePayload.senderId ? String(messagePayload.senderId) : '';
     const senderEmailStr = (messagePayload.senderEmail || '').trim().toLowerCase();
+    const senderObjId = /^[a-f\d]{24}$/i.test(senderIdStr) ? new Types.ObjectId(senderIdStr) : null;
 
     // Send only to other students' registered Android/iOS devices.
-    const recipientTokens = await DeviceToken.find({
-      $and: [
-        ...(senderIdStr ? [{ userId: { $ne: senderIdStr } }] : []),
-        ...(senderEmailStr ? [{ email: { $ne: senderEmailStr } }] : [])
-      ]
-    }).distinct('token');
+    const excludeConditions: any[] = [];
+    if (senderObjId) excludeConditions.push({ userId: { $ne: senderObjId } });
+    if (senderIdStr) excludeConditions.push({ userId: { $ne: senderIdStr } });
+    if (senderEmailStr) excludeConditions.push({ email: { $ne: senderEmailStr } });
+
+    const recipientTokens = await DeviceToken.find(
+      excludeConditions.length > 0 ? { $and: excludeConditions } : {}
+    ).distinct('token');
 
     if (!recipientTokens || recipientTokens.length === 0) return;
 
