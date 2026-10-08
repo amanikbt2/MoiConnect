@@ -46,6 +46,20 @@ async function sendExpoChunk(chunk: any[]): Promise<{ ok: boolean; status: numbe
   return null;
 }
 
+const hasMixedProjectError = (response: { data: any } | null): boolean =>
+  Array.isArray(response?.data?.errors) && response.data.errors.some((error: any) => error?.code === 'PUSH_TOO_MANY_EXPERIENCE_IDS');
+
+const retryMixedProjectBatchIndividually = async (
+  chunk: any[],
+  response: { ok: boolean; status: number; data: any } | null
+): Promise<{ ok: boolean; status: number; data: any } | null> => {
+  if (!response || response.ok || !hasMixedProjectError(response)) return response;
+  const individualResponses = await Promise.all(chunk.map((message) => sendExpoChunk([message])));
+  const tickets = individualResponses.flatMap((item) => Array.isArray(item?.data?.data) ? item!.data.data : []);
+  const errors = individualResponses.flatMap((item) => Array.isArray(item?.data?.errors) ? item!.data.errors : []);
+  return { ok: individualResponses.every((item) => Boolean(item?.ok)), status: 200, data: { data: tickets, errors } };
+};
+
 // Magic Template Substitution Helper
 export function resolveMagicPlaceholders(
   text: string,
@@ -167,13 +181,22 @@ export const dispatchPushNotification = async (payload: IPushNotificationPayload
 
   // 4. Send Expo Push Notification batches in chunks of 100 asynchronously
   let sentCount = 0;
+  const failureReasons: Record<string, number> = {};
+  const addFailure = (reason: string, count = 1) => {
+    const key = reason || 'UnknownExpoError';
+    failureReasons[key] = (failureReasons[key] || 0) + count;
+  };
   const CHUNK_SIZE = 100;
 
   for (let i = 0; i < messages.length; i += CHUNK_SIZE) {
     const chunk = messages.slice(i, i + CHUNK_SIZE);
     try {
-      const expoResponse = await sendExpoChunk(chunk);
-      if (!expoResponse) continue;
+      const initialResponse = await sendExpoChunk(chunk);
+      const expoResponse = await retryMixedProjectBatchIndividually(chunk, initialResponse);
+      if (!expoResponse) {
+        addFailure('ExpoRequestFailed', chunk.length);
+        continue;
+      }
       const resData = expoResponse.data;
       const tickets = Array.isArray(resData?.data) ? resData.data : [];
       if (!expoResponse.ok || tickets.length !== chunk.length) {
@@ -181,6 +204,12 @@ export const dispatchPushNotification = async (payload: IPushNotificationPayload
           status: expoResponse.status,
           response: resData
         });
+        const batchErrors = Array.isArray(resData?.errors) ? resData.errors : [];
+        if (batchErrors.length) {
+          batchErrors.forEach((error: any) => addFailure(error?.code || error?.message || 'ExpoBatchRejected', chunk.length));
+        } else if (tickets.length !== chunk.length) {
+          addFailure('ExpoBatchRejected', chunk.length - tickets.length || chunk.length);
+        }
       }
       const invalidTokens: string[] = [];
       tickets.forEach((ticket: any, index: number) => {
@@ -190,6 +219,7 @@ export const dispatchPushNotification = async (payload: IPushNotificationPayload
         }
 
         const errorCode = ticket?.details?.error;
+        addFailure(errorCode || ticket?.message || 'UnknownExpoError');
         if (errorCode === 'DeviceNotRegistered') {
           invalidTokens.push(chunk[index]?.to);
         }
@@ -222,6 +252,8 @@ export const dispatchPushNotification = async (payload: IPushNotificationPayload
     success: true,
     sentCount,
     totalTokens: deviceTokens.length,
+    failedCount: Math.max(0, deviceTokens.length - sentCount),
+    failureReasons,
     storedNotificationId: notificationRecord._id
   };
 };
@@ -253,7 +285,8 @@ export const sendPushToTokens = async (
   for (let i = 0; i < messages.length; i += CHUNK_SIZE) {
     const chunk = messages.slice(i, i + CHUNK_SIZE);
     try {
-      const expoResponse = await sendExpoChunk(chunk);
+      const initialResponse = await sendExpoChunk(chunk);
+      const expoResponse = await retryMixedProjectBatchIndividually(chunk, initialResponse);
       if (!expoResponse) {
         failedCount += chunk.length;
         continue;
@@ -304,17 +337,23 @@ export const sendCommunityMessagePush = async (messagePayload: {
   try {
     const senderIdStr = messagePayload.senderId ? String(messagePayload.senderId) : '';
     const senderEmailStr = (messagePayload.senderEmail || '').trim().toLowerCase();
-    const senderObjId = /^[a-f\d]{24}$/i.test(senderIdStr) ? new Types.ObjectId(senderIdStr) : null;
+    // Resolve all registered devices first, then exclude only the sender in
+    // code. Older tokens may have no userId/email populated, so a Mongo `$ne`
+    // query can accidentally omit valid recipients.
+    const registeredDevices = await DeviceToken.find({}).select('token userId email').lean();
+    const recipientTokens = registeredDevices
+      .filter((device: any) => {
+        const deviceUserId = device.userId ? String(device.userId) : '';
+        const deviceEmail = String(device.email || '').trim().toLowerCase();
+        const isSender = (senderIdStr && deviceUserId === senderIdStr) ||
+          (senderEmailStr && deviceEmail === senderEmailStr);
+        return !isSender;
+      })
+      .map((device: any) => String(device.token))
+      .filter(Boolean)
+      .filter((token: string, index: number, all: string[]) => all.indexOf(token) === index);
 
-    // Send only to other students' registered Android/iOS devices.
-    const excludeConditions: any[] = [];
-    if (senderObjId) excludeConditions.push({ userId: { $ne: senderObjId } });
-    if (senderIdStr) excludeConditions.push({ userId: { $ne: senderIdStr } });
-    if (senderEmailStr) excludeConditions.push({ email: { $ne: senderEmailStr } });
-
-    const recipientTokens = await DeviceToken.find(
-      excludeConditions.length > 0 ? { $and: excludeConditions } : {}
-    ).distinct('token');
+    console.log(`[Community Push]: ${recipientTokens.length} recipient device(s) resolved for ${messagePayload.senderName || 'student'}.`);
 
     if (!recipientTokens || recipientTokens.length === 0) return;
 
