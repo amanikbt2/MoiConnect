@@ -26,13 +26,21 @@ const visibleNotificationQuery = (userEmail?: string) => ({
 export const registerDeviceToken = async (req: Request, res: Response): Promise<void> => {
   try {
     const { token, platform = 'android' } = req.body;
-    if (!token) {
-      res.status(400).json({ success: false, error: 'Push token is required.' });
+    if (typeof token !== 'string' || !/^(Expo|Exponent)PushToken\[.+\]$/.test(token)) {
+      res.status(400).json({ success: false, error: 'A valid Expo push token is required.' });
+      return;
+    }
+    if (!['android', 'ios'].includes(platform)) {
+      res.status(400).json({ success: false, error: 'Unsupported push platform.' });
       return;
     }
 
     const userId = (req as any).user?._id || null;
     const email = (req as any).user?.email ? (req as any).user.email.toLowerCase().trim() : null;
+    if (!userId || !email) {
+      res.status(401).json({ success: false, error: 'Sign in before registering this device.' });
+      return;
+    }
 
     const updateData: any = {
       token,
@@ -167,7 +175,7 @@ export const sendAdminPushNotification = async (req: Request, res: Response): Pr
 
     res.json({
       success: true,
-      message: `Push notification dispatched! Target: ${target}, delivered to ${result.sentCount} of ${result.totalTokens || 0} matched devices${result.totalTokens && result.sentCount < result.totalTokens ? ` (${result.totalTokens - result.sentCount} delivery failures).` : '.'}`,
+      message: `Push notification dispatched! Target: ${target}, accepted by Expo for ${result.sentCount} of ${result.totalTokens || 0} matched devices${result.totalTokens && result.sentCount < result.totalTokens ? ` (${result.totalTokens - result.sentCount} Expo delivery errors).` : '.'}`,
       result
     });
   } catch (error: any) {

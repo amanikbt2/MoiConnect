@@ -14,6 +14,38 @@ export interface IPushNotificationPayload {
   data?: Record<string, any>;
 }
 
+async function sendExpoChunk(chunk: any[]): Promise<{ ok: boolean; status: number; data: any } | null> {
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    try {
+      const response = await fetch('https://exp.host/--/api/v2/push/send', {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+          'Accept-encoding': 'gzip, deflate',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(chunk),
+        signal: controller.signal
+      });
+      const data = await response.json().catch(() => null);
+      if (response.ok || (response.status < 500 && response.status !== 429) || attempt === 3) {
+        return { ok: response.ok, status: response.status, data };
+      }
+    } catch (error) {
+      if (attempt === 3) {
+        console.error('[Push Notification]: Expo request failed after retries.', error);
+        return null;
+      }
+    } finally {
+      clearTimeout(timeout);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500 * (2 ** (attempt - 1))));
+  }
+  return null;
+}
+
 // Magic Template Substitution Helper
 export function resolveMagicPlaceholders(
   text: string,
@@ -127,7 +159,8 @@ export const dispatchPushNotification = async (payload: IPushNotificationPayload
         icon
       },
       priority: 'high',
-      channelId: data?.channelId || 'default',
+      channelId: data?.channelId || 'mconnect_general_v2',
+      ttl: 60 * 60 * 24 * 7,
       _displayInForeground: true,
     });
   }
@@ -139,20 +172,13 @@ export const dispatchPushNotification = async (payload: IPushNotificationPayload
   for (let i = 0; i < messages.length; i += CHUNK_SIZE) {
     const chunk = messages.slice(i, i + CHUNK_SIZE);
     try {
-      const res = await fetch('https://exp.host/--/api/v2/push/send', {
-        method: 'POST',
-        headers: {
-          'Accept': 'application/json',
-          'Accept-encoding': 'gzip, deflate',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(chunk)
-      });
-      const resData = await res.json();
+      const expoResponse = await sendExpoChunk(chunk);
+      if (!expoResponse) continue;
+      const resData = expoResponse.data;
       const tickets = Array.isArray(resData?.data) ? resData.data : [];
-      if (!res.ok || tickets.length !== chunk.length) {
+      if (!expoResponse.ok || tickets.length !== chunk.length) {
         console.error('[Push Notification]: Expo rejected the batch.', {
-          status: res.status,
+          status: expoResponse.status,
           response: resData
         });
       }
@@ -164,7 +190,7 @@ export const dispatchPushNotification = async (payload: IPushNotificationPayload
         }
 
         const errorCode = ticket?.details?.error;
-        if (errorCode === 'DeviceNotRegistered' || errorCode === 'InvalidCredentials') {
+        if (errorCode === 'DeviceNotRegistered') {
           invalidTokens.push(chunk[index]?.to);
         }
 
@@ -216,7 +242,8 @@ export const sendPushToTokens = async (
     data: notificationData,
     ...(categoryId ? { categoryId } : {}),
     priority: 'high',
-    channelId: notificationData?.channelId || 'community_chat' || 'default',
+    channelId: notificationData?.channelId || 'mconnect_general_v2',
+    ttl: 60 * 60 * 24 * 7,
     _displayInForeground: true,
   }));
 
@@ -226,20 +253,16 @@ export const sendPushToTokens = async (
   for (let i = 0; i < messages.length; i += CHUNK_SIZE) {
     const chunk = messages.slice(i, i + CHUNK_SIZE);
     try {
-      const response = await fetch('https://exp.host/--/api/v2/push/send', {
-        method: 'POST',
-        headers: {
-          'Accept': 'application/json',
-          'Accept-encoding': 'gzip, deflate',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(chunk)
-      });
-      const responseBody = await response.json().catch(() => null);
-      const tickets = Array.isArray(responseBody?.data) ? responseBody.data : [];
-      if (!response.ok || tickets.length !== chunk.length) {
+      const expoResponse = await sendExpoChunk(chunk);
+      if (!expoResponse) {
         failedCount += chunk.length;
-        console.error('[Push Notification]: Expo rejected push batch.', { status: response.status, response: responseBody });
+        continue;
+      }
+      const responseBody = expoResponse.data;
+      const tickets = Array.isArray(responseBody?.data) ? responseBody.data : [];
+      if (!expoResponse.ok || tickets.length !== chunk.length) {
+        failedCount += chunk.length;
+        console.error('[Push Notification]: Expo rejected push batch.', { status: expoResponse.status, response: responseBody });
         continue;
       }
       const invalidTokens: string[] = [];
@@ -249,7 +272,7 @@ export const sendPushToTokens = async (
         } else {
           failedCount += 1;
           const errorCode = ticket?.details?.error;
-          if (errorCode === 'DeviceNotRegistered' || errorCode === 'InvalidCredentials') {
+          if (errorCode === 'DeviceNotRegistered') {
             invalidTokens.push(chunk[index].to);
           }
           console.error('[Push Notification]: Expo ticket failed.', { token: chunk[index]?.to, error: errorCode || ticket?.message || 'Unknown Expo push error' });
@@ -314,7 +337,7 @@ export const sendCommunityMessagePush = async (messagePayload: {
       bodyText,
       {
         screen: 'community',
-        channelId: 'community_chat',
+        channelId: 'mconnect_messages_v2',
         categoryId: 'community_message',
         senderId: senderIdStr,
         senderName: messagePayload.senderName || 'Moi Student',
@@ -362,6 +385,7 @@ export const sendDirectMessagePush = async (
     await sendPushToTokens(recipientTokens, title, bodyText, {
       screen: 'chat',
       conversationId: String(conversation._id),
+      channelId: 'mconnect_messages_v2',
       senderId: senderIdStr
     });
   } catch (err) {

@@ -99,7 +99,7 @@ router.patch('/dashboard/admin2-credentials/:id', authenticate, requireRole('adm
 router.delete('/dashboard/admin2-credentials/:id', authenticate, requireRole('admin'), admin2Controller.deleteCredential);
 
 // Push Notification & Bell Inbox Routes
-router.post('/notifications/register-token', optionalAuthenticate, notificationController.registerDeviceToken);
+router.post('/notifications/register-token', authenticate, notificationController.registerDeviceToken);
 router.get('/notifications', authenticate, notificationController.getNotifications);
 router.post('/notifications/read-all', authenticate, notificationController.markAllNotificationsRead);
 router.post('/notifications/:id/read', authenticate, notificationController.markNotificationRead);

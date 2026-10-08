@@ -2,6 +2,7 @@ import { Response } from 'express';
 import mongoose from 'mongoose';
 import path from 'path';
 import fs from 'fs';
+import { Readable } from 'stream';
 import { Paper } from '../models/Paper';
 import { getAppSettingValue } from '../models/AppSetting';
 import { AuthenticatedRequest } from '../middleware/auth';
@@ -353,56 +354,64 @@ export const downloadPaper = async (req: AuthenticatedRequest, res: Response): P
   }
 };
 
-const createFallbackPdfBuffer = (title?: string, unitCode?: string, school?: string, department?: string): Buffer => {
-  const safeTitle = (title || 'Academic Resource Material').replace(/[^a-zA-Z0-9 _-]/g, '');
-  const safeUnit = (unitCode || 'MOI').replace(/[^a-zA-Z0-9 _-]/g, '');
-  const safeSchool = (school || 'Moi University').replace(/[^a-zA-Z0-9 _-]/g, '');
-  const safeDept = (department || 'Academic Department').replace(/[^a-zA-Z0-9 _-]/g, '');
+const setPdfResponseHeaders = (res: Response): void => {
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', 'inline; filename="document.pdf"');
+  res.setHeader('Cache-Control', 'private, max-age=3600');
+  res.setHeader('Accept-Ranges', 'bytes');
+  res.setHeader('Access-Control-Expose-Headers', 'Accept-Ranges, Content-Length, Content-Range');
+};
 
-  const textLines = [
-    `BT /F1 18 Tf 40 730 Td (${safeUnit}: ${safeTitle}) Tj ET`,
-    `BT /F1 12 Tf 40 700 Td (${safeSchool} - ${safeDept}) Tj ET`,
-    `BT /F1 10 Tf 40 660 Td (Official Academic Material Preview) Tj ET`,
-    `BT /F1 10 Tf 40 640 Td (Status: Document preview generated for reading.) Tj ET`,
-    `BT /F1 10 Tf 40 600 Td (This document is available for all registered students.) Tj ET`
-  ].join('\n');
+const streamLocalPdf = (req: AuthenticatedRequest, res: Response, localPath: string): boolean => {
+  if (!fs.existsSync(localPath)) return false;
+  const stat = fs.statSync(localPath);
+  if (!stat.isFile()) return false;
+  const range = req.headers.range;
+  setPdfResponseHeaders(res);
 
-  const streamLength = Buffer.byteLength(textLines);
+  if (range) {
+    const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+    if (!match || (!match[1] && !match[2])) {
+      res.status(416).setHeader('Content-Range', `bytes */${stat.size}`).end();
+      return true;
+    }
+    const start = match[1] ? Number(match[1]) : Math.max(0, stat.size - Number(match[2]));
+    const end = match[2] && match[1] ? Math.min(Number(match[2]), stat.size - 1) : stat.size - 1;
+    if (start >= stat.size || end < start) {
+      res.status(416).setHeader('Content-Range', `bytes */${stat.size}`).end();
+      return true;
+    }
+    res.status(206);
+    res.setHeader('Content-Range', `bytes ${start}-${end}/${stat.size}`);
+    res.setHeader('Content-Length', end - start + 1);
+    fs.createReadStream(localPath, { start, end }).on('error', () => res.destroy()).pipe(res);
+    return true;
+  }
 
-  const pdfString = `%PDF-1.4
-1 0 obj
-<< /Type /Catalog /Pages 2 0 R >>
-endobj
-2 0 obj
-<< /Type /Pages /Kids [3 0 R] /Count 1 >>
-endobj
-3 0 obj
-<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>
-endobj
-4 0 obj
-<< /Length ${streamLength} >>
-stream
-${textLines}
-endstream
-endobj
-5 0 obj
-<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
-endobj
-xref
-0 6
-0000000000 65535 f 
-0000000009 00000 n 
-0000000058 00000 n 
-0000000115 00000 n 
-0000000244 00000 n 
-0000000300 00000 n 
-trailer
-<< /Size 6 /Root 1 0 R >>
-startxref
-450
-%%EOF`;
+  res.setHeader('Content-Length', stat.size);
+  fs.createReadStream(localPath).on('error', () => res.destroy()).pipe(res);
+  return true;
+};
 
-  return Buffer.from(pdfString);
+const streamUpstreamPdf = async (req: AuthenticatedRequest, res: Response, url: string): Promise<boolean> => {
+  const headers: Record<string, string> = {};
+  if (req.headers.range) headers.Range = req.headers.range;
+  const upstream = await fetch(url, { headers });
+  if (!upstream.ok || !upstream.body) {
+    await upstream.body?.cancel().catch(() => {});
+    return false;
+  }
+
+  setPdfResponseHeaders(res);
+  const contentLength = upstream.headers.get('content-length');
+  const contentRange = upstream.headers.get('content-range');
+  const acceptRanges = upstream.headers.get('accept-ranges');
+  if (contentLength) res.setHeader('Content-Length', contentLength);
+  if (contentRange) res.setHeader('Content-Range', contentRange);
+  if (acceptRanges) res.setHeader('Accept-Ranges', acceptRanges);
+  res.status(upstream.status);
+  Readable.fromWeb(upstream.body as any).on('error', () => res.destroy()).pipe(res);
+  return true;
 };
 
 export const viewPaperPdf = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
@@ -426,10 +435,10 @@ export const viewPaperPdf = async (req: AuthenticatedRequest, res: Response): Pr
       return;
     }
 
-    paper.downloads = (paper.downloads || 0) + 1;
-    await paper.save().catch(() => {});
-
-    let pdfBuffer: Buffer | null = null;
+    if (!req.headers.range || req.headers.range.startsWith('bytes=0-')) {
+      paper.downloads = (paper.downloads || 0) + 1;
+      await paper.save().catch(() => {});
+    }
 
     const isProxyUrl = (url?: string) => {
       if (!url) return true;
@@ -439,70 +448,42 @@ export const viewPaperPdf = async (req: AuthenticatedRequest, res: Response): Pr
     // 0. Check local disk for tempFilename or local file path
     if (paper.tempFilename) {
       const localPath = path.join(TEMP_UPLOADS_DIR, paper.tempFilename);
-      if (fs.existsSync(localPath)) {
-        try {
-          pdfBuffer = fs.readFileSync(localPath);
-        } catch (_) {}
-      }
+      if (streamLocalPdf(req, res, localPath)) return;
     }
 
-    if (!pdfBuffer && paper.fileUrl) {
+    if (paper.fileUrl) {
       const filename = path.basename(paper.fileUrl.split('?')[0]);
       if (filename && filename.endsWith('.pdf')) {
         const localPath = path.join(TEMP_UPLOADS_DIR, filename);
-        if (fs.existsSync(localPath)) {
-          try {
-            pdfBuffer = fs.readFileSync(localPath);
-          } catch (_) {}
-        }
+        if (streamLocalPdf(req, res, localPath)) return;
       }
     }
 
     // 1. Try fetching direct public Cloudinary URL if it's not pointing back to server proxy
     const directUrl = getSignedCloudinaryUrl(paper.publicId, paper.fileUrl, paper.fileType);
-    if (!pdfBuffer && directUrl && !isProxyUrl(directUrl)) {
+    if (directUrl && !isProxyUrl(directUrl)) {
       try {
-        const response = await fetch(directUrl);
-        if (response.ok) {
-          pdfBuffer = Buffer.from(await response.arrayBuffer());
-        }
+        if (await streamUpstreamPdf(req, res, directUrl)) return;
       } catch (_) {}
     }
 
     // 2. Fallback: Extract publicId or use paper.publicId to fetch authenticated private Cloudinary URL
     const effectivePublicId = paper.publicId || extractPublicIdFromCloudinaryUrl(paper.fileUrl);
-    if (!pdfBuffer && effectivePublicId) {
+    if (effectivePublicId) {
       try {
         const authUrl = getAuthenticatedCloudinaryPdfUrl(effectivePublicId);
-        if (authUrl && !isProxyUrl(authUrl)) {
-          const authResponse = await fetch(authUrl);
-          if (authResponse.ok) {
-            pdfBuffer = Buffer.from(await authResponse.arrayBuffer());
-          }
-        }
+        if (authUrl && !isProxyUrl(authUrl) && await streamUpstreamPdf(req, res, authUrl)) return;
       } catch (_) {}
     }
 
     // 3. Fallback: Fetch raw paper.fileUrl if it's a valid non-proxy URL
-    if (!pdfBuffer && paper.fileUrl && !isProxyUrl(paper.fileUrl) && (paper.fileUrl.startsWith('http://') || paper.fileUrl.startsWith('https://'))) {
+    if (paper.fileUrl && !isProxyUrl(paper.fileUrl) && (paper.fileUrl.startsWith('http://') || paper.fileUrl.startsWith('https://'))) {
       try {
-        const rawResponse = await fetch(paper.fileUrl);
-        if (rawResponse.ok) {
-          pdfBuffer = Buffer.from(await rawResponse.arrayBuffer());
-        }
+        if (await streamUpstreamPdf(req, res, paper.fileUrl)) return;
       } catch (_) {}
     }
 
-    // 4. Fallback: Generate a clean PDF document buffer so viewer always renders a 200 OK valid PDF
-    if (!pdfBuffer) {
-      pdfBuffer = createFallbackPdfBuffer(paper.title, paper.unitCode || paper.courseCode, paper.school, paper.department || paper.unitName);
-    }
-
-    const safeTitle = (paper.title || 'material').replace(/[^a-zA-Z0-9_-]/g, '_');
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="${safeTitle}.pdf"`);
-    res.setHeader('Cache-Control', 'public, max-age=86400');
-    res.send(pdfBuffer);
+    res.status(502).send('Unable to retrieve the PDF from its storage provider.');
   } catch (err: any) {
     console.error('Error in viewPaperPdf:', err);
     res.status(500).send('Error retrieving PDF document');
@@ -521,36 +502,22 @@ export const streamPaperPdfByUrl = async (req: AuthenticatedRequest, res: Respon
       return;
     }
 
-    let pdfBuffer: Buffer | null = null;
+    const parsedUrl = new URL(rawUrl);
+    if (parsedUrl.protocol !== 'https:' || !['res.cloudinary.com', 'api.cloudinary.com'].includes(parsedUrl.hostname.toLowerCase())) {
+      res.status(400).send('Only secure Cloudinary PDF URLs are supported.');
+      return;
+    }
     const publicId = extractPublicIdFromCloudinaryUrl(rawUrl);
 
     if (publicId) {
       try {
         const authUrl = getAuthenticatedCloudinaryPdfUrl(publicId);
-        const authResponse = await fetch(authUrl);
-        if (authResponse.ok) {
-          pdfBuffer = Buffer.from(await authResponse.arrayBuffer());
-        }
+        if (await streamUpstreamPdf(req, res, authUrl)) return;
       } catch (_) {}
     }
 
-    if (!pdfBuffer) {
-      try {
-        const rawResponse = await fetch(rawUrl);
-        if (rawResponse.ok) {
-          pdfBuffer = Buffer.from(await rawResponse.arrayBuffer());
-        }
-      } catch (_) {}
-    }
-
-    if (!pdfBuffer) {
-      pdfBuffer = createFallbackPdfBuffer('Academic Material', 'MOI', 'Moi University', 'Academic Resource');
-    }
-
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', 'inline; filename="document.pdf"');
-    res.setHeader('Cache-Control', 'public, max-age=86400');
-    res.send(pdfBuffer);
+    if (await streamUpstreamPdf(req, res, rawUrl)) return;
+    res.status(502).send('Unable to retrieve the PDF from Cloudinary.');
   } catch (error: any) {
     res.status(500).send('Failed to stream PDF.');
   }
