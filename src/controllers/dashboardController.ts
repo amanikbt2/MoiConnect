@@ -1143,7 +1143,13 @@ export const smartEditMaterial = async (req: Request, res: Response): Promise<vo
 
       if (paper.status === 'approved') {
         try {
-          const uploadRes = await uploadTempFileToCloudinary(documentFile.filename, 'MoiConnect/pdf');
+          const reusableDocumentId = paper.fileType === 'pdf' ? previousDocumentPublicId || undefined : undefined;
+          const uploadRes = await uploadTempFileToCloudinary(
+            documentFile.filename,
+            'MoiConnect/pdf',
+            'raw',
+            reusableDocumentId
+          );
           paper.fileUrl = uploadRes.secure_url;
           paper.publicId = uploadRes.public_id;
           paper.tempFilename = undefined;
@@ -1180,7 +1186,12 @@ export const smartEditMaterial = async (req: Request, res: Response): Promise<vo
       const previousThumbnailUrl = paper.thumbnail;
       const previousThumbnailPublicId = extractCloudinaryPublicId(previousThumbnailUrl || '');
       try {
-        const thumbRes = await uploadTempFileToCloudinary(thumbnailFile.filename, 'MoiConnect/material_thumbnails');
+        const thumbRes = await uploadTempFileToCloudinary(
+          thumbnailFile.filename,
+          'MoiConnect/material_thumbnails',
+          'image',
+          previousThumbnailPublicId || undefined
+        );
         paper.thumbnail = thumbRes.secure_url;
       } catch (thumbErr) {
         console.warn('[Smart Edit Material] Thumbnail upload fallback:', thumbErr);
@@ -1204,7 +1215,7 @@ export const smartEditMaterial = async (req: Request, res: Response): Promise<vo
           ttsFile.filename,
           'MoiConnect/tts',
           'raw',
-          `${paper.mtid}_text`
+          `${paper.mtid || paper._id}_text`
         );
         paper.ttsTextUrl = ttsUpload.secure_url;
         paper.ttsTextPublicId = ttsUpload.public_id;

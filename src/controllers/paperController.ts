@@ -397,7 +397,12 @@ const streamLocalPdf = (req: AuthenticatedRequest, res: Response, localPath: str
   return true;
 };
 
-const streamUpstreamPdf = async (req: AuthenticatedRequest, res: Response, url: string): Promise<boolean> => {
+const streamUpstreamPdf = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  url: string,
+  cacheControl = 'private, max-age=3600'
+): Promise<boolean> => {
   const headers: Record<string, string> = {};
   if (req.headers.range) headers.Range = req.headers.range;
   const upstream = await fetch(url, { headers });
@@ -407,6 +412,7 @@ const streamUpstreamPdf = async (req: AuthenticatedRequest, res: Response, url: 
   }
 
   setPdfResponseHeaders(res);
+  res.setHeader('Cache-Control', cacheControl);
   const contentLength = upstream.headers.get('content-length');
   const contentRange = upstream.headers.get('content-range');
   const acceptRanges = upstream.headers.get('accept-ranges');
@@ -516,11 +522,11 @@ export const streamPaperPdfByUrl = async (req: AuthenticatedRequest, res: Respon
     if (publicId) {
       try {
         const authUrl = getAuthenticatedCloudinaryPdfUrl(publicId);
-        if (await streamUpstreamPdf(req, res, authUrl)) return;
+        if (await streamUpstreamPdf(req, res, authUrl, 'no-store, no-cache, must-revalidate')) return;
       } catch (_) {}
     }
 
-    if (await streamUpstreamPdf(req, res, rawUrl)) return;
+    if (await streamUpstreamPdf(req, res, rawUrl, 'no-store, no-cache, must-revalidate')) return;
     res.status(502).send('Unable to retrieve the PDF from Cloudinary.');
   } catch (error: any) {
     res.status(500).send('Failed to stream PDF.');
