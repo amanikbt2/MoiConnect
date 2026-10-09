@@ -134,7 +134,12 @@ export const dispatchPushNotification = async (payload: IPushNotificationPayload
     };
   }
 
-  const deviceTokens = await DeviceToken.find(query).populate('userId', 'name email course admissionNumber');
+  const registeredTokens = await DeviceToken.find(query).populate('userId', 'name email course admissionNumber');
+  // Defensive deduplication in case old database records contain the same
+  // token more than once after an account/project migration.
+  const deviceTokens = Array.from(
+    new Map(registeredTokens.map((device) => [device.token, device])).values()
+  );
 
   if (deviceTokens.length === 0) {
     console.log(`[Push Notification]: Stored in DB (ID: ${notificationRecord._id}), but no device tokens matched target.`);
@@ -172,6 +177,9 @@ export const dispatchPushNotification = async (payload: IPushNotificationPayload
         notificationId: notificationRecord._id.toString(),
         icon
       },
+      ...(typeof data?.avatarUrl === 'string' && data.avatarUrl.startsWith('http')
+        ? { richContent: { image: data.avatarUrl } }
+        : {}),
       priority: 'high',
       channelId: data?.channelId || 'mconnect_general_v2',
       ttl: 60 * 60 * 24 * 7,
@@ -274,7 +282,11 @@ export const sendPushToTokens = async (
     body,
     data: notificationData,
     ...(categoryId ? { categoryId } : {}),
-    ...(avatarUrl && typeof avatarUrl === 'string' && avatarUrl.startsWith('http') ? { attachments: [{ url: avatarUrl }] } : {}),
+    // Expo uses richContent.image for Android expanded notification images.
+    // The previous attachments field was ignored by Expo Push Service.
+    ...(avatarUrl && typeof avatarUrl === 'string' && avatarUrl.startsWith('http')
+      ? { richContent: { image: avatarUrl } }
+      : {}),
     priority: 'high',
     channelId: notificationData?.channelId || 'mconnect_messages_v2',
     ttl: 60 * 60 * 24 * 7,

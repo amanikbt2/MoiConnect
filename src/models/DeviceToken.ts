@@ -2,6 +2,7 @@ import mongoose, { Schema, Document } from 'mongoose';
 
 export interface IDeviceToken extends Document {
   token: string;
+  installationId?: string;
   userId?: mongoose.Types.ObjectId;
   email?: string;
   platform?: 'android' | 'ios' | 'web';
@@ -13,6 +14,7 @@ export interface IDeviceToken extends Document {
 const DeviceTokenSchema = new Schema<IDeviceToken>(
   {
     token: { type: String, required: true, unique: true, index: true },
+    installationId: { type: String, index: true, sparse: true },
     userId: { type: Schema.Types.ObjectId, ref: 'User', index: true, default: null },
     email: { type: String, lowercase: true, trim: true, index: true },
     platform: { type: String, enum: ['android', 'ios', 'web'], default: 'android' },

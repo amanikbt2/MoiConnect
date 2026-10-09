@@ -34,7 +34,9 @@ export const getCommunityMessages = async (req: Request, res: Response): Promise
         query.$and = [
           sinceId
             ? { $or: [{ updatedAt: { $gt: sinceDate } }, { updatedAt: sinceDate, _id: { $gt: sinceId } }] }
-            : { updatedAt: { $gt: sinceDate } },
+            // Inclusive fallback prevents messages sharing the cursor's
+            // millisecond from being skipped when the client has no saved ID.
+            : { updatedAt: { $gte: sinceDate } },
           { updatedAt: { $lte: untilDate } }
         ];
         isDeltaSync = true;

@@ -25,7 +25,7 @@ const visibleNotificationQuery = (userEmail?: string) => ({
 // 1. Register or update device push token
 export const registerDeviceToken = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { token, platform = 'android' } = req.body;
+    const { token, platform = 'android', installationId } = req.body;
     if (typeof token !== 'string' || !/^(Expo|Exponent)PushToken\[.+\]$/.test(token)) {
       res.status(400).json({ success: false, error: 'A valid Expo push token is required.' });
       return;
@@ -42,8 +42,26 @@ export const registerDeviceToken = async (req: Request, res: Response): Promise<
       return;
     }
 
+    // EAS project changes can issue a new Expo token for the same installed
+    // app. Remove legacy tokens for this installation before saving the new
+    // one, otherwise one phone receives every push more than once.
+    if (typeof installationId === 'string' && installationId.trim()) {
+      await DeviceToken.deleteMany({
+        token: { $ne: token },
+        platform,
+        $or: [
+          { installationId: installationId.trim() },
+          { userId, installationId: { $exists: false } },
+          { userId, installationId: null }
+        ]
+      });
+    }
+
     const updateData: any = {
       token,
+      ...(typeof installationId === 'string' && installationId.trim()
+        ? { installationId: installationId.trim() }
+        : {}),
       platform,
       lastActive: new Date()
     };
