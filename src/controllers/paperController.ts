@@ -111,7 +111,11 @@ export const getPapers = async (req: AuthenticatedRequest, res: Response): Promi
         return conditions;
       };
       
-      query.$and = searchTokens.map((token) => ({ $or: searchConditionsFor(token) }));
+      // Return candidates matching any meaningful search word. The frontend
+      // performs the final smart ranking (exact MTID first, then full title /
+      // unit matches, then related partial matches), so requiring every word
+      // here would incorrectly hide useful related materials.
+      query.$or = searchTokens.flatMap((token) => searchConditionsFor(token));
     }
 
     const total = await Paper.countDocuments(query);

@@ -266,6 +266,7 @@ export const sendPushToTokens = async (
 ): Promise<{ totalTokens: number; sentCount: number; failedCount: number }> => {
   if (!tokens || tokens.length === 0) return { totalTokens: 0, sentCount: 0, failedCount: 0 };
   const { categoryId, ...notificationData } = data as any;
+  const avatarUrl = notificationData?.avatarUrl || notificationData?.senderAvatarUrl;
   const messages = tokens.map((to) => ({
     to,
     sound: 'default',
@@ -273,8 +274,9 @@ export const sendPushToTokens = async (
     body,
     data: notificationData,
     ...(categoryId ? { categoryId } : {}),
+    ...(avatarUrl && typeof avatarUrl === 'string' && avatarUrl.startsWith('http') ? { attachments: [{ url: avatarUrl }] } : {}),
     priority: 'high',
-    channelId: notificationData?.channelId || 'mconnect_general_v2',
+    channelId: notificationData?.channelId || 'mconnect_messages_v2',
     ttl: 60 * 60 * 24 * 7,
     _displayInForeground: true,
   }));
@@ -425,7 +427,8 @@ export const sendDirectMessagePush = async (
       screen: 'chat',
       conversationId: String(conversation._id),
       channelId: 'mconnect_messages_v2',
-      senderId: senderIdStr
+      senderId: senderIdStr,
+      avatarUrl: (sender as any)?.avatarUrl || null
     });
   } catch (err) {
     console.error('[Direct Message Push Notification Error]:', err);

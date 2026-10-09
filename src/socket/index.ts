@@ -296,11 +296,10 @@ export const setupSocketIO = (io: SocketIOServer): void => {
           : ((data.senderId && Types.ObjectId.isValid(data.senderId)) ? data.senderId : new Types.ObjectId().toString());
 
         const sEmail = (socket as any).user?.email || senderEmail || '';
-        const isCampusBot = sEmail.trim().toLowerCase() === 'dev@gmail.com';
         const senderUser = userId && Types.ObjectId.isValid(userId)
           ? await User.findById(userId).select('badge').lean()
           : null;
-        const effectiveSenderName = isCampusBot ? 'Campus bot' : (senderName || 'Moi Student');
+        const effectiveSenderName = senderName || 'Moi Student';
         const generatedId = new Types.ObjectId().toString();
         const nowISO = new Date().toISOString();
 
@@ -518,3 +517,4 @@ export const setupSocketIO = (io: SocketIOServer): void => {
     });
   });
 };
+

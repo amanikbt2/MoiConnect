@@ -1,6 +1,9 @@
 import { Request, Response } from 'express';
 import mongoose from 'mongoose';
 import { EJSON } from 'bson';
+// @ts-ignore
+import archiver from 'archiver';
+import { Readable } from 'stream';
 import path from 'path';
 import fs from 'fs';
 import { User } from '../models/User';
@@ -16,7 +19,8 @@ import {
   listTempFiles,
   deleteTempFile,
   deleteBatchTempFiles,
-  uploadTempFileToCloudinary
+  uploadTempFileToCloudinary,
+  getSignedCloudinaryUrl
 } from '../services/tempFileService';
 import { dispatchPushNotification } from '../services/pushNotificationService';
 import { attemptB2CPayout, createOriginatorConversationId } from '../services/mpesaB2CService';
@@ -360,6 +364,83 @@ export const getDashboardMaterials = async (_req: Request, res: Response): Promi
     res.json({ success: true, count: materials.length, data: materials });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message || 'Failed to fetch materials' });
+  }
+};
+
+export const downloadDashboardMaterialsZip = async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const materials = await Paper.find({ status: 'approved' })
+      .select('fileType fileUrl publicId courseCode unitCode title unitName')
+      .lean();
+    const pdfMaterials = materials.filter((paper: any) =>
+      String(paper.fileType || '').toLowerCase() === 'pdf' &&
+      (paper.publicId || /(?:res|api)\.cloudinary\.com/i.test(String(paper.fileUrl || '')))
+    );
+
+    if (pdfMaterials.length === 0) {
+      res.status(404).json({ success: false, error: 'No approved Cloudinary PDFs are available to back up.' });
+      return;
+    }
+
+    const filenameCounts = new Map<string, number>();
+    const safeFilename = (paper: any): string => {
+      const courseCode = String(paper.courseCode || paper.unitCode || 'MConnect').trim();
+      const materialTitle = String(paper.title || paper.unitName || 'Study Material').trim();
+      const baseName = `${courseCode} - ${materialTitle}`
+        .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
+        .replace(/\s+/g, ' ')
+        .replace(/[. ]+$/g, '')
+        .slice(0, 180) || 'Study Material';
+      const count = (filenameCounts.get(baseName.toLowerCase()) || 0) + 1;
+      filenameCounts.set(baseName.toLowerCase(), count);
+      return `${baseName}${count > 1 ? ` (${count})` : ''}.pdf`;
+    };
+
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', 'attachment; filename="MConnect-PDF-Backup.zip"');
+    res.setHeader('Cache-Control', 'no-store');
+
+    const archive = archiver('zip', { zlib: { level: 0 } });
+    archive.on('warning', (error: any) => {
+      console.warn('[Dashboard Materials ZIP] Archive warning:', error.message);
+    });
+    archive.on('error', (error: any) => {
+      console.error('[Dashboard Materials ZIP] Archive stream failed:', error);
+      if (!res.headersSent) res.status(502).json({ success: false, error: 'A PDF could not be added to the backup.' });
+      else res.destroy(error);
+    });
+    res.on('close', () => {
+      if (!res.writableEnded) archive.abort();
+    });
+    archive.pipe(res);
+
+    for (const paper of pdfMaterials as any[]) {
+      const downloadUrl = getSignedCloudinaryUrl(paper.publicId, paper.fileUrl, 'pdf');
+      const pdfStream = Readable.from((async function* () {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 30000);
+        try {
+          const response = await fetch(downloadUrl, { signal: controller.signal });
+          if (!response.ok || !response.body) {
+            throw new Error(`Cloudinary returned ${response.status} for ${paper.publicId || paper._id}`);
+          }
+          for await (const chunk of Readable.fromWeb(response.body as any)) yield chunk;
+        } catch (error: any) {
+          // A single stale/deleted Cloudinary asset must not cancel the whole
+          // backup. The remaining valid materials can still be downloaded.
+          console.warn('[Dashboard Materials ZIP] Skipping unavailable PDF:', paper.publicId || paper._id, error?.message || error);
+        } finally {
+          clearTimeout(timeout);
+        }
+      })());
+      archive.append(pdfStream, { name: safeFilename(paper) });
+    }
+
+    await archive.finalize();
+  } catch (error: any) {
+    console.error('[Dashboard Materials ZIP] Failed to create Cloudinary archive URL:', error);
+    if (!res.headersSent) res.status(500).json({ success: false, error: error.message || 'Could not prepare the PDF backup.' });
+    else res.destroy(error);
   }
 };
 
@@ -2077,6 +2158,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
     .status-dot { width: 8px; height: 8px; background-color: #34d399; border-radius: 50%; }
     .btn-refresh { background-color: #047857; color: #ffffff; font-size: 12px; font-weight: 700; padding: 8px 16px; border-radius: 8px; border: none; cursor: pointer; transition: all 0.2s; display: inline-flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
     .btn-refresh:hover { background-color: #059669; }
+    @keyframes spin { 100% { transform: rotate(360deg); } }
 
     /* Main Container */
     main { max-width: 1200px; width: 100%; margin: 0 auto; padding: 24px 16px; flex: 1; }
@@ -2370,7 +2452,10 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
             </h2>
             <p class="card-sub">Fetch the catalogue only when needed. Hide materials from students or permanently remove their database and Cloudinary records.</p>
           </div>
-          <button onclick="fetchMaterialsForManagement()" class="btn btn-view">↻ Refresh Materials</button>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button onclick="downloadMaterialsZip()" class="btn btn-approve">⇩ Download PDF ZIP</button>
+            <button onclick="fetchMaterialsForManagement()" class="btn btn-view">↻ Refresh Materials</button>
+          </div>
         </div>
         <div id="materials-management-container">
           <div class="fetch-start-card">
@@ -3988,6 +4073,21 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       }
     }
 
+    async function downloadMaterialsZip() {
+      try {
+        const link = document.createElement('a');
+        link.href = '/api/v1/dashboard/materials/download-zip';
+        link.download = 'MConnect-PDF-Backup.zip';
+        link.rel = 'noopener';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        showToast('Preparing your PDF ZIP backup. Files will be named by course code and title.');
+      } catch (err) {
+        showToast('PDF ZIP backup failed: ' + (err.message || 'Unknown error'), true);
+      }
+    }
+
     function renderMaterialsManagement() {
       const container = document.getElementById('materials-management-container');
       if (!materialsManagementData.length) {
@@ -4909,6 +5009,9 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
     }
 
     async function loadDashboardData() {
+      const refreshBtn = document.querySelector('.btn-refresh');
+      const icon = refreshBtn ? refreshBtn.querySelector('svg') : null;
+      if (icon) icon.style.animation = 'spin 0.8s linear infinite';
       try {
         const res = await fetch('/api/v1/dashboard/overview');
         const json = await res.json();
@@ -4920,6 +5023,25 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         renderUsers(json.users);
         renderHouses(json.houses);
         renderAppSettings(json.stats || json.settings);
+
+        const activeBtn = document.querySelector('.tab-btn.active');
+        if (activeBtn) {
+          const tabId = activeBtn.id.replace('tab-btn-', '');
+          if (tabId === 'materials' && typeof fetchMaterialsForManagement === 'function') fetchMaterialsForManagement();
+          else if (tabId === 'temp' && typeof loadTempFiles === 'function') loadTempFiles();
+          else if (tabId === 'community' && typeof loadCommunityMessagesAdmin === 'function') loadCommunityMessagesAdmin();
+          else if (tabId === 'feedbacks' && typeof loadReportsTab === 'function') loadReportsTab();
+          else if (tabId === 'direct-payments' && typeof loadDirectPayments === 'function') loadDirectPayments();
+          else if (tabId === 'admin2' && typeof loadAdmin2Credentials === 'function') loadAdmin2Credentials();
+          else if (tabId === 'ai-overages' && typeof loadAiOverages === 'function') loadAiOverages();
+          else if (tabId === 'push') {
+            if (typeof loadPopupHistory === 'function') loadPopupHistory();
+            if (typeof loadPushHistory === 'function') loadPushHistory();
+            if (typeof loadRegisteredPushDevices === 'function') loadRegisteredPushDevices();
+          }
+        }
+        showToast('Dashboard content refreshed!');
+        if (icon) icon.style.animation = 'none';
       } catch (err) {
         showToast('Error loading dashboard: ' + err.message, true);
       }

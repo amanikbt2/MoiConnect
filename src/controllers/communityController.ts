@@ -132,8 +132,7 @@ export const postCommunityMessage = async (req: Request, res: Response): Promise
     }
 
     if (!message) {
-      const isCampusBot = (user?.email || senderEmail || '').trim().toLowerCase() === 'dev@gmail.com';
-      const effectiveSenderName = isCampusBot ? 'Campus bot' : (senderName || user?.name || 'Moi Student');
+      const effectiveSenderName = senderName || user?.name || 'Moi Student';
       message = await CommunityMessage.create({
         clientMsgId,
         senderId: user?._id || senderId || '60d0fe4f5311236168a109ca',
@@ -390,3 +389,4 @@ export const deleteCommunityMessageForMe = async (req: Request, res: Response): 
     res.status(500).json({ success: false, error: err.message || 'Failed to remove message for you.' });
   }
 };
+

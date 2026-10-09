@@ -10,7 +10,7 @@ const seedAdmin = async () => {
 
     const adminEmail = process.env.ADMIN_EMAIL || 'dev@gmail.com';
     const adminPassword = process.env.ADMIN_PASSWORD || 'spiderman';
-    const adminName = process.env.ADMIN_NAME || 'Campus bot';
+    const adminName = process.env.ADMIN_NAME || 'System Admin';
 
     let existingAdmin = await User.findOne({ email: adminEmail });
     const salt = await bcrypt.genSalt(10);
@@ -53,3 +53,4 @@ const seedAdmin = async () => {
 };
 
 seedAdmin();
+
