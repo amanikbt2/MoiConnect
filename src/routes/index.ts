@@ -129,8 +129,8 @@ router.post('/admin2/login', admin2Controller.loginAdmin2);
 router.get('/admin2/session', admin2Controller.validateAdmin2Session);
 router.post('/auth/logout', authenticate, authController.logout);
 router.get('/auth/me', authenticate, authController.me);
-router.patch('/auth/profile', authenticate, authController.updateProfile);
-router.post('/auth/profile/avatar', authenticate, tempUpload.single('file'), authController.uploadProfileAvatar);
+router.patch('/auth/profile', optionalAuthenticate, authController.updateProfile);
+router.post('/auth/profile/avatar', optionalAuthenticate, tempUpload.single('file'), authController.uploadProfileAvatar);
 router.post('/auth/request-landlord', authenticate, validateBody(requestLandlordSchema), authController.requestLandlord);
 router.delete('/auth/delete-account', authenticate, authController.deleteAccount);
 

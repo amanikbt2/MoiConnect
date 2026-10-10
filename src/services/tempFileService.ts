@@ -258,7 +258,11 @@ export const uploadTempFileToCloudinary = async (
     : result.public_id;
 
   return {
-    secure_url: `${getSignedCloudinaryUrl(publicIdForUrl, result.secure_url, resourceType === 'raw' ? 'text' : 'image')}${result.version ? `?v=${result.version}` : ''}`,
+    secure_url: (() => {
+      const base = getSignedCloudinaryUrl(publicIdForUrl, result.secure_url, resourceType === 'raw' ? 'text' : 'image');
+      if (!result.version) return base;
+      return base.includes('?') ? `${base}&v=${result.version}` : `${base}?v=${result.version}`;
+    })(),
     public_id: result.public_id
   };
 };
