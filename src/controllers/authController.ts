@@ -6,6 +6,7 @@ import { CommunityMessage } from '../models/CommunityMessage';
 import { config } from '../config';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { RegisterInput, LoginInput, RequestLandlordInput } from '@moi/shared';
+import { uploadTempFileToCloudinary } from '../services/tempFileService';
 
 const generateTokens = (userId: string) => {
   const accessToken = jwt.sign({ userId }, config.jwtAccessSecret, {
@@ -243,6 +244,44 @@ export const updateProfile = async (req: AuthenticatedRequest, res: Response): P
     res.json({ success: true, message: 'Profile updated successfully.', data: user });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message || 'Failed to update profile.' });
+  }
+};
+
+export const uploadProfileAvatar = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ success: false, error: 'Authentication required.' });
+      return;
+    }
+    if (!req.file) {
+      res.status(400).json({ success: false, error: 'No profile image provided.' });
+      return;
+    }
+    if (!String(req.file.mimetype || '').startsWith('image/')) {
+      res.status(400).json({ success: false, error: 'Profile pictures must be image files.' });
+      return;
+    }
+
+    const upload = await uploadTempFileToCloudinary(req.file.filename, 'moiconnect/profile_avatars', 'image');
+    const avatarUrl = upload.secure_url;
+    req.user.avatarUrl = avatarUrl;
+    await req.user.save();
+    await CommunityMessage.updateMany(
+      { senderId: req.user._id },
+      { $set: { senderAvatarUrl: avatarUrl } }
+    );
+
+    const io = require('../socket').getSocketIO();
+    io?.to('community_room').emit('community:user_updated', {
+      userId: String(req.user._id),
+      email: req.user.email,
+      name: req.user.name,
+      avatarUrl,
+      badge: req.user.badge || null
+    });
+    res.json({ success: true, data: { avatarUrl } });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Profile image upload failed.' });
   }
 };
 

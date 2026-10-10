@@ -54,12 +54,14 @@ export const getCommunityMessages = async (req: Request, res: Response): Promise
 
     const senderIds = Array.from(new Set(messages.map((message: any) => String(message.senderId || '')).filter(Boolean)));
     const badgeUsers = senderIds.length > 0
-      ? await User.find({ _id: { $in: senderIds } }).select('_id badge').lean()
+      ? await User.find({ _id: { $in: senderIds } }).select('_id badge avatarUrl').lean()
       : [];
     const badgeByUserId = new Map(badgeUsers.map((user: any) => [String(user._id), user.badge]));
+    const avatarByUserId = new Map(badgeUsers.map((user: any) => [String(user._id), user.avatarUrl]));
     const responseMessages = messages.map((message: any) => ({
       ...message,
-      senderBadge: badgeByUserId.get(String(message.senderId || '')) || undefined
+      senderBadge: badgeByUserId.get(String(message.senderId || '')) || undefined,
+      senderAvatarUrl: avatarByUserId.get(String(message.senderId || '')) || message.senderAvatarUrl || undefined
     }));
 
     const allowCommunityChat = await getAppSettingValue('allowCommunityChat', true);
@@ -143,7 +145,7 @@ export const postCommunityMessage = async (req: Request, res: Response): Promise
         senderFaculty: senderFaculty || 'School of Science & Computing',
         senderCourse,
         senderPhone,
-        senderAvatarUrl,
+        senderAvatarUrl: user?.avatarUrl || senderAvatarUrl,
         senderBadge: user?.badge || senderBadge,
         avatarBg: avatarBg || '#15803d',
         text: text?.trim() || '',

@@ -297,9 +297,10 @@ export const setupSocketIO = (io: SocketIOServer): void => {
 
         const sEmail = (socket as any).user?.email || senderEmail || '';
         const senderUser = userId && Types.ObjectId.isValid(userId)
-          ? await User.findById(userId).select('badge').lean()
+          ? await User.findById(userId).select('badge avatarUrl').lean()
           : null;
         const effectiveSenderName = senderName || 'Moi Student';
+        const effectiveSenderAvatarUrl = senderUser?.avatarUrl || senderAvatarUrl;
         const generatedId = new Types.ObjectId().toString();
         const nowISO = new Date().toISOString();
 
@@ -320,7 +321,7 @@ export const setupSocketIO = (io: SocketIOServer): void => {
           senderFaculty: senderFaculty || 'School of Science & Computing',
           senderCourse,
           senderPhone,
-          senderAvatarUrl,
+          senderAvatarUrl: effectiveSenderAvatarUrl,
           senderBadge: senderUser?.badge || senderBadge,
           avatarBg: avatarBg || '#15803d',
           text: text?.trim() || '',

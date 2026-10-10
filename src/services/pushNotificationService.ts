@@ -243,9 +243,6 @@ export const dispatchPushNotification = async (payload: IPushNotificationPayload
         notificationId: notificationRecord._id.toString(),
         icon
       },
-      ...(typeof data?.avatarUrl === 'string' && data.avatarUrl.startsWith('http')
-        ? { richContent: { image: data.avatarUrl } }
-        : {}),
       priority: 'high',
       channelId: data?.channelId || 'mconnect_general_v2',
       ttl: 60 * 60 * 24 * 7,
@@ -346,24 +343,15 @@ export const sendPushToTokens = async (
   data: Record<string, any> = {}
 ): Promise<{ totalTokens: number; sentCount: number; failedCount: number }> => {
   if (!tokens || tokens.length === 0) return { totalTokens: 0, sentCount: 0, failedCount: 0 };
-  const { categoryId, ...notificationData } = data as any;
-  const avatarUrl = notificationData?.avatarUrl || notificationData?.senderAvatarUrl;
-  const notificationSubtitle = typeof notificationData?.notificationSubtitle === 'string'
-    ? notificationData.notificationSubtitle.trim()
-    : '';
+  const { categoryId, richContent, ...notificationData } = data as any;
   const messages = tokens.map((to) => ({
     to,
     sound: 'default',
     title,
     body,
-    ...(notificationSubtitle ? { subtitle: notificationSubtitle } : {}),
     data: notificationData,
     ...(categoryId ? { categoryId } : {}),
-    // Expo uses richContent.image for Android expanded notification images.
-    // The previous attachments field was ignored by Expo Push Service.
-    ...(avatarUrl && typeof avatarUrl === 'string' && avatarUrl.startsWith('http')
-      ? { richContent: { image: avatarUrl } }
-      : {}),
+    ...(richContent ? { richContent } : {}),
     priority: 'high',
     channelId: notificationData?.channelId || 'mconnect_messages_v2',
     ttl: 60 * 60 * 24 * 7,
@@ -471,7 +459,7 @@ export const sendCommunityMessagePush = async (messagePayload: {
       }
     }
 
-    if (bodyText.length > 120) bodyText = bodyText.slice(0, 117) + '...';
+    if (bodyText.length > 240) bodyText = bodyText.slice(0, 237) + '...';
 
     const senderName = messagePayload.senderName || 'Moi Student';
     const avatarUrl = await getPublicNotificationAvatar(
@@ -491,9 +479,12 @@ export const sendCommunityMessagePush = async (messagePayload: {
         senderId: senderIdStr,
         senderName,
         avatarUrl,
+        senderAvatarUrl: avatarUrl,
         messageId: messagePayload._id,
         messagePreview: bodyText,
-        notificationSubtitle: bodyText
+        notificationSubtitle: bodyText,
+        notificationType: 'community_message',
+        richContent: { image: avatarUrl }
       }
     );
     if (result.failedCount > 0) {
