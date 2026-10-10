@@ -48,7 +48,8 @@ export const getCommunityMessages = async (req: Request, res: Response): Promise
 
     let messages = await CommunityMessage.find(query).select('-reactionUsers')
       .sort(isDeltaSync ? { updatedAt: 1, _id: 1 } : { createdAt: -1 })
-      .limit(maxLimit);
+      .limit(maxLimit)
+      .lean();
 
     if (!isDeltaSync) messages = messages.reverse();
 

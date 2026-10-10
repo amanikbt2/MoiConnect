@@ -483,8 +483,7 @@ export const sendCommunityMessagePush = async (messagePayload: {
         messageId: messagePayload._id,
         messagePreview: bodyText,
         notificationSubtitle: bodyText,
-        notificationType: 'community_message',
-        richContent: { image: avatarUrl }
+        notificationType: 'community_message'
       }
     );
     if (result.failedCount > 0) {
@@ -541,3 +540,5 @@ export const sendDirectMessagePush = async (
     console.error('[Direct Message Push Notification Error]:', err);
   }
 };
+
+
