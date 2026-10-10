@@ -307,7 +307,7 @@ export const restoreDatabase = async (req: Request, res: Response): Promise<void
 
     const parsed = EJSON.parse(fs.readFileSync(uploadedPath, 'utf8')) as any;
     if (parsed?.format !== 'moiconnect-database-backup' || parsed?.version !== 1 || !parsed?.collections || typeof parsed.collections !== 'object') {
-      res.status(400).json({ success: false, error: 'Invalid MoiConnect backup file.' });
+      res.status(400).json({ success: false, error: 'Invalid MConnect backup file.' });
       return;
     }
 
@@ -1526,7 +1526,7 @@ export const renderPublicTempFolder = async (_req: Request, res: Response): Prom
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>MoiConnect • Public Server Temp Storage</title>
+  <title>MConnect • Public Server Temp Storage</title>
   <link rel="icon" type="image/png" href="/favicon.png">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -2288,7 +2288,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         🔒
       </div>
       <h2 style="font-size: 22px; font-weight: 800; color: #0f172a; margin-bottom: 6px;">Admin Access Control</h2>
-      <p style="font-size: 13px; color: #64748b; margin-bottom: 24px;">Please enter developer credentials to access the MoiConnect Admin Dashboard.</p>
+      <p style="font-size: 13px; color: #64748b; margin-bottom: 24px;">Please enter developer credentials to access the MConnect Admin Dashboard.</p>
       
       <form onsubmit="return handleAdminLogin(event)">
         <div id="adminLoginError" style="display: none; background: #fee2e2; border: 1px solid #fecaca; color: #991b1b; padding: 10px 14px; border-radius: 10px; font-size: 12px; font-weight: 700; margin-bottom: 16px; text-align: left;"></div>
@@ -3126,7 +3126,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
 
               <div>
                 <label style="display: block; font-size: 12px; font-weight: 700; color: #334155; margin-bottom: 4px;">Update Title *</label>
-                <input type="text" id="pop-update-title" class="form-control" placeholder="e.g. MoiConnect Version 1.0.7 is Ready!" required style="width: 100%; font-weight: 700;" value="New App Update Available" />
+                <input type="text" id="pop-update-title" class="form-control" placeholder="e.g. MConnect Version 1.0.7 is Ready!" required style="width: 100%; font-weight: 700;" value="New App Update Available" />
               </div>
 
               <div>
@@ -3612,7 +3612,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
             <!-- Status Box for Option 1 -->
             <div id="media-status-current-box" style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 10px 12px; display: flex; align-items: center; gap: 8px; font-size: 12px; color: #166534; font-weight: 600;">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#166534" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-              <span>Using current file. It will be uploaded to Cloudinary (folder: <code>MoiConnect/pdf</code>) upon approval.</span>
+              <span>Using current file. It will be uploaded to MConnect document storage upon approval.</span>
             </div>
 
             <div style="margin-top: 12px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 10px 12px;">
@@ -5462,7 +5462,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         storageTag.style.background = '#fef3c7';
         storageTag.style.color = '#b45309';
       } else {
-        storageTag.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:4px;"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>Cloudinary CDN (MoiConnect/pdf)';
+        storageTag.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:4px;"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>Cloudinary CDN (MConnect documents)';
         storageTag.style.background = '#dcfce7';
         storageTag.style.color = '#15803d';
       }
@@ -5854,7 +5854,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
 
     async function approveCurrentPaperFromModal() {
       if (!currentModalPaper) return;
-      if (!confirm('Approve "' + currentModalPaper.title + '"? This will transfer the file to Cloudinary (folder: MoiConnect/pdf) and assign an MTID number.')) return;
+      if (!confirm('Approve "' + currentModalPaper.title + '"? This will transfer the file to MConnect document storage and assign an MTID number.')) return;
 
       const btn = document.getElementById('modal-btn-approve');
       btn.disabled = true;

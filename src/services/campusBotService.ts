@@ -431,7 +431,7 @@ export const runCampusBotConversation = async (message: any, hooks: Conversation
         senderId: assistant.id,
         senderName: assistant.name,
         senderEmail: assistant.email,
-        senderFaculty: 'MoiConnect AI Assistant',
+        senderFaculty: 'MConnect AI Assistant',
         avatarBg: assistant.avatarBg,
         text: responseText,
         replyTo: { id: sourceId, senderName: source.senderName || 'Student', senderEmail: source.senderEmail || '', text: source.text || '' },

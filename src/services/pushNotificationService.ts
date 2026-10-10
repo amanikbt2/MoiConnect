@@ -46,6 +46,55 @@ async function sendExpoChunk(chunk: any[]): Promise<{ ok: boolean; status: numbe
   return null;
 }
 
+async function checkExpoReceipts(ticketIds: string[], tokenByTicket: Map<string, string>): Promise<void> {
+  if (ticketIds.length === 0) return;
+  // Expo tickets mean the request was accepted, not that FCM displayed it.
+  // Check receipts shortly after dispatch so stale tokens and credential
+  // failures become visible in Render logs and invalid tokens are removed.
+  await new Promise((resolve) => setTimeout(resolve, 5000));
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    try {
+      const response = await fetch('https://exp.host/--/api/v2/push/getReceipts', {
+        method: 'POST',
+        headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: ticketIds }),
+        signal: controller.signal
+      });
+      const payload = await response.json().catch(() => null);
+      const receipts = payload?.data || {};
+      const invalidTokens: string[] = [];
+      for (const ticketId of ticketIds) {
+        const receipt = receipts[ticketId];
+        if (!receipt) continue;
+        if (receipt.status === 'ok') continue;
+        const errorCode = receipt.details?.error || receipt.message || 'UnknownReceiptError';
+        const token = tokenByTicket.get(ticketId);
+        console.error('[Push Notification]: Expo delivery receipt failed.', {
+          ticketId,
+          token,
+          error: errorCode,
+          details: receipt.details
+        });
+        if (errorCode === 'DeviceNotRegistered' && token) invalidTokens.push(token);
+      }
+      if (invalidTokens.length > 0) {
+        await DeviceToken.deleteMany({ token: { $in: invalidTokens } });
+      }
+      console.log('[Push Notification]: Expo receipts checked.', {
+        requested: ticketIds.length,
+        received: Object.keys(receipts).length,
+        failed: Object.values(receipts).filter((receipt: any) => receipt?.status === 'error').length
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+  } catch (error: any) {
+    console.warn('[Push Notification]: Could not check Expo delivery receipts:', error?.message || error);
+  }
+}
+
 const hasMixedProjectError = (response: { data: any } | null): boolean =>
   Array.isArray(response?.data?.errors) && response.data.errors.some((error: any) => error?.code === 'PUSH_TOO_MANY_EXPERIENCE_IDS');
 
@@ -58,6 +107,23 @@ const retryMixedProjectBatchIndividually = async (
   const tickets = individualResponses.flatMap((item) => Array.isArray(item?.data?.data) ? item!.data.data : []);
   const errors = individualResponses.flatMap((item) => Array.isArray(item?.data?.errors) ? item!.data.errors : []);
   return { ok: individualResponses.every((item) => Boolean(item?.ok)), status: 200, data: { data: tickets, errors } };
+};
+
+const getPublicNotificationAvatar = async (
+  userId: string | undefined,
+  avatarUrl: string | undefined,
+  name: string
+): Promise<string> => {
+  if (typeof avatarUrl === 'string' && /^https?:\/\//i.test(avatarUrl)) return avatarUrl;
+
+  if (userId && Types.ObjectId.isValid(userId)) {
+    const user = await User.findById(userId).select('avatarUrl').lean();
+    if (typeof user?.avatarUrl === 'string' && /^https?:\/\//i.test(user.avatarUrl)) {
+      return user.avatarUrl;
+    }
+  }
+
+  return `https://ui-avatars.com/api/?name=${encodeURIComponent(name || 'Student')}&background=15803d&color=ffffff&size=256&bold=true`;
 };
 
 // Magic Template Substitution Helper
@@ -220,9 +286,15 @@ export const dispatchPushNotification = async (payload: IPushNotificationPayload
         }
       }
       const invalidTokens: string[] = [];
+      const receiptIds: string[] = [];
+      const tokenByReceipt = new Map<string, string>();
       tickets.forEach((ticket: any, index: number) => {
         if (ticket?.status === 'ok') {
           sentCount += 1;
+          if (ticket.id) {
+            receiptIds.push(ticket.id);
+            tokenByReceipt.set(ticket.id, chunk[index]?.to);
+          }
           return;
         }
 
@@ -243,6 +315,7 @@ export const dispatchPushNotification = async (payload: IPushNotificationPayload
           console.warn('[Push Notification]: Could not remove invalid device tokens:', cleanupError);
         });
       }
+      void checkExpoReceipts(receiptIds, tokenByReceipt);
     } catch (err) {
       console.error(`[Push Notification Batch Error]:`, err);
     }
@@ -275,11 +348,15 @@ export const sendPushToTokens = async (
   if (!tokens || tokens.length === 0) return { totalTokens: 0, sentCount: 0, failedCount: 0 };
   const { categoryId, ...notificationData } = data as any;
   const avatarUrl = notificationData?.avatarUrl || notificationData?.senderAvatarUrl;
+  const notificationSubtitle = typeof notificationData?.notificationSubtitle === 'string'
+    ? notificationData.notificationSubtitle.trim()
+    : '';
   const messages = tokens.map((to) => ({
     to,
     sound: 'default',
     title,
     body,
+    ...(notificationSubtitle ? { subtitle: notificationSubtitle } : {}),
     data: notificationData,
     ...(categoryId ? { categoryId } : {}),
     // Expo uses richContent.image for Android expanded notification images.
@@ -313,9 +390,15 @@ export const sendPushToTokens = async (
         continue;
       }
       const invalidTokens: string[] = [];
+      const receiptIds: string[] = [];
+      const tokenByReceipt = new Map<string, string>();
       tickets.forEach((ticket: any, index: number) => {
         if (ticket?.status === 'ok') {
           sentCount += 1;
+          if (ticket.id) {
+            receiptIds.push(ticket.id);
+            tokenByReceipt.set(ticket.id, chunk[index]?.to);
+          }
         } else {
           failedCount += 1;
           const errorCode = ticket?.details?.error;
@@ -330,11 +413,17 @@ export const sendPushToTokens = async (
           console.warn('[Push Notification]: Could not remove invalid device tokens:', cleanupError);
         });
       }
+      void checkExpoReceipts(receiptIds, tokenByReceipt);
     } catch (err) {
       failedCount += chunk.length;
       console.error('[Push Notification Error]:', err);
     }
   }
+  console.log('[Push Notification]: Expo accepted push tickets.', {
+    totalTokens: tokens.length,
+    acceptedTickets: sentCount,
+    ticketFailures: failedCount
+  });
   return { totalTokens: tokens.length, sentCount, failedCount };
 };
 
@@ -384,19 +473,27 @@ export const sendCommunityMessagePush = async (messagePayload: {
 
     if (bodyText.length > 120) bodyText = bodyText.slice(0, 117) + '...';
 
+    const senderName = messagePayload.senderName || 'Moi Student';
+    const avatarUrl = await getPublicNotificationAvatar(
+      senderIdStr,
+      messagePayload.senderAvatarUrl,
+      senderName
+    );
+
     const result = await sendPushToTokens(
       recipientTokens,
-      messagePayload.senderName || 'Moi Student',
+      senderName,
       bodyText,
       {
         screen: 'community',
         channelId: 'mconnect_messages_v2',
         categoryId: 'community_message',
         senderId: senderIdStr,
-        senderName: messagePayload.senderName || 'Moi Student',
-        avatarUrl: messagePayload.senderAvatarUrl || null,
+        senderName,
+        avatarUrl,
         messageId: messagePayload._id,
-        messagePreview: bodyText
+        messagePreview: bodyText,
+        notificationSubtitle: bodyText
       }
     );
     if (result.failedCount > 0) {
@@ -409,7 +506,7 @@ export const sendCommunityMessagePush = async (messagePayload: {
 
 export const sendDirectMessagePush = async (
   conversation: { _id: any; participants: any[] },
-  sender: { _id?: any; name?: string; email?: string },
+  sender: { _id?: any; name?: string; email?: string; avatarUrl?: string },
   text: string
 ): Promise<void> => {
   try {
@@ -434,13 +531,20 @@ export const sendDirectMessagePush = async (
     }
 
     const title = `\u{1F4AC} ${sender.name || 'Direct Message'}`;
+    const avatarUrl = await getPublicNotificationAvatar(
+      senderIdStr,
+      sender.avatarUrl,
+      sender.name || 'Direct Message'
+    );
 
     await sendPushToTokens(recipientTokens, title, bodyText, {
       screen: 'chat',
       conversationId: String(conversation._id),
       channelId: 'mconnect_messages_v2',
       senderId: senderIdStr,
-      avatarUrl: (sender as any)?.avatarUrl || null
+      avatarUrl,
+      messagePreview: bodyText,
+      notificationSubtitle: bodyText
     });
   } catch (err) {
     console.error('[Direct Message Push Notification Error]:', err);

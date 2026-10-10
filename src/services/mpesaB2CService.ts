@@ -51,11 +51,11 @@ export async function submitB2CPayout(payout: any): Promise<{ submitted: boolean
       PartyA: process.env.MPESA_B2C_SHORT_CODE,
       PartyB: normalizePhone(payout.phone),
       Remarks: payout.payoutType === 'manual'
-        ? 'MoiConnect manual reward'
-        : `MoiConnect reward milestone ${payout.milestonePoints}`,
+        ? 'MConnect manual reward'
+        : `MConnect reward milestone ${payout.milestonePoints}`,
       QueueTimeOutURL: process.env.MPESA_B2C_TIMEOUT_URL,
       ResultURL: process.env.MPESA_B2C_RESULT_URL,
-      Occasion: 'MoiConnect reward'
+      Occasion: 'MConnect reward'
     })
   });
   const body: any = await response.json();
