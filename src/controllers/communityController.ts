@@ -7,6 +7,11 @@ import { uploadTempFileToCloudinary } from '../services/tempFileService';
 import { getCampusBotsGeneration, isBotStopCommand, runCampusBotConversation, shouldCampusBotRespond, stopCampusBots } from '../services/campusBotService';
 import { getAppSettingValue } from '../models/AppSetting';
 
+const getPublicAvatarUrl = (value?: string): string | undefined => {
+  const normalized = String(value || '').trim();
+  return /^https?:\/\//i.test(normalized) ? normalized : undefined;
+};
+
 // 1. Get Community Messages (Support Incremental Delta Sync via ?since=)
 export const getCommunityMessages = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -62,7 +67,7 @@ export const getCommunityMessages = async (req: Request, res: Response): Promise
     const responseMessages = messages.map((message: any) => ({
       ...message,
       senderBadge: badgeByUserId.get(String(message.senderId || '')) || undefined,
-      senderAvatarUrl: avatarByUserId.get(String(message.senderId || '')) || message.senderAvatarUrl || undefined
+      senderAvatarUrl: getPublicAvatarUrl(avatarByUserId.get(String(message.senderId || '')) || message.senderAvatarUrl)
     }));
 
     const allowCommunityChat = await getAppSettingValue('allowCommunityChat', true);
@@ -146,7 +151,7 @@ export const postCommunityMessage = async (req: Request, res: Response): Promise
         senderFaculty: senderFaculty || 'School of Science & Computing',
         senderCourse,
         senderPhone,
-        senderAvatarUrl: user?.avatarUrl || senderAvatarUrl,
+        senderAvatarUrl: getPublicAvatarUrl(user?.avatarUrl) || getPublicAvatarUrl(senderAvatarUrl),
         senderBadge: user?.badge || senderBadge,
         avatarBg: avatarBg || '#15803d',
         text: text?.trim() || '',

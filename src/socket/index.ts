@@ -300,7 +300,9 @@ export const setupSocketIO = (io: SocketIOServer): void => {
           ? await User.findById(userId).select('badge avatarUrl').lean()
           : null;
         const effectiveSenderName = senderName || 'Moi Student';
-        const effectiveSenderAvatarUrl = senderUser?.avatarUrl || senderAvatarUrl;
+        const effectiveSenderAvatarUrl = /^https?:\/\//i.test(String(senderUser?.avatarUrl || ''))
+          ? senderUser?.avatarUrl
+          : (/^https?:\/\//i.test(String(senderAvatarUrl || '')) ? senderAvatarUrl : undefined);
         const generatedId = new Types.ObjectId().toString();
         const nowISO = new Date().toISOString();
 

@@ -4499,9 +4499,12 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
             '<td style="font-weight:700;color:#0f172a;max-width:280px;word-break:break-word;">' + escapeMaterialHtml(report.query) + '</td>' +
             '<td><span class="badge badge-blue">' + escapeMaterialHtml(String(report.source || 'home').replace('_', ' ')) + '</span></td>' +
             '<td>' + result + '</td>' +
-            '<td style="text-align:right;"><button type="button" class="btn btn-danger" style="padding:5px 9px;font-size:11px;" onclick="deleteSearchReport(\'' + escapeMaterialHtml(report._id) + '\')">Delete</button></td>' +
+            '<td style=\"text-align:right;\"><button type=\"button\" class=\"btn btn-danger app-report-delete-btn\" data-report-id=\"' + escapeMaterialHtml(report._id) + '\" style=\"padding:5px 9px;font-size:11px;\">Delete</button></td>' +
           '</tr>';
         }).join('');
+        tbody.querySelectorAll('.app-report-delete-btn').forEach(function(button) {
+          button.addEventListener('click', function() { deleteSearchReport(button.getAttribute('data-report-id')); });
+        });
       } catch (error) {
         tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:28px;color:#dc2626;">' + escapeMaterialHtml(error.message || 'Failed to load app reports') + '</td></tr>';
       }
