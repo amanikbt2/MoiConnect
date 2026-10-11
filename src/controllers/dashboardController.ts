@@ -353,6 +353,134 @@ export const restoreDatabase = async (req: Request, res: Response): Promise<void
   }
 };
 // Material management is loaded only when the admin opens the tab.
+export const searchDashboardMaterials = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const {
+      q,
+      search,
+      mtid,
+      courseCode,
+      unitCode,
+      department,
+      school,
+      type,
+      status,
+      limit = '50',
+      page = '1'
+    } = req.query;
+
+    const filter: any = {};
+
+    // Filter by status (optional, e.g. status=approved or status=pending; defaults to all)
+    if (status && status !== 'all') {
+      filter.status = status;
+    }
+
+    // Filter by MTID
+    if (mtid) {
+      filter.mtid = { $regex: String(mtid).trim(), $options: 'i' };
+    }
+
+    // Filter by Course / Unit Code
+    const code = courseCode || unitCode;
+    if (code) {
+      filter.$or = [
+        { courseCode: { $regex: String(code).trim(), $options: 'i' } },
+        { unitCode: { $regex: String(code).trim(), $options: 'i' } }
+      ];
+    }
+
+    // Filter by Department
+    if (department) {
+      filter.department = { $regex: String(department).trim(), $options: 'i' };
+    }
+
+    // Filter by School
+    if (school) {
+      filter.school = { $regex: String(school).trim(), $options: 'i' };
+    }
+
+    // Filter by Type
+    if (type) {
+      filter.type = type;
+    }
+
+    // Smart multi-field search across title, unit code, department, school, description, MTID
+    const searchQuery = String(q || search || '').trim();
+    if (searchQuery) {
+      const regex = { $regex: searchQuery, $options: 'i' };
+      const searchConditions = [
+        { mtid: regex },
+        { title: regex },
+        { courseCode: regex },
+        { unitCode: regex },
+        { unitName: regex },
+        { department: regex },
+        { school: regex },
+        { description: regex }
+      ];
+
+      if (filter.$or) {
+        filter.$and = [{ $or: filter.$or }, { $or: searchConditions }];
+        delete filter.$or;
+      } else {
+        filter.$or = searchConditions;
+      }
+    }
+
+    const pageNum = Math.max(1, parseInt(String(page), 10) || 1);
+    const limitNum = Math.min(1000, Math.max(1, parseInt(String(limit), 10) || 50));
+    const skip = (pageNum - 1) * limitNum;
+
+    const [total, materials] = await Promise.all([
+      Paper.countDocuments(filter),
+      Paper.find(filter)
+        .populate('submittedBy', 'name email')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limitNum)
+        .lean()
+    ]);
+
+    const formattedData = materials.map((m: any) => ({
+      id: m._id,
+      mtid: m.mtid || `MTID-${String(m._id).slice(-6).toUpperCase()}`,
+      title: m.title,
+      type: m.type,
+      school: m.school,
+      department: m.department,
+      courseCode: m.courseCode || m.unitCode || '',
+      unitCode: m.unitCode || m.courseCode || '',
+      unitName: m.unitName || '',
+      academicYear: m.academicYear || '',
+      semester: m.semester || '',
+      examYear: m.examYear || null,
+      description: m.description || '',
+      fileUrl: m.fileUrl || '',
+      thumbnail: m.thumbnail || '',
+      fileType: m.fileType || 'pdf',
+      fileSize: m.fileSize || 0,
+      status: m.status,
+      downloads: m.downloads || 0,
+      ratingScore: m.ratingScore || '4.8',
+      submittedBy: m.submittedBy ? { name: m.submittedBy.name, email: m.submittedBy.email } : null,
+      createdAt: m.createdAt,
+      updatedAt: m.updatedAt
+    }));
+
+    res.json({
+      success: true,
+      total,
+      page: pageNum,
+      limit: limitNum,
+      totalPages: Math.ceil(total / limitNum),
+      data: formattedData
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to search materials' });
+  }
+};
+
 export const getDashboardMaterials = async (_req: Request, res: Response): Promise<void> => {
   try {
     const materials = await Paper.find()
@@ -2881,10 +3009,11 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
                 <th>Badge</th>
                 <th>Presence</th>
                 <th>Joined Date</th>
+                <th>Info</th>
               </tr>
             </thead>
             <tbody id="users-table-body">
-              <tr><td colspan="9" style="text-align: center; padding: 32px; color: #94a3b8;">Loading user database...</td></tr>
+              <tr><td colspan="10" style="text-align: center; padding: 32px; color: #94a3b8;">Loading user database...</td></tr>
             </tbody>
           </table>
         </div>
@@ -3861,6 +3990,19 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
             </button>
           </div>
         </form>
+      </div>
+    </div>
+
+    <div id="user-info-modal" class="modal-backdrop hidden" onclick="if(event.target === this) closeUserInfo()">
+      <div class="modal-content" style="max-width: 620px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px;">
+          <div style="display:flex;align-items:center;gap:12px;">
+            <div id="user-info-avatar" style="width:46px;height:46px;border-radius:50%;background:#15803d;color:#fff;display:grid;place-items:center;font-size:20px;font-weight:900;"></div>
+            <div><h3 id="user-info-title" style="font-size:19px;font-weight:900;color:#0f172a;margin:0;">User information</h3><p id="user-info-subtitle" style="font-size:12px;color:#64748b;margin:3px 0 0;"></p></div>
+          </div>
+          <button type="button" onclick="closeUserInfo()" aria-label="Close user information" style="border:0;background:#f1f5f9;color:#475569;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer;">×</button>
+        </div>
+        <div id="user-info-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;"></div>
       </div>
     </div>
 
@@ -6223,10 +6365,59 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       }
     }
 
+    function formatAdminUserDate(value) {
+      if (!value) return 'Not available';
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? 'Not available' : date.toLocaleString();
+    }
+
+    function closeUserInfo() {
+      const modal = document.getElementById('user-info-modal');
+      if (modal) modal.classList.add('hidden');
+    }
+
+    function openUserInfo(userId) {
+      const user = (globalData?.users || []).find(function(item) { return String(item._id) === String(userId); });
+      if (!user) return;
+      const onlineIds = globalData?.stats?.onlineUserIds || [];
+      const isOnline = onlineIds.includes(user._id);
+      const safeName = escapeMaterialHtml(user.name || 'Student');
+      const initial = (user.name || 'U')[0].toUpperCase();
+      const field = function(label, value) {
+        return '<div style="padding:11px 12px;border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;">' +
+          '<div style="font-size:10px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px;">' + escapeMaterialHtml(label) + '</div>' +
+          '<div style="font-size:13px;font-weight:700;color:#0f172a;word-break:break-word;">' + escapeMaterialHtml(value || 'Not provided') + '</div>' +
+        '</div>';
+      };
+      document.getElementById('user-info-avatar').textContent = initial;
+      document.getElementById('user-info-title').textContent = user.name || 'Student';
+      document.getElementById('user-info-subtitle').textContent = user.email || 'No email address';
+      document.getElementById('user-info-grid').innerHTML = [
+        field('Full name', user.name),
+        field('Email', user.email),
+        field('Phone', user.phone),
+        field('University', user.university || user.universityName || 'Moi University'),
+        field('Faculty / School', user.school),
+        field('Course / Programme', user.course),
+        field('Year of study', user.yearOfStudy),
+        field('Roles', (user.roles || []).join(', ')),
+        field('Active role', user.activeRole),
+        field('Account status', user.accountStatus),
+        field('Landlord status', user.landlordStatus),
+        field('Points', String(Number(user.points || 0))),
+        field('Rewarded amount', 'KSh ' + Number(user.rewardedAmount || 0).toFixed(2)),
+        field('Badge', user.badge || 'None'),
+        field('Date joined', formatAdminUserDate(user.createdAt)),
+        field('Last online', isOnline ? 'Online now' : formatAdminUserDate(user.lastOnlineAt || user.createdAt)),
+        field('User ID', user._id)
+      ].join('');
+      document.getElementById('user-info-modal').classList.remove('hidden');
+    }
+
     function renderUsers(users) {
       const tbody = document.getElementById('users-table-body');
       if (!users || users.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; padding: 32px; color: #94a3b8;">No users found.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; padding: 32px; color: #94a3b8;">No users found.</td></tr>';
         return;
       }
 
@@ -6236,13 +6427,14 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         const isOnline = onlineIds.includes(u._id);
         const initial = (u.name || 'U')[0].toUpperCase();
         const roles = (u.roles || ['student']).join(', ');
+        const lastOnline = isOnline ? 'Online now' : formatAdminUserDate(u.lastOnlineAt || u.createdAt);
         const landlordBadge = u.landlordStatus === 'approved'
           ? '<span style="font-size: 10px; font-weight: 800; padding: 3px 8px; border-radius: 6px; background: #dcfce7; color: #166534;">approved</span>'
           : '<span style="font-size: 10px; font-weight: 800; padding: 3px 8px; border-radius: 6px; background: #f1f5f9; color: #64748b;">' + (u.landlordStatus || 'none') + '</span>';
 
         const onlineBadge = isOnline
           ? '<span style="font-size: 10px; font-weight: 800; background: #dcfce7; color: #15803d; padding: 3px 8px; border-radius: 12px; border: 1px solid #bbf7d0; display: inline-flex; align-items: center; gap: 4px;"><span style="width: 6px; height: 6px; background-color: #22c55e; border-radius: 50%;"></span> Online</span>'
-          : '<span style="font-size: 10px; font-weight: 600; color: #94a3b8; display: inline-flex; align-items: center; gap: 4px;"><span style="width: 6px; height: 6px; background-color: #cbd5e1; border-radius: 50%;"></span> Offline</span>';
+          : '<span style="font-size: 10px; font-weight: 600; color: #94a3b8; display: inline-flex; align-items: center; gap: 4px;"><span style="width: 6px; height: 6px; background-color: #cbd5e1; border-radius: 50%;"></span> Offline</span><div style="font-size:10px;color:#94a3b8;margin-top:4px;white-space:nowrap;">' + escapeMaterialHtml(lastOnline) + '</div>';
 
         const badgeColors = { blue: '#2563eb', red: '#dc2626', green: '#16a34a' };
         const userBadge = badgeColors[u.badge]
@@ -6270,6 +6462,9 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
           '<td>' + onlineBadge + '</td>' +
           '<td style="color: #94a3b8; font-size: 12px;">' +
             new Date(u.createdAt).toLocaleDateString() +
+          '</td>' +
+          '<td style="text-align:center;">' +
+            '<button type="button" onclick="openUserInfo(&quot;' + escapeMaterialHtml(u._id) + '&quot;)" aria-label="View full user information" title="View full user information" style="width:28px;height:28px;border-radius:50%;border:1px solid #bfdbfe;background:#eff6ff;color:#2563eb;font-weight:900;font-size:14px;cursor:pointer;">i</button>' +
           '</td>' +
         '</tr>';
       }).join('');

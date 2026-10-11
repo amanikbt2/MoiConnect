@@ -76,6 +76,8 @@ router.get('/dashboard/ai-overages', dashboardController.getAiOverages);
 router.delete('/dashboard/ai-overages', dashboardController.clearAiOverages);
 router.get('/dashboard/ai-context', dashboardController.getAiContextSettings);
 router.put('/dashboard/ai-context', dashboardController.updateAiContextSettings);
+router.get('/dashboard/materials/search', dashboardController.searchDashboardMaterials);
+router.get('/materials/search', dashboardController.searchDashboardMaterials);
 router.get('/dashboard/materials', dashboardController.getDashboardMaterials);
 router.get('/dashboard/materials/download-zip', dashboardController.downloadDashboardMaterialsZip);
 router.post('/dashboard/materials/publish', tempUpload.fields([{ name: 'file', maxCount: 1 }, { name: 'thumbnail', maxCount: 1 }, { name: 'ttsFile', maxCount: 1 }]), dashboardController.publishAdminMaterial);

@@ -502,7 +502,11 @@ export const setupSocketIO = (io: SocketIOServer): void => {
       broadcastOnlineCount();
       console.log(`[Socket Disconnected]: ${isGuest ? 'Guest (Unknown)' : `User ${userId}`} (Active: ${activeSockets.size})`);
       if (userId) {
-        User.findById(userId).select('name').then(u => {
+        const stillConnected = Array.from(activeSockets.values()).some((session) => session.userId === userId);
+        const userLookup = stillConnected
+          ? User.findById(userId).select('name')
+          : User.findByIdAndUpdate(userId, { $set: { lastOnlineAt: new Date() } }, { new: true }).select('name');
+        userLookup.then(u => {
           if (u) {
             socket.to('community_room').emit('community:system_event', {
               id: `sys_disc_${socket.id}_${Date.now()}`,

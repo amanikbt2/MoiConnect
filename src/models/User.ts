@@ -23,6 +23,7 @@ export interface IUserDocument extends Document {
     requestedAt: Date;
   };
   refreshTokens: string[];
+  lastOnlineAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -76,6 +77,7 @@ const userSchema = new Schema<IUserDocument>(
       proofDetails: String,
       requestedAt: Date
     },
+    lastOnlineAt: { type: Date },
     refreshTokens: [{ type: String }]
   },
   { timestamps: true }

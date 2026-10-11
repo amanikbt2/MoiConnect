@@ -301,13 +301,14 @@ export const uploadCommunityMedia = async (req: Request, res: Response): Promise
     }
 
     const file = req.file;
-    const mime = file.mimetype || '';
+    const mime = (file.mimetype || '').toLowerCase();
+    const origName = (file.originalname || '').toLowerCase();
     let fileType: 'pdf' | 'doc' | 'image' | 'video' = 'pdf';
-    if (mime.includes('image')) {
+    if (mime.includes('image') || origName.match(/\.(jpg|jpeg|png|gif|webp|bmp|heic|svg)$/i)) {
       fileType = 'image';
-    } else if (mime.includes('video')) {
+    } else if (mime.includes('video') || origName.match(/\.(mp4|mov|m4v|webm|mkv|avi|3gp|flv|wmv)$/i)) {
       fileType = 'video';
-    } else if (mime.includes('word') || file.originalname.endsWith('.doc') || file.originalname.endsWith('.docx')) {
+    } else if (mime.includes('word') || origName.endsWith('.doc') || origName.endsWith('.docx')) {
       fileType = 'doc';
     }
 

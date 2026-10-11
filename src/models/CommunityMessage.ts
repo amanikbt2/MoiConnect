@@ -4,7 +4,7 @@ export interface IFileAttachment {
   name: string;
   url: string;
   size: string;
-  type: 'pdf' | 'doc' | 'image';
+  type: 'pdf' | 'doc' | 'image' | 'video';
 }
 
 export interface IReplyTo {
@@ -58,7 +58,7 @@ const communityMessageSchema = new Schema<ICommunityMessage>(
       name: { type: String },
       url: { type: String },
       size: { type: String },
-      type: { type: String, enum: ['pdf', 'doc', 'image'] }
+      type: { type: String, enum: ['pdf', 'doc', 'image', 'video'] }
     },
     replyTo: {
       id: { type: String },
