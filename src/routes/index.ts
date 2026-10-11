@@ -32,6 +32,7 @@ import * as notificationController from '../controllers/notificationController';
 import * as communityController from '../controllers/communityController';
 import * as liveController from '../controllers/liveController';
 import * as admin2Controller from '../controllers/admin2Controller';
+import * as searchReportController from '../controllers/searchReportController';
 import { handleB2CResult } from '../services/mpesaB2CService';
 import { tempUpload } from '../middleware/upload';
 
@@ -66,7 +67,11 @@ router.get('/dashboard/backup', dashboardController.backupDatabase);
 router.post('/dashboard/restore', tempUpload.single('backup'), dashboardController.restoreDatabase);
 
 // Web Dashboard API Routes
+router.post('/search-reports', optionalAuthenticate, searchReportController.createSearchReport);
 router.get('/dashboard/overview', dashboardController.getDashboardOverview);
+router.get('/dashboard/search-reports', searchReportController.getSearchReports);
+router.delete('/dashboard/search-reports/:id', searchReportController.deleteSearchReport);
+router.delete('/dashboard/search-reports', searchReportController.deleteAllSearchReports);
 router.get('/dashboard/user-emails.csv', dashboardController.downloadUserEmailsCsv);
 router.get('/dashboard/direct-payments', dashboardController.getDirectPaymentUsers);
 router.post('/dashboard/direct-payments/:id/pay', dashboardController.createDirectPayment);

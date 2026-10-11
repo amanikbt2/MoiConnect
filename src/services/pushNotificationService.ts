@@ -415,6 +415,64 @@ export const sendPushToTokens = async (
   return { totalTokens: tokens.length, sentCount, failedCount };
 };
 
+export const formatSmartNotificationSnippet = (
+  text?: string,
+  fileAttachment?: any,
+  stickerId?: string
+): string => {
+  const cleanText = (text || '').trim();
+
+  if (fileAttachment && (fileAttachment.url || fileAttachment.name || fileAttachment.type || fileAttachment.paperId)) {
+    const rawType = (fileAttachment.type || '').toLowerCase();
+    const name = (fileAttachment.name || fileAttachment.title || '').toLowerCase();
+    const url = (fileAttachment.url || '').toLowerCase();
+
+    const isVideo =
+      rawType === 'video' ||
+      /\.(mp4|mov|m4v|webm|mkv|avi|3gp|flv|wmv)($|\?)/i.test(name) ||
+      /\.(mp4|mov|m4v|webm|mkv|avi|3gp|flv|wmv)($|\?)/i.test(url) ||
+      /\/video\/upload\//i.test(url);
+
+    const isImage =
+      !isVideo &&
+      (rawType === 'image' ||
+        /\.(jpg|jpeg|png|gif|webp|bmp|heic|svg)($|\?)/i.test(name) ||
+        /\.(jpg|jpeg|png|gif|webp|bmp|heic|svg)($|\?)/i.test(url) ||
+        /\/image\/upload\//i.test(url));
+
+    const isAudio =
+      !isVideo &&
+      !isImage &&
+      (rawType === 'audio' ||
+        /\.(mp3|wav|m4a|aac|ogg|opus|amr)($|\?)/i.test(name) ||
+        /\.(mp3|wav|m4a|aac|ogg|opus|amr)($|\?)/i.test(url));
+
+    if (isVideo) {
+      return cleanText ? `\u{1F3A5} ${cleanText}` : '\u{1F3A5} Video';
+    }
+
+    if (isImage) {
+      return cleanText ? `\u{1F4F7} ${cleanText}` : '\u{1F4F7} Photo';
+    }
+
+    if (isAudio) {
+      return cleanText ? `\u{1F3A4} ${cleanText}` : '\u{1F3A4} Voice message';
+    }
+
+    // Document / PDF / Notes
+    const cleanDocName = (fileAttachment.title || fileAttachment.name || 'Document')
+      .replace(/[_-]/g, ' ')
+      .trim();
+    return cleanText ? `\u{1F4C4} ${cleanText}` : `\u{1F4C4} ${cleanDocName}`;
+  }
+
+  if (stickerId) {
+    return cleanText ? `\u{2728} ${cleanText}` : '\u{2728} Sticker';
+  }
+
+  return cleanText || 'New message in Community';
+};
+
 export const sendCommunityMessagePush = async (messagePayload: {
   senderId?: string;
   senderName?: string;
@@ -448,18 +506,23 @@ export const sendCommunityMessagePush = async (messagePayload: {
 
     if (!recipientTokens || recipientTokens.length === 0) return;
 
-    let bodyText = messagePayload.text?.trim() || '';
-    if (!bodyText) {
-      if (messagePayload.fileAttachment?.name || messagePayload.fileAttachment?.url) {
-        bodyText = `\u{1F4CE} Sent a file: ${messagePayload.fileAttachment.name || 'Attachment'}`;
-      } else if (messagePayload.stickerId) {
-        bodyText = '\u{1F3A8} Sent a sticker';
-      } else {
-        bodyText = 'New message in Community';
-      }
-    }
+    let bodyText = formatSmartNotificationSnippet(
+      messagePayload.text,
+      messagePayload.fileAttachment,
+      messagePayload.stickerId
+    );
 
     if (bodyText.length > 240) bodyText = bodyText.slice(0, 237) + '...';
+
+    const isImage =
+      messagePayload.fileAttachment &&
+      ((messagePayload.fileAttachment.type || '').toLowerCase() === 'image' ||
+        /\.(jpg|jpeg|png|webp|gif)($|\?)/i.test(messagePayload.fileAttachment.name || '') ||
+        /\.(jpg|jpeg|png|webp|gif)($|\?)/i.test(messagePayload.fileAttachment.url || ''));
+
+    const richContent = isImage && messagePayload.fileAttachment?.url
+      ? { image: messagePayload.fileAttachment.url }
+      : undefined;
 
     const senderName = messagePayload.senderName || 'Moi Student';
     const avatarUrl = await getPublicNotificationAvatar(
@@ -483,7 +546,8 @@ export const sendCommunityMessagePush = async (messagePayload: {
         messageId: messagePayload._id,
         messagePreview: bodyText,
         notificationSubtitle: bodyText,
-        notificationType: 'community_message'
+        notificationType: 'community_message',
+        ...(richContent ? { richContent } : {})
       }
     );
     if (result.failedCount > 0) {
@@ -497,7 +561,8 @@ export const sendCommunityMessagePush = async (messagePayload: {
 export const sendDirectMessagePush = async (
   conversation: { _id: any; participants: any[] },
   sender: { _id?: any; name?: string; email?: string; avatarUrl?: string },
-  text: string
+  text: string,
+  fileAttachment?: any
 ): Promise<void> => {
   try {
     const senderIdStr = sender._id ? String(sender._id) : '';
@@ -515,10 +580,20 @@ export const sendDirectMessagePush = async (
 
     if (!recipientTokens || recipientTokens.length === 0) return;
 
-    let bodyText = text?.trim() || 'Sent a private message';
+    let bodyText = formatSmartNotificationSnippet(text, fileAttachment);
     if (bodyText.length > 120) {
       bodyText = bodyText.slice(0, 117) + '...';
     }
+
+    const isImage =
+      fileAttachment &&
+      ((fileAttachment.type || '').toLowerCase() === 'image' ||
+        /\.(jpg|jpeg|png|webp|gif)($|\?)/i.test(fileAttachment.name || '') ||
+        /\.(jpg|jpeg|png|webp|gif)($|\?)/i.test(fileAttachment.url || ''));
+
+    const richContent = isImage && fileAttachment?.url
+      ? { image: fileAttachment.url }
+      : undefined;
 
     const title = `\u{1F4AC} ${sender.name || 'Direct Message'}`;
     const avatarUrl = await getPublicNotificationAvatar(
@@ -534,7 +609,8 @@ export const sendDirectMessagePush = async (
       senderId: senderIdStr,
       avatarUrl,
       messagePreview: bodyText,
-      notificationSubtitle: bodyText
+      notificationSubtitle: bodyText,
+      ...(richContent ? { richContent } : {})
     });
   } catch (err) {
     console.error('[Direct Message Push Notification Error]:', err);

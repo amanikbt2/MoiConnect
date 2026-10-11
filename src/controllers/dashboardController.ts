@@ -2512,6 +2512,12 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         Stats & Registered Users
       </button>
 
+      <button id="tab-btn-app-reports" onclick="switchTab('app-reports')" class="tab-btn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V5"/><path d="M4 19h16"/><path d="M8 16v-5"/><path d="M12 16V7"/><path d="M16 16v-8"/></svg>
+        App Reports
+        <span id="badge-app-reports-count" class="tab-badge hidden">0</span>
+      </button>
+
       <button id="tab-btn-direct-payments" onclick="switchTab('direct-payments')" class="tab-btn">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/><path d="M6 15h3"/></svg>
         Direct Payments
@@ -3015,6 +3021,28 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
             <tbody id="users-table-body">
               <tr><td colspan="10" style="text-align: center; padding: 32px; color: #94a3b8;">Loading user database...</td></tr>
             </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB: APP REPORTS -->
+    <section id="tab-content-app-reports" class="tab-content hidden">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">App Reports</h2>
+            <p class="card-sub">See what users searched for and identify missing materials.</p>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
+            <button type="button" class="btn btn-view" onclick="loadSearchReports()">↻ Refresh Reports</button>
+            <button type="button" class="btn btn-danger" onclick="deleteAllSearchReports()">Delete All</button>
+          </div>
+        </div>
+        <div class="table-responsive" style="margin-top:16px;">
+          <table>
+            <thead><tr><th>User</th><th>Email</th><th>Date &amp; Time</th><th>Search words</th><th>Section</th><th>Result</th><th style="text-align:right;">Action</th></tr></thead>
+            <tbody id="search-reports-table-body"><tr><td colspan="7" style="text-align:center;padding:32px;color:#94a3b8;">Open this tab to load app reports.</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -4439,6 +4467,69 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         loadTempFiles();
       } else if (tabId === 'feedbacks') {
         loadReportsTab();
+      } else if (tabId === 'app-reports') {
+        loadSearchReports();
+      }
+    }
+
+    async function loadSearchReports() {
+      const tbody = document.getElementById('search-reports-table-body');
+      if (!tbody) return;
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:28px;color:#94a3b8;">Loading app reports...</td></tr>';
+      try {
+        const response = await fetch('/api/v1/dashboard/search-reports');
+        const json = await response.json();
+        if (!response.ok || !json.success) throw new Error(json.error || 'Failed to load app reports');
+        const reports = json.reports || [];
+        const badge = document.getElementById('badge-app-reports-count');
+        if (badge) {
+          badge.textContent = String(reports.length);
+          badge.classList.toggle('hidden', reports.length === 0);
+        }
+        if (!reports.length) {
+          tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:48px;color:#94a3b8;">No searches have been reported yet.</td></tr>';
+          return;
+        }
+        tbody.innerHTML = reports.map(function(report) {
+          const result = report.found === true ? '<span class="badge badge-green">Found</span>' : report.found === false ? '<span class="badge badge-amber">Not found</span>' : '<span class="badge">Pending</span>';
+          return '<tr>' +
+            '<td style="font-weight:700;color:#0f172a;">' + escapeMaterialHtml(report.name || 'Guest') + '</td>' +
+            '<td style="font-size:12px;color:#475569;">' + escapeMaterialHtml(report.email || 'Guest') + '</td>' +
+            '<td style="font-size:12px;color:#64748b;white-space:nowrap;">' + formatAdminUserDate(report.createdAt) + '</td>' +
+            '<td style="font-weight:700;color:#0f172a;max-width:280px;word-break:break-word;">' + escapeMaterialHtml(report.query) + '</td>' +
+            '<td><span class="badge badge-blue">' + escapeMaterialHtml(String(report.source || 'home').replace('_', ' ')) + '</span></td>' +
+            '<td>' + result + '</td>' +
+            '<td style="text-align:right;"><button type="button" class="btn btn-danger" style="padding:5px 9px;font-size:11px;" onclick="deleteSearchReport(\'' + escapeMaterialHtml(report._id) + '\')">Delete</button></td>' +
+          '</tr>';
+        }).join('');
+      } catch (error) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:28px;color:#dc2626;">' + escapeMaterialHtml(error.message || 'Failed to load app reports') + '</td></tr>';
+      }
+    }
+
+    async function deleteSearchReport(id) {
+      if (!window.confirm('Delete this app report permanently?')) return;
+      try {
+        const response = await fetch('/api/v1/dashboard/search-reports/' + encodeURIComponent(id), { method: 'DELETE' });
+        const json = await response.json();
+        if (!response.ok || !json.success) throw new Error(json.error || 'Failed to delete report');
+        showToast('App report deleted.');
+        loadSearchReports();
+      } catch (error) {
+        showToast(error.message || 'Failed to delete report.', true);
+      }
+    }
+
+    async function deleteAllSearchReports() {
+      if (!window.confirm('Delete every app report permanently?')) return;
+      try {
+        const response = await fetch('/api/v1/dashboard/search-reports', { method: 'DELETE' });
+        const json = await response.json();
+        if (!response.ok || !json.success) throw new Error(json.error || 'Failed to delete reports');
+        showToast('All app reports deleted.');
+        loadSearchReports();
+      } catch (error) {
+        showToast(error.message || 'Failed to delete reports.', true);
       }
     }
 
@@ -5184,6 +5275,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
           else if (tabId === 'temp' && typeof loadTempFiles === 'function') loadTempFiles();
           else if (tabId === 'community' && typeof loadCommunityMessagesAdmin === 'function') loadCommunityMessagesAdmin();
           else if (tabId === 'feedbacks' && typeof loadReportsTab === 'function') loadReportsTab();
+          else if (tabId === 'app-reports' && typeof loadSearchReports === 'function') loadSearchReports();
           else if (tabId === 'direct-payments' && typeof loadDirectPayments === 'function') loadDirectPayments();
           else if (tabId === 'admin2' && typeof loadAdmin2Credentials === 'function') loadAdmin2Credentials();
           else if (tabId === 'ai-overages' && typeof loadAiOverages === 'function') loadAiOverages();
@@ -6368,7 +6460,19 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
     function formatAdminUserDate(value) {
       if (!value) return 'Not available';
       const date = new Date(value);
-      return Number.isNaN(date.getTime()) ? 'Not available' : date.toLocaleString();
+      if (Number.isNaN(date.getTime())) return 'Not available';
+      const day = String(date.getDate()).padStart(2, '0');
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const year = String(date.getFullYear());
+      const time = date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+      return day + '/' + month + '/' + year + ', ' + time;
+    }
+
+    function formatAdminUserDateOnly(value) {
+      if (!value) return 'Not available';
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return 'Not available';
+      return String(date.getDate()).padStart(2, '0') + '/' + String(date.getMonth() + 1).padStart(2, '0') + '/' + date.getFullYear();
     }
 
     function closeUserInfo() {
@@ -6461,7 +6565,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
           '<td>' + userBadge + '</td>' +
           '<td>' + onlineBadge + '</td>' +
           '<td style="color: #94a3b8; font-size: 12px;">' +
-            new Date(u.createdAt).toLocaleDateString() +
+            formatAdminUserDateOnly(u.createdAt) +
           '</td>' +
           '<td style="text-align:center;">' +
             '<button type="button" onclick="openUserInfo(&quot;' + escapeMaterialHtml(u._id) + '&quot;)" aria-label="View full user information" title="View full user information" style="width:28px;height:28px;border-radius:50%;border:1px solid #bfdbfe;background:#eff6ff;color:#2563eb;font-weight:900;font-size:14px;cursor:pointer;">i</button>' +
