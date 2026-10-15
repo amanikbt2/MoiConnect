@@ -73,6 +73,7 @@ router.get('/dashboard/search-reports', searchReportController.getSearchReports)
 router.delete('/dashboard/search-reports/:id', searchReportController.deleteSearchReport);
 router.delete('/dashboard/search-reports', searchReportController.deleteAllSearchReports);
 router.get('/dashboard/user-emails.csv', dashboardController.downloadUserEmailsCsv);
+router.delete('/dashboard/users/:id', dashboardController.deleteDashboardUser);
 router.get('/dashboard/direct-payments', dashboardController.getDirectPaymentUsers);
 router.post('/dashboard/direct-payments/:id/pay', dashboardController.createDirectPayment);
 router.patch('/dashboard/direct-payments/:id/blacklist', dashboardController.setPaymentBlacklist);
@@ -101,6 +102,11 @@ router.delete('/dashboard/temp-files/:filename', dashboardController.deleteDashb
 router.post('/dashboard/temp-files/delete-batch', dashboardController.deleteDashboardBatchTempFiles);
 router.get('/dashboard/community-messages', dashboardController.getDashboardCommunityMessages);
 router.delete('/dashboard/community-messages', dashboardController.deleteDashboardCommunityMessages);
+router.get('/dashboard/reports', adminController.getAdminReports);
+router.patch('/dashboard/reports/:id', adminController.reviewReport);
+router.delete('/dashboard/reports/:id', adminController.deleteReport);
+router.delete('/dashboard/reports', adminController.deleteAllReports);
+router.delete('/dashboard/reports/:id/delete-target', adminController.deleteReportedItem);
 router.get('/dashboard/admin2-credentials', authenticate, requireRole('admin'), admin2Controller.listCredentials);
 router.post('/dashboard/admin2-credentials', authenticate, requireRole('admin'), admin2Controller.createCredential);
 router.patch('/dashboard/admin2-credentials/:id', authenticate, requireRole('admin'), admin2Controller.updateCredential);
@@ -176,7 +182,7 @@ router.post('/favorites', authenticate, validateBody(createFavoriteSchema), favo
 router.delete('/favorites/:id', authenticate, favoriteController.removeFavorite);
 
 // Report Routes
-router.post('/reports', authenticate, validateBody(createReportSchema), reportController.createReport);
+router.post('/reports', optionalAuthenticate, validateBody(createReportSchema), reportController.createReport);
 
 // Admin Routes (All protected by requireRole('admin'))
 router.use('/admin', authenticate, requireRole('admin'));
@@ -194,6 +200,8 @@ router.get('/admin/landlords', adminController.getPendingLandlords);
 router.patch('/admin/landlords/:id/verify', adminController.verifyLandlord);
 router.get('/admin/reports', adminController.getAdminReports);
 router.patch('/admin/reports/:id', adminController.reviewReport);
+router.delete('/admin/reports/:id', adminController.deleteReport);
+router.delete('/admin/reports', adminController.deleteAllReports);
 router.delete('/admin/reports/:id/delete-target', adminController.deleteReportedItem);
 
 export default router;

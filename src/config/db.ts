@@ -1,5 +1,13 @@
+import dns from 'dns';
 import mongoose from 'mongoose';
 import { config } from './index';
+
+// Ensure reliable DNS resolution for MongoDB Atlas SRV records and replica shards
+try {
+  dns.setServers(['8.8.8.8', '1.1.1.1']);
+} catch {
+  // Ignore if custom DNS cannot be set
+}
 
 export const connectDB = async (): Promise<void> => {
   const isLocalhost = config.mongoUri.includes('localhost') || config.mongoUri.includes('127.0.0.1');

@@ -17,6 +17,7 @@ import {
 import { dispatchPushNotification } from '../services/pushNotificationService';
 import { awardPaperApprovalPoints } from '../services/rewardService';
 import { destroyMaterialCloudinaryAssets } from './dashboardController';
+import { generateSmartMtid } from '../utils/mtidHelper';
 
 export const getStats = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
@@ -167,23 +168,9 @@ export const reviewPaper = async (req: AuthenticatedRequest, res: Response): Pro
         }
       }
 
-      // Smart MTID Auto-assignment (N0001 for Notes, C0001 for CATs, P0001 for Past Papers)
+      // Smart MTID Auto-assignment (guaranteed collision-free unique MTID)
       if (status === 'approved' && !paper.mtid) {
-        let prefix = 'N';
-        let typesToCount = ['notes', 'revision'];
-        if (paper.type === 'cat') {
-          prefix = 'C';
-          typesToCount = ['cat'];
-        } else if (paper.type === 'past_paper') {
-          prefix = 'P';
-          typesToCount = ['past_paper'];
-        }
-
-        const approvedCount = await Paper.countDocuments({
-          status: 'approved',
-          type: { $in: typesToCount }
-        });
-        paper.mtid = `${prefix}${String(approvedCount + 1).padStart(4, '0')}`;
+        paper.mtid = await generateSmartMtid(paper.type);
       }
     paper.reviewedBy = admin._id;
     paper.reviewedAt = new Date();
@@ -450,7 +437,6 @@ export const reviewReport = async (req: AuthenticatedRequest, res: Response): Pr
   try {
     const { id } = req.params;
     const { status } = req.body; // 'reviewed' | 'dismissed'
-    const admin = req.user!;
 
     const report = await Report.findById(id);
     if (!report) {
@@ -458,15 +444,13 @@ export const reviewReport = async (req: AuthenticatedRequest, res: Response): Pr
       return;
     }
 
-    report.status = status;
-    report.reviewedBy = admin._id;
-    report.reviewedAt = new Date();
-    await report.save();
+    // Completely remove the report from MongoDB database to save storage
+    await Report.findByIdAndDelete(id);
 
     res.json({
       success: true,
-      message: `Report marked as ${status}.`,
-      data: report
+      message: `Report ${status === 'dismissed' ? 'dismissed' : 'marked as read'} and permanently removed from database.`,
+      data: { _id: id, deleted: true }
     });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message || 'Report review failed' });
@@ -495,13 +479,30 @@ export const deleteReportedItem = async (req: AuthenticatedRequest, res: Respons
       await House.findByIdAndDelete(report.targetId);
     }
 
-    report.status = 'reviewed';
-    report.reviewedBy = req.user!._id;
-    report.reviewedAt = new Date();
-    await report.save();
+    // Completely remove the report from MongoDB database as well to save storage
+    await Report.findByIdAndDelete(id);
 
-    res.json({ success: true, message: 'Reported item deleted successfully.' });
+    res.json({ success: true, message: 'Reported item and report record permanently deleted from database.' });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message || 'Failed to delete reported item.' });
+  }
+};
+
+export const deleteReport = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    await Report.findByIdAndDelete(id);
+    res.json({ success: true, message: 'Report permanently deleted from database.' });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to delete report.' });
+  }
+};
+
+export const deleteAllReports = async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const result = await Report.deleteMany({});
+    res.json({ success: true, message: `All ${result.deletedCount} reports permanently deleted from database.` });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to delete all reports.' });
   }
 };

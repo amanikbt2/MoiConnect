@@ -1,8 +1,8 @@
 import mongoose, { Schema, Document } from 'mongoose';
 
 export interface IReportDocument extends Document {
-  reporterId: mongoose.Types.ObjectId;
-  targetType: 'paper' | 'house' | 'community_message';
+  reporterId?: mongoose.Types.ObjectId;
+  targetType: 'paper' | 'house' | 'community_message' | 'account_deletion';
   // Keep this as a string because chat reports may refer to a temporary
   // client message id before the message receives its MongoDB _id.
   targetId: string;
@@ -17,13 +17,13 @@ export interface IReportDocument extends Document {
 
 const reportSchema = new Schema<IReportDocument>(
   {
-    reporterId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-    targetType: { type: String, enum: ['paper', 'house', 'community_message'], required: true },
+    reporterId: { type: Schema.Types.ObjectId, ref: 'User', required: false },
+    targetType: { type: String, enum: ['paper', 'house', 'community_message', 'account_deletion'], required: true },
     targetId: { type: String, required: true, trim: true },
     reason: {
       type: String,
-      enum: ['scam_or_fraud', 'inappropriate_content', 'misleading_information', 'duplicate', 'spam', 'harassment', 'other'],
-      required: true
+      required: true,
+      trim: true
     },
     details: { type: String, default: 'Reported via app', trim: true },
     status: {

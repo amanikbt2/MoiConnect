@@ -263,6 +263,7 @@ export const setupSocketIO = (io: SocketIOServer): void => {
       senderEmail?: string;
       senderFaculty?: string;
       senderCourse?: string;
+      senderYear?: string;
       senderPhone?: string;
       senderAvatarUrl?: string;
       senderBadge?: 'blue' | 'red' | 'green';
@@ -274,7 +275,7 @@ export const setupSocketIO = (io: SocketIOServer): void => {
           ack?.({ success: false, error: 'Community chat disabled by administrator' });
           return;
         }
-        const { clientMsgId, text, fileAttachment, stickerId, replyTo, senderName, senderEmail, senderFaculty, senderCourse, senderPhone, senderAvatarUrl, senderBadge, avatarBg } = data;
+        const { clientMsgId, text, fileAttachment, stickerId, replyTo, senderName, senderEmail, senderFaculty, senderCourse, senderYear, senderPhone, senderAvatarUrl, senderBadge, avatarBg } = data;
         if (!text?.trim() && !fileAttachment && !stickerId) return;
 
         if (clientMsgId && processedClientMsgIds.has(clientMsgId)) {
@@ -297,7 +298,7 @@ export const setupSocketIO = (io: SocketIOServer): void => {
 
         const sEmail = (socket as any).user?.email || senderEmail || '';
         const senderUser = userId && Types.ObjectId.isValid(userId)
-          ? await User.findById(userId).select('badge avatarUrl').lean()
+          ? await User.findById(userId).select('badge avatarUrl course yearOfStudy').lean()
           : null;
         const effectiveSenderName = senderName || 'Moi Student';
         const effectiveSenderAvatarUrl = /^https?:\/\//i.test(String(senderUser?.avatarUrl || ''))
@@ -320,8 +321,9 @@ export const setupSocketIO = (io: SocketIOServer): void => {
           senderId: sId,
           senderName: effectiveSenderName,
           senderEmail: sEmail,
-          senderFaculty: senderFaculty || 'School of Science & Computing',
-          senderCourse,
+          senderFaculty: senderFaculty || 'Moi Student',
+          senderCourse: senderCourse || (senderUser?.course && senderUser.course.toLowerCase() !== 'unset' ? senderUser.course : undefined),
+          senderYear: senderYear || (senderUser?.yearOfStudy && senderUser.yearOfStudy.toLowerCase() !== 'unset' ? senderUser.yearOfStudy : undefined),
           senderPhone,
           senderAvatarUrl: effectiveSenderAvatarUrl,
           senderBadge: senderUser?.badge || senderBadge,
@@ -365,6 +367,7 @@ export const setupSocketIO = (io: SocketIOServer): void => {
               senderEmail: messagePayload.senderEmail,
               senderFaculty: messagePayload.senderFaculty,
               senderCourse: messagePayload.senderCourse,
+              senderYear: messagePayload.senderYear,
               senderPhone: messagePayload.senderPhone,
               senderAvatarUrl: messagePayload.senderAvatarUrl,
               senderBadge: messagePayload.senderBadge,

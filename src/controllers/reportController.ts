@@ -6,10 +6,10 @@ import { CreateReportInput } from '@moi/shared';
 export const createReport = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const { targetType, targetId, reason, details }: CreateReportInput = req.body;
-    const user = req.user!;
+    const user = req.user;
 
     const report = await Report.create({
-      reporterId: user._id,
+      reporterId: user ? user._id : undefined,
       targetType,
       targetId: String(targetId),
       reason,

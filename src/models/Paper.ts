@@ -103,7 +103,7 @@ const paperSchema = new Schema<IPaperDocument>(
     downloads: { type: Number, default: randomDownloadCount },
     ratingScore: { type: String, default: randomRatingScore },
     pointsAwarded: { type: Number, default: 0, min: 0 },
-    mtid: { type: String, trim: true, index: true }
+    mtid: { type: String, trim: true, unique: true, sparse: true, index: true }
   },
   { timestamps: true }
 );

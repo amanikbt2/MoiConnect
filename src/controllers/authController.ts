@@ -7,6 +7,7 @@ import { config } from '../config';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { RegisterInput, LoginInput, RequestLandlordInput } from '@moi/shared';
 import { uploadTempFileToCloudinary } from '../services/tempFileService';
+import { purgeUserAccountAndData } from '../services/accountPurgeService';
 
 const generateTokens = (userId: string) => {
   const accessToken = jwt.sign({ userId }, config.jwtAccessSecret, {
@@ -36,7 +37,10 @@ export const register = async (req: AuthenticatedRequest, res: Response): Promis
       name,
       email: email.toLowerCase(),
       passwordHash,
-      phone,
+      phone: phone ? phone.trim() : '',
+      school: 'Unset',
+      course: 'Unset',
+      yearOfStudy: 'Unset',
       roles: ['student'],
       activeRole: 'student',
       landlordStatus: 'none',
@@ -344,6 +348,10 @@ export const googleAuth = async (req: AuthenticatedRequest, res: Response): Prom
         email: targetEmail,
         passwordHash,
         avatarUrl,
+        phone: '',
+        school: 'Unset',
+        course: 'Unset',
+        yearOfStudy: 'Unset',
         roles: ['student'],
         activeRole: 'student',
         landlordStatus: 'none',
@@ -412,7 +420,14 @@ export const deleteAccount = async (req: AuthenticatedRequest, res: Response): P
       return;
     }
 
-    await User.findByIdAndDelete(userId);
+    const result = await purgeUserAccountAndData(userId, {
+      reason: 'Your account has been deleted at your request.'
+    });
+
+    if (!result.success) {
+      res.status(404).json({ success: false, error: result.message });
+      return;
+    }
 
     res.json({
       success: true,

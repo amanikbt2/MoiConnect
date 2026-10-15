@@ -121,7 +121,7 @@ export const postCommunityMessage = async (req: Request, res: Response): Promise
       res.status(403).json({ success: false, error: 'Community chat disabled by administrator' });
       return;
     }
-    const { clientMsgId, text, fileAttachment, stickerId, replyTo, senderName, senderEmail, senderFaculty, senderCourse, senderPhone, senderAvatarUrl, senderBadge, avatarBg, senderId } = req.body;
+    const { clientMsgId, text, fileAttachment, stickerId, replyTo, senderName, senderEmail, senderFaculty, senderCourse, senderYear, senderPhone, senderAvatarUrl, senderBadge, avatarBg, senderId } = req.body;
     const user = (req as any).user;
 
     if (isBotStopCommand(text)) {
@@ -148,8 +148,9 @@ export const postCommunityMessage = async (req: Request, res: Response): Promise
         senderId: user?._id || senderId || '60d0fe4f5311236168a109ca',
         senderName: effectiveSenderName,
         senderEmail: senderEmail || user?.email || '',
-        senderFaculty: senderFaculty || 'School of Science & Computing',
-        senderCourse,
+        senderFaculty: senderFaculty || 'Moi Student',
+        senderCourse: senderCourse || (user?.course && user.course.toLowerCase() !== 'unset' ? user.course : undefined),
+        senderYear: senderYear || (user?.yearOfStudy && user.yearOfStudy.toLowerCase() !== 'unset' ? user.yearOfStudy : undefined),
         senderPhone,
         senderAvatarUrl: getPublicAvatarUrl(user?.avatarUrl) || getPublicAvatarUrl(senderAvatarUrl),
         senderBadge: user?.badge || senderBadge,

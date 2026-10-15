@@ -23,6 +23,7 @@ export interface ICommunityMessage extends Document {
   senderEmail?: string;
   senderFaculty: string;
   senderCourse?: string;
+  senderYear?: string;
   senderPhone?: string;
   senderAvatarUrl?: string;
   senderBadge?: 'blue' | 'red' | 'green';
@@ -46,8 +47,9 @@ const communityMessageSchema = new Schema<ICommunityMessage>(
     senderId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     senderName: { type: String, required: true },
     senderEmail: { type: String, index: true },
-    senderFaculty: { type: String, default: 'Moi University Student' },
+    senderFaculty: { type: String, default: 'Moi Student' },
     senderCourse: { type: String, trim: true },
+    senderYear: { type: String, trim: true },
     senderPhone: { type: String, trim: true },
     senderAvatarUrl: { type: String, trim: true },
     senderBadge: { type: String, enum: ['blue', 'red', 'green'] },

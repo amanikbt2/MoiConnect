@@ -83,15 +83,46 @@ export const getPapers = async (req: AuthenticatedRequest, res: Response): Promi
     if (school) query.school = school;
     if (courseCode) query.courseCode = (courseCode as string).toUpperCase();
     if (unitCode) query.unitCode = (unitCode as string).toUpperCase();
-    if (type) query.type = type;
     if (semester) query.semester = semester;
+    if (type) {
+      if (typeof type === 'string' && type.includes(',')) {
+        query.type = { $in: type.split(',').map((t) => t.trim().toLowerCase()).filter(Boolean) };
+      } else if (Array.isArray(type)) {
+        query.type = { $in: type };
+      } else if (type === 'notes') {
+        query.type = { $in: ['notes', 'revision', 'lecture_notes'] };
+      } else if (type === 'cat') {
+        query.type = { $in: ['cat', 'quiz'] };
+      } else if (type === 'past_paper') {
+        query.type = { $in: ['past_paper', 'solution', 'exam'] };
+      } else {
+        query.type = type;
+      }
+    }
     if (year) query.examYear = parseInt(year as string, 10);
 
     if (search) {
       const searchStr = (search as string).trim();
       const searchTokens = searchStr.split(/\s+/).filter(Boolean);
+      const normalizedCode = searchStr.replace(/[^a-zA-Z0-9]/g, '');
+      const unitCodeVariant = /^[a-zA-Z]{2,4}\d{2,3}$/.test(normalizedCode)
+        ? new RegExp(normalizedCode.replace(/([a-zA-Z]+)(\d+)/, '$1[- ]?$2'), 'i')
+        : null;
+
       const searchConditionsFor = (token: string) => {
         const escapedToken = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        if (token.length <= 2) {
+          const wordRegex = new RegExp(`(^|\\s)${escapedToken}`, 'i');
+          const prefixRegex = new RegExp(`^${escapedToken}`, 'i');
+          return [
+            { unitCode: prefixRegex },
+            { courseCode: prefixRegex },
+            { mtid: prefixRegex },
+            { title: wordRegex },
+            { unitName: wordRegex }
+          ];
+        }
+
         const searchRegex = new RegExp(escapedToken, 'i');
         const conditions: any[] = [
           { title: searchRegex },
@@ -111,11 +142,13 @@ export const getPapers = async (req: AuthenticatedRequest, res: Response): Promi
         return conditions;
       };
       
-      // Return candidates matching any meaningful search word. The frontend
-      // performs the final smart ranking (exact MTID first, then full title /
-      // unit matches, then related partial matches), so requiring every word
-      // here would incorrectly hide useful related materials.
-      query.$or = searchTokens.flatMap((token) => searchConditionsFor(token));
+      const allConditions = searchTokens.flatMap((token) => searchConditionsFor(token));
+      if (unitCodeVariant) {
+        allConditions.push({ unitCode: unitCodeVariant });
+        allConditions.push({ courseCode: unitCodeVariant });
+      }
+
+      query.$or = allConditions;
     }
 
     const total = await Paper.countDocuments(query);
@@ -158,20 +191,48 @@ export const getPapers = async (req: AuthenticatedRequest, res: Response): Promi
 
     if (search) {
       const q = (search as string).trim().toLowerCase();
+      const rawTokens = q.replace(/\b(exam|exams|pastpaper|pastpapers|paper|papers|cat|cats|note|notes|quiz|solution|solutions)([a-zA-Z]{2,4}\d{0,3})\b/gi, '$1 $2');
+      const searchTokens = rawTokens.toLowerCase().split(/\s+/).filter((t: string) => t.length > 1);
+
+      const computeRelevance = (doc: any): number => {
+        const title = (doc.title || '').toLowerCase();
+        const unit = (doc.unitCode || '').toLowerCase();
+        const course = (doc.courseCode || '').toLowerCase();
+        const mtid = (doc.mtid || '').toLowerCase();
+        const school = (doc.school || '').toLowerCase();
+        const dept = (doc.department || '').toLowerCase();
+
+        let score = 0;
+        // Exact unit / mtid match
+        if (unit === q || mtid === q || course === q) score += 200;
+        else if (unit.replace(/\s+/g, '') === q.replace(/\s+/g, '')) score += 180;
+
+        // Exact whole query in title
+        if (title.includes(q)) score += 100;
+
+        for (const token of searchTokens) {
+          if (unit === token || course === token) score += 90;
+          else if (unit.startsWith(token) || unit.includes(token)) score += 50;
+          if (title.includes(token)) score += 30;
+          if (dept.includes(token)) score += 35;
+
+          // School relevance
+          if ((token === 'sas' || token === 'ssas' || token === 'science') && school.includes('science')) {
+            score += 60;
+          } else if (token === 'sass' && school.includes('arts')) {
+            score += 60;
+          } else if (school.includes(token) && token !== 'sas') {
+            score += 20;
+          }
+        }
+        return score;
+      };
+
       papersWithSignedUrls.sort((a: any, b: any) => {
-        const aTitle = (a.title || '').toLowerCase();
-        const bTitle = (b.title || '').toLowerCase();
-        const aUnit = (a.unitCode || '').toLowerCase();
-        const bUnit = (b.unitCode || '').toLowerCase();
-        const aMtid = (a.mtid || '').toLowerCase();
-        const bMtid = (b.mtid || '').toLowerCase();
-
-        const aTop = aUnit === q || aMtid === q || aUnit.includes(q) || aTitle.includes(q);
-        const bTop = bUnit === q || bMtid === q || bUnit.includes(q) || bTitle.includes(q);
-
-        if (aTop && !bTop) return -1;
-        if (!aTop && bTop) return 1;
-        return 0;
+        const scoreA = computeRelevance(a);
+        const scoreB = computeRelevance(b);
+        if (scoreA !== scoreB) return scoreB - scoreA;
+        return (b.downloads || 0) - (a.downloads || 0);
       });
     }
 
