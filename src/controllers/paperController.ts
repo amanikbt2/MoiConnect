@@ -111,31 +111,21 @@ export const getPapers = async (req: AuthenticatedRequest, res: Response): Promi
 
       const searchConditionsFor = (token: string) => {
         const escapedToken = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        if (token.length <= 2) {
-          const wordRegex = new RegExp(`(^|\\s)${escapedToken}`, 'i');
-          const prefixRegex = new RegExp(`^${escapedToken}`, 'i');
-          return [
-            { unitCode: prefixRegex },
-            { courseCode: prefixRegex },
-            { mtid: prefixRegex },
-            { title: wordRegex },
-            { unitName: wordRegex }
-          ];
-        }
+        const prefixRegex = new RegExp(`^${escapedToken}`, 'i');
+        const wordRegex = new RegExp(`(^|\\s|[._-])${escapedToken}`, 'i');
 
-        const searchRegex = new RegExp(escapedToken, 'i');
         const conditions: any[] = [
-          { title: searchRegex },
-          { unitCode: searchRegex },
-          { unitName: searchRegex },
-          { courseCode: searchRegex },
-          { school: searchRegex },
-          { department: searchRegex },
-          { type: searchRegex },
-          { semester: searchRegex },
-          { academicYear: searchRegex },
-          { description: searchRegex },
-          { mtid: searchRegex }
+          { unitCode: prefixRegex },
+          { courseCode: prefixRegex },
+          { mtid: prefixRegex },
+          { title: wordRegex },
+          { unitName: wordRegex },
+          { school: wordRegex },
+          { department: wordRegex },
+          { type: prefixRegex },
+          { semester: wordRegex },
+          { academicYear: wordRegex },
+          { description: wordRegex }
         ];
         const yearNum = Number(token);
         if (yearNum > 1900 && yearNum < 2100) conditions.push({ examYear: yearNum });
