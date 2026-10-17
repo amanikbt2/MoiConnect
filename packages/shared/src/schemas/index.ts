@@ -130,7 +130,7 @@ export const createFavoriteSchema = z.object({
 });
 
 export const createReportSchema = z.object({
-  targetType: z.enum(['paper', 'house', 'community_message', 'account_deletion']),
+  targetType: z.enum(['paper', 'house', 'community_message', 'account_deletion', 'missing_material']),
   targetId: z.string().min(1, 'Target ID is required'),
   reason: z.string().min(1, 'Reason is required'),
   details: z.string().optional().default('No additional details')

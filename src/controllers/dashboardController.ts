@@ -627,6 +627,50 @@ export const updateDashboardMaterialsVisibility = async (req: Request, res: Resp
   }
 };
 
+export const updateDashboardMaterialFlag = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const isFlagged = req.body?.isFlagged;
+    if (typeof isFlagged !== 'boolean') {
+      res.status(400).json({ success: false, error: 'isFlagged must be a boolean.' });
+      return;
+    }
+
+    const paper = await Paper.findByIdAndUpdate(req.params.id, { isFlagged }, { new: true });
+    if (!paper) {
+      res.status(404).json({ success: false, error: 'Material not found.' });
+      return;
+    }
+
+    res.json({
+      success: true,
+      message: isFlagged ? 'Material flagged.' : 'Material unflagged.',
+      data: paper
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to update material flag' });
+  }
+};
+
+export const updateDashboardMaterialsFlag = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const ids = getMaterialIds(req.body?.ids);
+    const isFlagged = req.body?.isFlagged;
+    if (!ids.length || typeof isFlagged !== 'boolean') {
+      res.status(400).json({ success: false, error: 'Provide material ids and an isFlagged boolean.' });
+      return;
+    }
+
+    const result = await Paper.updateMany({ _id: { $in: ids } }, { $set: { isFlagged } });
+    res.json({
+      success: true,
+      message: `${result.modifiedCount} material(s) ${isFlagged ? 'flagged' : 'unflagged'}.`,
+      updatedCount: result.modifiedCount
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to update material flags' });
+  }
+};
+
 const getCloudinaryResourceTypes = (fileType?: string, fileUrl?: string): string[] => {
   if (fileType === 'video' || fileUrl?.includes('/video/upload/')) return ['video', 'raw', 'image'];
   if (fileType === 'image' || fileUrl?.includes('/image/upload/')) return ['image', 'raw', 'video'];
@@ -4851,6 +4895,8 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
           let typeBadge = '';
           if (r.targetType === 'account_deletion') {
             typeBadge = '<span class="badge" style="background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;font-weight:800;padding:4px 8px;border-radius:6px;display:inline-flex;align-items:center;gap:4px;"><span>🗑</span> Account Deletion Feedback</span>';
+          } else if (r.targetType === 'missing_material') {
+            typeBadge = '<span class="badge" style="background:#fef3c7;color:#b45309;border:1px solid #fde68a;font-weight:800;padding:4px 8px;border-radius:6px;display:inline-flex;align-items:center;gap:4px;"><span>📚</span> Missing Material</span>';
           } else if (r.targetType === 'community_message') {
             typeBadge = '<span class="badge badge-blue" style="font-weight:700;padding:4px 8px;border-radius:6px;display:inline-flex;align-items:center;gap:4px;"><span>💬</span> Reported Comment</span>';
           } else if (r.targetType === 'paper') {
@@ -4861,32 +4907,24 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
             typeBadge = '<span class="badge badge-blue">' + String(r.targetType || 'FEEDBACK').toUpperCase() + '</span>';
           }
 
-          const actionButtons = r.targetType === 'account_deletion'
-            ? \`<button data-id="\${r._id}" onclick="handleDismissReport(this.dataset.id)" class="btn btn-secondary" style="font-size: 11px; padding: 5px 12px; font-weight: 700;">✓ Mark Reviewed</button>\`
-            : \`<button data-id="\${r._id}" onclick="handleDeleteReportedTarget(this.dataset.id)" class="btn btn-danger" style="font-size: 11px; padding: 4px 10px;">Delete Content</button><button data-id="\${r._id}" onclick="handleDismissReport(this.dataset.id)" class="btn btn-secondary" style="font-size: 11px; padding: 4px 10px;">Dismiss</button>\`;
+          const actionButtons = (r.targetType === 'account_deletion' || r.targetType === 'missing_material')
+            ? ('<button data-id="' + r._id + '" onclick="handleDismissReport(this.dataset.id)" class="btn btn-secondary" style="font-size: 11px; padding: 5px 12px; font-weight: 700;">✓ Mark Reviewed</button>')
+            : ('<button data-id="' + r._id + '" onclick="handleDeleteReportedTarget(this.dataset.id)" class="btn btn-danger" style="font-size: 11px; padding: 4px 10px;">Delete Content</button><button data-id="' + r._id + '" onclick="handleDismissReport(this.dataset.id)" class="btn btn-secondary" style="font-size: 11px; padding: 4px 10px;">Dismiss</button>');
 
-          return \`
-            <tr>
-              <td>
-                <div style="font-weight: 700; color: #0f172a;">\${reporter}</div>
-                <div style="font-size: 11px; color: #64748b;">\${r.reporterId?.email || ''}</div>
-              </td>
-              <td>
-                \${typeBadge}
-              </td>
-              <td>
-                <div style="font-weight: 700; color: #b91c1c;">\${r.reason}</div>
-                <div style="font-size: 12px; color: #334155; margin-top: 2px;">\${r.details || 'No additional details'}</div>
-              </td>
-              <td style="font-size: 12px; color: #64748b;">\${new Date(r.createdAt).toLocaleString()}</td>
-              <td><span class="badge badge-amber">\${String(r.status || 'pending').toUpperCase()}</span></td>
-              <td style="text-align: right;">
-                <div style="display: inline-flex; gap: 6px;">
-                  \${actionButtons}
-                </div>
-              </td>
-            </tr>
-          \`;
+          const reasonColor = r.targetType === 'missing_material' ? '#b45309' : '#b91c1c';
+          const reporterEmail = (r.reporterId && r.reporterId.email) ? r.reporterId.email : '';
+          const detailsText = r.details || 'No additional details';
+          const createdDate = new Date(r.createdAt).toLocaleString();
+          const statusText = String(r.status || 'pending').toUpperCase();
+
+          return '<tr>' +
+            '<td><div style="font-weight: 700; color: #0f172a;">' + reporter + '</div><div style="font-size: 11px; color: #64748b;">' + reporterEmail + '</div></td>' +
+            '<td>' + typeBadge + '</td>' +
+            '<td><div style="font-weight: 700; color: ' + reasonColor + ';">' + r.reason + '</div><div style="font-size: 12px; color: #334155; margin-top: 2px;">' + detailsText + '</div></td>' +
+            '<td style="font-size: 12px; color: #64748b;">' + createdDate + '</td>' +
+            '<td><span class="badge badge-amber">' + statusText + '</span></td>' +
+            '<td style="text-align: right;"><div style="display: inline-flex; gap: 6px;">' + actionButtons + '</div></td>' +
+          '</tr>';
         }).join('');
       } catch (err) {
         tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: #ef4444; padding: 24px;">Failed to load user feedbacks.</td></tr>';

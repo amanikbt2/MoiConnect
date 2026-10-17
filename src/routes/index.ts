@@ -89,6 +89,8 @@ router.get('/dashboard/materials/download-zip', dashboardController.downloadDash
 router.post('/dashboard/materials/publish', tempUpload.fields([{ name: 'file', maxCount: 1 }, { name: 'thumbnail', maxCount: 1 }, { name: 'ttsFile', maxCount: 1 }]), dashboardController.publishAdminMaterial);
 router.patch('/dashboard/materials/visibility', dashboardController.updateDashboardMaterialsVisibility);
 router.patch('/dashboard/materials/:id/visibility', dashboardController.updateDashboardMaterialVisibility);
+router.patch('/dashboard/materials/flag', dashboardController.updateDashboardMaterialsFlag);
+router.patch('/dashboard/materials/:id/flag', dashboardController.updateDashboardMaterialFlag);
 router.delete('/dashboard/materials', dashboardController.deleteDashboardMaterials);
 router.get('/dashboard/papers/:id/download-file', dashboardController.downloadPaperFile);
 router.post('/dashboard/papers/:id/upload-thumbnail', tempUpload.single('file'), dashboardController.uploadPaperThumbnail);

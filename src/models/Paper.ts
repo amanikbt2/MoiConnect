@@ -36,6 +36,7 @@ export interface IPaperDocument extends Document {
   fileSize?: number;
   attachments?: IPaperAttachment[];
   isHidden: boolean;
+  isFlagged?: boolean;
   isDemo?: boolean;
   submittedBy?: mongoose.Types.ObjectId;
   status: PaperStatus;
@@ -90,6 +91,7 @@ const paperSchema = new Schema<IPaperDocument>(
     fileSize: { type: Number },
     attachments: [attachmentSchema],
     isHidden: { type: Boolean, default: false, index: true },
+    isFlagged: { type: Boolean, default: false, index: true },
     isDemo: { type: Boolean, default: false, index: true },
     submittedBy: { type: Schema.Types.ObjectId, ref: 'User', required: false },
     status: {

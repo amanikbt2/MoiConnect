@@ -68,6 +68,8 @@ export interface IPaper {
   fileType: string;
   fileSize?: number;
   attachments?: IPaperAttachment[];
+  isHidden?: boolean;
+  isFlagged?: boolean;
   submittedBy: IUser | string;
   status: PaperStatus;
   rejectionReason?: string;
@@ -156,7 +158,7 @@ export interface IFavorite {
 export interface IReport {
   _id: string;
   reporterId: IUser | string;
-  targetType: 'paper' | 'house';
+  targetType: 'paper' | 'house' | 'community_message' | 'account_deletion' | 'missing_material';
   targetId: string;
   reason: string;
   details: string;
