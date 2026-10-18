@@ -42,7 +42,9 @@ const queueEligibleMilestonePayouts = async (user: any, currentPoints: number) =
 };
 
 export const awardPaperApprovalPoints = async (paper: any): Promise<number> => {
-  if (!paper?.submittedBy || paper.pointsAwarded === PAPER_APPROVAL_POINTS) return 0;
+  if (!paper?.submittedBy || Number(paper.pointsAwarded || 0) > 0) return 0;
+
+  const pointsToAward = PAPER_APPROVAL_POINTS;
 
   const claimedPaper = await Paper.findOneAndUpdate(
     {
@@ -50,7 +52,7 @@ export const awardPaperApprovalPoints = async (paper: any): Promise<number> => {
       status: 'approved',
       $or: [{ pointsAwarded: { $exists: false } }, { pointsAwarded: 0 }]
     },
-    { $set: { pointsAwarded: PAPER_APPROVAL_POINTS } },
+    { $set: { pointsAwarded: pointsToAward } },
     { new: true }
   );
   if (!claimedPaper) return 0;
@@ -64,16 +66,19 @@ export const awardPaperApprovalPoints = async (paper: any): Promise<number> => {
     { _id: contributorId, points: { $exists: false } },
     { $set: { points: 5 } }
   );
-  const pointsToAward = Math.random() < 0.5 ? 1 : 2;
   const contributor = await User.findByIdAndUpdate(
     contributorId,
     { $inc: { points: pointsToAward } },
     { new: true }
   );
   if (!contributor) {
-    await Paper.findByIdAndUpdate(paper._id, { $set: { pointsAwarded: 0 } });
+    await Paper.findOneAndUpdate(
+      { _id: paper._id, pointsAwarded: pointsToAward },
+      { $set: { pointsAwarded: 0 } }
+    );
     return 0;
   }
+  paper.pointsAwarded = pointsToAward;
   void queueEligibleMilestonePayouts(contributor, Number(contributor.points || 0));
   return pointsToAward;
 };

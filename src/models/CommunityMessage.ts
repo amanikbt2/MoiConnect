@@ -3,6 +3,7 @@ import { Schema, model, Document, Types } from 'mongoose';
 export interface IFileAttachment {
   name: string;
   url: string;
+  publicId?: string;
   size: string;
   type: 'pdf' | 'doc' | 'image' | 'video';
 }
@@ -59,6 +60,7 @@ const communityMessageSchema = new Schema<ICommunityMessage>(
     fileAttachment: {
       name: { type: String },
       url: { type: String },
+      publicId: { type: String, trim: true },
       size: { type: String },
       type: { type: String, enum: ['pdf', 'doc', 'image', 'video'] }
     },

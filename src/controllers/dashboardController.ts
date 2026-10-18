@@ -1652,32 +1652,77 @@ export const deleteDashboardCommunityMessages = async (req: Request, res: Respon
 
     const messages = await CommunityMessage.find({ _id: { $in: ids } });
     let deletedMediaCount = 0;
+    const deletedMessages: typeof messages = [];
+    const failedMessageIds: string[] = [];
 
-    // Wipe associated media attachments from Cloudinary storage
+    // Remove each Cloudinary asset before deleting its database record. If Cloudinary
+    // is unavailable, keep that message so an admin can retry the complete wipe.
     for (const msg of messages) {
-      if (msg.fileAttachment?.url) {
-        const publicId = extractCloudinaryPublicId(msg.fileAttachment.url);
-        if (publicId) {
+      const attachment = msg.fileAttachment;
+      const url = attachment?.url || '';
+      const isCloudinaryUrl = url.includes('res.cloudinary.com');
+      if (attachment && isCloudinaryUrl) {
+        const isImageOrVideo = attachment.type === 'image' || attachment.type === 'video';
+        let publicId = attachment.publicId || (isImageOrVideo
+          ? extractCloudinaryPublicId(url) || extractPublicIdFromCloudinaryUrl(url)
+          : extractPublicIdFromCloudinaryUrl(url) || extractCloudinaryPublicId(url));
+        if (publicId && (attachment.type === 'image' || attachment.type === 'video')) {
+          publicId = publicId.replace(/\.(?:jpe?g|png|webp|gif|bmp|svg|tiff?|mp4|mov|m4v|webm|avi|mkv|3gp)$/i, '');
+        }
+
+        if (!publicId) {
+          failedMessageIds.push(String(msg._id));
+          continue;
+        }
+
+        const preferredType = attachment.type === 'image' ? 'image' : attachment.type === 'video' ? 'video' : 'raw';
+        const resourceTypes = [preferredType, ...['raw', 'image', 'video'].filter(type => type !== preferredType)];
+        let assetRemoved = false;
+        let allResourceTypesNotFound = true;
+        let cleanupError: unknown;
+        for (const resourceType of resourceTypes) {
           try {
-            await cloudinary.uploader.destroy(publicId, { resource_type: 'raw' });
-            await cloudinary.uploader.destroy(publicId, { resource_type: 'image' });
-            await cloudinary.uploader.destroy(publicId, { resource_type: 'video' });
-            deletedMediaCount++;
-          } catch (cloudErr) {
-            console.error(`[Admin Community Delete] Cloudinary destroy failed for ${publicId}:`, cloudErr);
+            const result = await cloudinary.uploader.destroy(publicId, {
+              resource_type: resourceType as any,
+              type: 'upload',
+              invalidate: true
+            });
+            if (result.result === 'ok') {
+              assetRemoved = true;
+              break;
+            }
+            if (result.result !== 'not found') allResourceTypesNotFound = false;
+          } catch (error) {
+            allResourceTypesNotFound = false;
+            cleanupError = error;
           }
         }
+
+        if (!assetRemoved && !allResourceTypesNotFound) {
+          console.error(`[Admin Community Delete] Cloudinary destroy failed for ${publicId}:`, cleanupError);
+          failedMessageIds.push(String(msg._id));
+          continue;
+        }
+        deletedMediaCount++;
       }
+      deletedMessages.push(msg);
     }
 
-    // Delete from MongoDB database completely with no trace
-    await CommunityMessage.deleteMany({ _id: { $in: ids } });
+    const deletedIds = deletedMessages.map(message => String(message._id));
+    if (deletedIds.length > 0) {
+      // Remove quoted snapshots too, so deleted text/media is not retained in replies.
+      await CommunityMessage.updateMany(
+        { 'replyTo.id': { $in: deletedIds } },
+        { $unset: { replyTo: 1 } }
+      );
+      await CommunityMessage.deleteMany({ _id: { $in: deletedMessages.map(message => message._id) } });
+    }
 
     // Remove the deleted messages immediately from every connected client's cache.
     // The database delete above remains authoritative for future API fetches.
     try {
       const io = getSocketIO();
-      for (const id of ids) {
+      for (const id of deletedIds) {
         io?.to('community_room').emit('community:message_deleted', { messageId: String(id) });
       }
     } catch (socketErr) {
@@ -1686,9 +1731,12 @@ export const deleteDashboardCommunityMessages = async (req: Request, res: Respon
 
     res.json({
       success: true,
-      message: `Successfully deleted ${messages.length} message(s) and wiped ${deletedMediaCount} Cloudinary media file(s) with zero trace!`,
-      deletedCount: messages.length,
-      deletedMediaCount
+      message: failedMessageIds.length
+        ? `Deleted ${deletedIds.length} message(s) and wiped ${deletedMediaCount} Cloudinary media file(s). ${failedMessageIds.length} message(s) could not be fully wiped and remain available for retry.`
+        : `Successfully deleted ${deletedIds.length} message(s) and wiped ${deletedMediaCount} Cloudinary media file(s).`,
+      deletedCount: deletedIds.length,
+      deletedMediaCount,
+      failedMessageIds
     });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message || 'Failed to delete community messages' });
@@ -4195,7 +4243,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
   </main>
 
   <footer>
-    MConnect Student Hub • Admin Panel v1.0.0 • Moi University
+    MConnect Student Hub • Admin Panel v3.0.0 • Moi University
   </footer>
 
   <!-- Dashboard JavaScript Logic -->

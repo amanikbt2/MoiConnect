@@ -101,9 +101,14 @@ export const getPapers = async (req: AuthenticatedRequest, res: Response): Promi
     }
     if (year) query.examYear = parseInt(year as string, 10);
 
-    if (search) {
-      const searchStr = (search as string).trim();
-      const searchTokens = searchStr.split(/\s+/).filter(Boolean);
+    const searchStr = search ? String(search).trim() : '';
+    const searchTokens = searchStr
+      .toLowerCase()
+      .replace(/\b(?:past|previous|old|question|exam|exams|examination|examinations|paper|papers|final|semester|main|special|supplementary|deferred|resit|retake|mock|model|revision|cat|cats|quiz|quizzes|continuous|assessment|class|test|tests|midterm|midterms|mid|notes?|lecture|slides|pdf|handout|handouts|reading|study|course|unit|material|materials|guide|guides|summary|summaries|solution|solutions|answer|answers|key|marking|scheme|schemes|worked|solved)\b/gi, ' ')
+      .split(/\s+/)
+      .filter((token: string) => token.length > 1 && !['and', 'the', 'of', 'in', 'for', 'to', 'with', 'a', 'an', 'at', 'by', 'from', 'on', 'or', 'as', 'is', 'it'].includes(token));
+
+    if (searchStr) {
       const normalizedCode = searchStr.replace(/[^a-zA-Z0-9]/g, '');
       const unitCodeVariant = /^[a-zA-Z]{2,4}\d{2,3}$/.test(normalizedCode)
         ? new RegExp(normalizedCode.replace(/([a-zA-Z]+)(\d+)/, '$1[- ]?$2'), 'i')
@@ -122,31 +127,59 @@ export const getPapers = async (req: AuthenticatedRequest, res: Response): Promi
           { unitName: wordRegex },
           { school: wordRegex },
           { department: wordRegex },
-          { type: prefixRegex },
           { semester: wordRegex },
           { academicYear: wordRegex },
           { description: wordRegex }
         ];
+        if (unitCodeVariant) {
+          conditions.push({ unitCode: unitCodeVariant }, { courseCode: unitCodeVariant });
+        }
         const yearNum = Number(token);
         if (yearNum > 1900 && yearNum < 2100) conditions.push({ examYear: yearNum });
         return conditions;
       };
-      
-      const allConditions = searchTokens.flatMap((token) => searchConditionsFor(token));
-      if (unitCodeVariant) {
-        allConditions.push({ unitCode: unitCodeVariant });
-        allConditions.push({ courseCode: unitCodeVariant });
-      }
 
-      query.$or = allConditions;
+      // Each meaningful topic token must match somewhere; fields are alternatives
+      // within a token. Material-type words are handled by the explicit `type` filter.
+      const tokenGroups = searchTokens.map((token) => ({ $or: searchConditionsFor(token) }));
+      if (tokenGroups.length > 0) query.$and = [...(query.$and || []), ...tokenGroups];
     }
 
     const total = await Paper.countDocuments(query);
-    const papers = await Paper.find(query)
-      .populate('submittedBy', 'name email avatarUrl')
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit);
+    let papers: any[];
+    if (searchStr && searchTokens.length > 0) {
+      const regexFor = (token: string) => `(^|\\s|[._-])${token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`;
+      const relevanceParts: any[] = [
+        { $cond: [{ $eq: [{ $toLower: { $ifNull: ['$unitCode', ''] } }, searchStr.toLowerCase()] }, 120, 0] },
+        { $cond: [{ $eq: [{ $toLower: { $ifNull: ['$courseCode', ''] } }, searchStr.toLowerCase()] }, 110, 0] }
+      ];
+      for (const token of searchTokens) {
+        const regex = regexFor(token);
+        const scoreFor = (field: string, weight: number) => ({
+          $cond: [{ $regexMatch: { input: { $ifNull: [field, ''] }, regex, options: 'i' } }, weight, 0]
+        });
+        relevanceParts.push(
+          scoreFor('$unitCode', 16), scoreFor('$courseCode', 15),
+          scoreFor('$title', 12), scoreFor('$unitName', 11),
+          scoreFor('$department', 5), scoreFor('$school', 4),
+          scoreFor('$description', 2)
+        );
+      }
+      papers = await Paper.aggregate([
+        { $match: query },
+        { $addFields: { _searchScore: { $add: relevanceParts } } },
+        { $sort: { _searchScore: -1, downloads: -1, createdAt: -1 } },
+        { $skip: skip },
+        { $limit: limit }
+      ]);
+      papers = await Paper.populate(papers, { path: 'submittedBy', select: 'name email avatarUrl' });
+    } else {
+      papers = await Paper.find(query)
+        .populate('submittedBy', 'name email avatarUrl')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit);
+    }
 
     const formatPaperData = (paperDoc: any) => {
       const data = paperDoc.toObject ? paperDoc.toObject() : paperDoc;
@@ -178,53 +211,6 @@ export const getPapers = async (req: AuthenticatedRequest, res: Response): Promi
     };
 
     let papersWithSignedUrls = papers.map((doc) => buildPaperResponseData(doc, req));
-
-    if (search) {
-      const q = (search as string).trim().toLowerCase();
-      const rawTokens = q.replace(/\b(exam|exams|pastpaper|pastpapers|paper|papers|cat|cats|note|notes|quiz|solution|solutions)([a-zA-Z]{2,4}\d{0,3})\b/gi, '$1 $2');
-      const searchTokens = rawTokens.toLowerCase().split(/\s+/).filter((t: string) => t.length > 1);
-
-      const computeRelevance = (doc: any): number => {
-        const title = (doc.title || '').toLowerCase();
-        const unit = (doc.unitCode || '').toLowerCase();
-        const course = (doc.courseCode || '').toLowerCase();
-        const mtid = (doc.mtid || '').toLowerCase();
-        const school = (doc.school || '').toLowerCase();
-        const dept = (doc.department || '').toLowerCase();
-
-        let score = 0;
-        // Exact unit / mtid match
-        if (unit === q || mtid === q || course === q) score += 200;
-        else if (unit.replace(/\s+/g, '') === q.replace(/\s+/g, '')) score += 180;
-
-        // Exact whole query in title
-        if (title.includes(q)) score += 100;
-
-        for (const token of searchTokens) {
-          if (unit === token || course === token) score += 90;
-          else if (unit.startsWith(token) || unit.includes(token)) score += 50;
-          if (title.includes(token)) score += 30;
-          if (dept.includes(token)) score += 35;
-
-          // School relevance
-          if ((token === 'sas' || token === 'ssas' || token === 'science') && school.includes('science')) {
-            score += 60;
-          } else if (token === 'sass' && school.includes('arts')) {
-            score += 60;
-          } else if (school.includes(token) && token !== 'sas') {
-            score += 20;
-          }
-        }
-        return score;
-      };
-
-      papersWithSignedUrls.sort((a: any, b: any) => {
-        const scoreA = computeRelevance(a);
-        const scoreB = computeRelevance(b);
-        if (scoreA !== scoreB) return scoreB - scoreA;
-        return (b.downloads || 0) - (a.downloads || 0);
-      });
-    }
 
     res.json({
       success: true,
