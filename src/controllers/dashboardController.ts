@@ -21,7 +21,7 @@ import { Notification } from '../models/Notification';
 import { PopupResponse } from '../models/PopupResponse';
 import { getAppSettingValue, setAppSettingValue } from '../models/AppSetting';
 import cloudinary from '../config/cloudinary';
-import { getOnlineStats, getSocketIO } from '../socket';
+import { getOnlineStats, getSocketIO, refreshCommunityForumAccess } from '../socket';
 import {
   listTempFiles,
   deleteTempFile,
@@ -36,6 +36,7 @@ import { attemptB2CPayout, createOriginatorConversationId } from '../services/mp
 import { awardPaperApprovalPoints } from '../services/rewardService';
 import { purgeUserAccountAndData } from '../services/accountPurgeService';
 import { randomDownloadCount, randomRatingScore } from '../utils/materialStats';
+import { getForumAccessPolicy, isForumParticipationAllowed, saveForumAccessPolicy } from '../services/forumAccessService';
 import { clearAiTelemetry, getAiPromptSettings, getAiTelemetry, saveAiPromptSettings } from '../services/campusBotService';
 import { generateSmartMtid } from '../utils/mtidHelper';
 
@@ -204,13 +205,15 @@ export const getDashboardOverview = async (_req: Request, res: Response): Promis
 };
 
 // 1b. JSON API: Get & Update App Settings
-export const getAppSettings = async (_req: Request, res: Response): Promise<void> => {
+export const getAppSettings = async (req: Request, res: Response): Promise<void> => {
   try {
     const showDemoMaterials = await getAppSettingValue('showDemoMaterials', false);
     const allowCommunityChat = await getAppSettingValue('allowCommunityChat', true);
+    const forumPolicy = await getForumAccessPolicy();
+    const forumAccessAllowed = isForumParticipationAllowed((req as any).user?.email, forumPolicy);
     res.json({
       success: true,
-      settings: { showDemoMaterials, allowCommunityChat }
+      settings: { showDemoMaterials, allowCommunityChat, forumAccessAllowed, forumAccessMode: forumPolicy.mode }
     });
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });
@@ -219,7 +222,7 @@ export const getAppSettings = async (_req: Request, res: Response): Promise<void
 
 export const updateDashboardSettings = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { key, value, showDemoMaterials, allowCommunityChat, allowPayments, disableAiFeatures } = req.body;
+    const { key, value, showDemoMaterials, allowCommunityChat, allowPayments, disableAiFeatures, forumAccessPolicy } = req.body;
     if (showDemoMaterials !== undefined) {
       await setAppSettingValue('showDemoMaterials', Boolean(showDemoMaterials), (req as any).user?._id);
     }
@@ -231,6 +234,10 @@ export const updateDashboardSettings = async (req: Request, res: Response): Prom
     }
     if (disableAiFeatures !== undefined) {
       await setAppSettingValue('disableAiFeatures', Boolean(disableAiFeatures), (req as any).user?._id);
+    }
+    if (forumAccessPolicy !== undefined) {
+      const savedPolicy = await saveForumAccessPolicy(forumAccessPolicy, (req as any).user?._id);
+      await refreshCommunityForumAccess(savedPolicy);
     }
     if (key && value !== undefined) {
       await setAppSettingValue(key, Boolean(value), (req as any).user?._id);
@@ -680,7 +687,7 @@ const getCloudinaryResourceTypes = (fileType?: string, fileUrl?: string): string
 export const getDirectPaymentUsers = async (_req: Request, res: Response): Promise<void> => {
   try {
     await ensureCommunityAssistantUsers();
-    const users = await User.find().select('name email phone points badge paymentBlacklisted createdAt').sort({ createdAt: -1 }).limit(500).lean();
+    const users = await User.find().select('name email phone points badge paymentBlacklisted canGoLive createdAt').sort({ createdAt: -1 }).limit(500).lean();
     const userIds = users.map((user) => user._id);
     const totals = await RewardPayout.aggregate([
       { $match: { userId: { $in: userIds }, status: 'success' } },
@@ -689,10 +696,14 @@ export const getDirectPaymentUsers = async (_req: Request, res: Response): Promi
     const totalByUser = new Map(totals.map((item) => [String(item._id), Number(item.amount || 0)]));
     res.json({
       success: true,
-      users: users.map((user) => ({
-        ...user,
-        rewardedAmount: totalByUser.get(String(user._id)) || 0
-      }))
+      users: users.map((user) => {
+        const { phone, ...publicUser } = user;
+        return {
+          ...publicUser,
+          hasPhone: Boolean(phone),
+          rewardedAmount: totalByUser.get(String(user._id)) || 0
+        };
+      })
     });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message || 'Failed to load direct payment users.' });
@@ -749,6 +760,25 @@ export const setPaymentBlacklist = async (req: Request, res: Response): Promise<
     res.json({ success: true, message: blacklisted ? 'User blacklisted from payments.' : 'User payment access restored.', user });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message || 'Failed to update payment blacklist.' });
+  }
+};
+
+export const setUserLiveAccess = async (req: Request, res: Response): Promise<void> => {
+  try {
+    if (typeof req.body?.allowed !== 'boolean') {
+      res.status(400).json({ success: false, error: 'Choose whether Go Live access should be on or off.' });
+      return;
+    }
+    const allowed = req.body.allowed;
+    const user = await User.findByIdAndUpdate(
+      req.params.id,
+      { $set: { canGoLive: allowed } },
+      { new: true, runValidators: true }
+    ).select('name email canGoLive');
+    if (!user) { res.status(404).json({ success: false, error: 'User not found.' }); return; }
+    res.json({ success: true, message: allowed ? 'Go Live access enabled.' : 'Go Live access disabled.', user });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to update Go Live access.' });
   }
 };
 
@@ -2412,6 +2442,10 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
   const aiLabelText = initialDisableAi
     ? 'Saved in Database (AI Features Disabled -> "Sorry, Im disabled for now")'
     : 'Saved in Database (AI Features Operating Normally)';
+  const initialForumAccessPolicy = await getForumAccessPolicy();
+  const escapeSettingText = (value: string) => value.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] || char));
+  const forumWhitelistText = escapeSettingText(initialForumAccessPolicy.whitelistEmails.join('\n'));
+  const forumBlacklistText = escapeSettingText(initialForumAccessPolicy.blacklistEmails.join('\n'));
   const labelText = initialShowDemo
     ? 'Saved in Database (Showing Demo & Real)'
     : 'Saved in Database (Real Materials Only)';
@@ -3213,7 +3247,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         </div>
         <div class="table-responsive">
           <table>
-            <thead><tr><th>User</th><th>Email</th><th>Points</th><th>Rewarded</th><th>Award badge</th><th>Payment status</th><th>Manual payment</th><th>Access</th></tr></thead>
+            <thead><tr><th>User</th><th>Email</th><th>Points</th><th>Rewarded</th><th>Award badge</th><th>Allow Live</th><th>Manual payment</th><th>Access</th></tr></thead>
             <tbody id="direct-payments-table-body"><tr><td colspan="8" style="text-align:center;padding:32px;color:#94a3b8;">Open this tab to load payment users.</td></tr></tbody>
           </table>
         </div>
@@ -3778,6 +3812,36 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
               </div>
               <span id="chat-toggle-status-label" style="font-size: 11px; font-weight: 700; color: ${chatBadgeColor};">${chatLabelText}</span>
             </div>
+          </div>
+
+          <!-- Forum Whitelist and Blocklist -->
+          <div style="background:#f8fafc;border:1px solid #cbd5e1;border-radius:14px;padding:22px;margin-top:16px;">
+            <div style="margin-bottom:16px;">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+                <span style="font-size:18px;">🛡️</span>
+                <h3 style="margin:0;font-size:16px;font-weight:800;color:#0f172a;">Forum Whitelist</h3>
+              </div>
+              <p style="margin:0;font-size:13px;color:#475569;line-height:1.5;">Choose who can participate in Uni Forum. The blacklist always overrides the selected access mode. Blocked users cannot send, receive new forum messages, or get forum push notifications.</p>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;">
+              <label style="font-size:12px;font-weight:800;color:#334155;">Participation
+                <select id="forum-access-mode" style="display:block;width:100%;margin-top:6px;padding:10px;border:1px solid #cbd5e1;border-radius:8px;background:white;font-size:13px;">
+                  <option value="all" ${initialForumAccessPolicy.mode === 'all' ? 'selected' : ''}>All users (default)</option>
+                  <option value="whitelist" ${initialForumAccessPolicy.mode === 'whitelist' ? 'selected' : ''}>Whitelist only</option>
+                </select>
+              </label>
+              <label style="font-size:12px;font-weight:800;color:#334155;">Allowed emails
+                <textarea id="forum-whitelist-emails" rows="4" placeholder="student1@example.com, student2@example.com" style="display:block;width:100%;margin-top:6px;padding:10px;border:1px solid #cbd5e1;border-radius:8px;background:white;font-size:12px;resize:vertical;">${forumWhitelistText}</textarea>
+              </label>
+              <label style="font-size:12px;font-weight:800;color:#334155;">Blocked emails
+                <textarea id="forum-blacklist-emails" rows="4" placeholder="blocked@example.com" style="display:block;width:100%;margin-top:6px;padding:10px;border:1px solid #cbd5e1;border-radius:8px;background:white;font-size:12px;resize:vertical;">${forumBlacklistText}</textarea>
+              </label>
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:12px;">
+              <span style="font-size:11px;color:#64748b;">Paste addresses separated by commas, semicolons, or new lines. Email matching ignores capitalization.</span>
+              <button type="button" class="btn btn-view" onclick="saveForumAccessPolicy()" style="padding:9px 16px;">Save Forum Access</button>
+            </div>
+            <div id="forum-access-status" role="status" aria-live="polite" style="margin-top:8px;font-size:12px;color:#64748b;"></div>
           </div>
 
           <!-- Setting Card: Allow Payments Toggle -->
@@ -4670,6 +4734,12 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       return token ? { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' };
     }
 
+    async function adminSettingsAuthHeaders() {
+      const token = await ensureAdminToken();
+      if (!token) throw new Error('An administrator session is required to change app settings.');
+      return admin2AuthHeaders();
+    }
+
     async function loadAdmin2Credentials() {
       const body = document.getElementById('admin2-credentials-body');
       const status = document.getElementById('admin2-credentials-status');
@@ -4833,10 +4903,10 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
           const id = directPaymentEscape(user._id);
           const name = directPaymentEscape(user.name || 'Student');
           const email = directPaymentEscape(user.email || '');
-          const phone = directPaymentEscape(user.phone || 'No phone number');
           const badge = directPaymentEscape(user.badge || '');
           const isBlacklisted = Boolean(user.paymentBlacklisted);
-          const canPay = Boolean(user.phone) && !isBlacklisted;
+          const canGoLive = Boolean(user.canGoLive);
+          const canPay = Boolean(user.hasPhone) && !isBlacklisted;
           return '<tr>' +
             '<td style="font-weight:700;color:#0f172a;">' + name + '</td>' +
             '<td style="font-family:monospace;font-size:12px;">' + email + '</td>' +
@@ -4848,7 +4918,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
               '<option value="red" ' + (badge === 'red' ? 'selected' : '') + '>Red badge</option>' +
               '<option value="green" ' + (badge === 'green' ? 'selected' : '') + '>Green badge</option>' +
             '</select></td>' +
-            '<td style="font-size:11px;color:' + (user.phone ? '#475569' : '#dc2626') + ';">' + phone + '</td>' +
+            '<td><button type="button" class="btn direct-live-access-btn" data-payment-id="' + id + '" data-allowed="' + (!canGoLive) + '" aria-pressed="' + canGoLive + '" style="padding:6px 10px;font-size:11px;background:' + (canGoLive ? '#dcfce7;color:#166534;border:1px solid #86efac;' : '#f1f5f9;color:#475569;border:1px solid #cbd5e1;') + '">' + (canGoLive ? 'Allowed' : 'Off') + '</button></td>' +
             '<td><div style="display:flex;gap:5px;align-items:center;min-width:150px;">' +
               '<input id="direct-amount-' + id + '" type="number" min="1" step="1" placeholder="KSh" ' + (!canPay ? 'disabled' : '') + ' style="width:72px;padding:7px;border:1px solid #cbd5e1;border-radius:7px;" />' +
               '<button type="button" class="btn btn-approve direct-pay-btn" data-payment-id="' + id + '" data-payment-name="' + name + '" ' + (!canPay ? 'disabled' : '') + ' style="padding:6px 9px;font-size:11px;">Pay</button>' +
@@ -4861,6 +4931,9 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         });
         tbody.querySelectorAll('.direct-blacklist-btn').forEach(function(button) {
           button.addEventListener('click', function() { togglePaymentBlacklist(button.dataset.paymentId, button.dataset.blacklisted === 'true'); });
+        });
+        tbody.querySelectorAll('.direct-live-access-btn').forEach(function(button) {
+          button.addEventListener('click', function() { toggleUserLiveAccess(button.dataset.paymentId, button.dataset.allowed === 'true'); });
         });
         tbody.querySelectorAll('.direct-badge-select').forEach(function(select) {
           select.addEventListener('change', function() { awardUserBadge(select.dataset.badgeId, select.value); });
@@ -4894,6 +4967,16 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         showToast(json.message || 'Payment access updated.');
         loadDirectPayments();
       } catch (error) { showToast(error.message || 'Update failed.', true); }
+    }
+
+    async function toggleUserLiveAccess(id, allowed) {
+      try {
+        const response = await fetch('/api/v1/dashboard/direct-payments/' + id + '/live-access', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ allowed: allowed }) });
+        const json = await response.json();
+        if (!response.ok || !json.success) throw new Error(json.error || 'Go Live access update failed');
+        showToast(json.message || 'Go Live access updated.');
+        loadDirectPayments();
+      } catch (error) { showToast(error.message || 'Go Live access update failed.', true); }
     }
 
     async function awardUserBadge(id, badge) {
@@ -5756,7 +5839,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       try {
         const res = await fetch('/api/v1/dashboard/settings', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: await adminSettingsAuthHeaders(),
           body: JSON.stringify({ key: 'showDemoMaterials', value: enabled })
         });
         const json = await res.json();
@@ -5779,7 +5862,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       try {
         const res = await fetch('/api/v1/dashboard/settings', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: await adminSettingsAuthHeaders(),
           body: JSON.stringify({ key: 'allowCommunityChat', value: enabled })
         });
         const json = await res.json();
@@ -5795,13 +5878,52 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       }
     }
 
+    async function saveForumAccessPolicy() {
+      const modeInput = document.getElementById('forum-access-mode');
+      const whitelistInput = document.getElementById('forum-whitelist-emails');
+      const blacklistInput = document.getElementById('forum-blacklist-emails');
+      const status = document.getElementById('forum-access-status');
+      const parseEmails = function(input) {
+        return String(input && input.value || '')
+          .split(/[\\s,;]+/)
+          .map(function(email) { return email.trim().toLowerCase(); })
+          .filter(Boolean);
+      };
+      const forumAccessPolicy = {
+        mode: modeInput && modeInput.value === 'whitelist' ? 'whitelist' : 'all',
+        whitelistEmails: parseEmails(whitelistInput),
+        blacklistEmails: parseEmails(blacklistInput)
+      };
+      if (status) status.textContent = 'Saving forum access…';
+      try {
+        const response = await fetch('/api/v1/dashboard/settings', {
+          method: 'POST',
+          headers: await adminSettingsAuthHeaders(),
+          body: JSON.stringify({ forumAccessPolicy: forumAccessPolicy })
+        });
+        const json = await response.json();
+        if (!response.ok || !json.success) throw new Error(json.error || json.message || 'Could not save forum access.');
+        if (status) {
+          status.textContent = 'Saved. ' + forumAccessPolicy.whitelistEmails.length + ' allowed email(s), ' + forumAccessPolicy.blacklistEmails.length + ' blocked email(s). Access changes are active now.';
+          status.style.color = '#15803d';
+        }
+        showToast('Forum access policy saved.');
+      } catch (error) {
+        if (status) {
+          status.textContent = error.message || 'Could not save forum access.';
+          status.style.color = '#dc2626';
+        }
+        showToast(error.message || 'Could not save forum access.', true);
+      }
+    }
+
     async function handleAllowPaymentsToggle(enabled) {
       const label = document.getElementById('payments-toggle-status-label');
       if (label) label.innerText = 'Saving payment setting to database...';
       try {
         const res = await fetch('/api/v1/dashboard/settings', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: await adminSettingsAuthHeaders(),
           body: JSON.stringify({ key: 'allowPayments', value: enabled })
         });
         const json = await res.json();
@@ -5823,7 +5945,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       try {
         const res = await fetch('/api/v1/dashboard/settings', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: await adminSettingsAuthHeaders(),
           body: JSON.stringify({ key: 'disableAiFeatures', value: disabled })
         });
         const json = await res.json();

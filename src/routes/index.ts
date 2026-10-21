@@ -49,7 +49,7 @@ router.post('/payments/mpesa/b2c/timeout', async (req, res) => {
 });
 
 // Community Real-Time Chat API Routes
-router.get('/community/messages', communityController.getCommunityMessages);
+router.get('/community/messages', optionalAuthenticate, communityController.getCommunityMessages);
 router.get('/community/mention-users', communityController.getMentionUsers);
 router.post('/community/messages', optionalAuthenticate, communityController.postCommunityMessage);
 router.post('/community/messages/:id/read', authenticate, communityController.markCommunityMessageRead);
@@ -57,12 +57,12 @@ router.post('/community/messages/:id/reaction', optionalAuthenticate, communityC
 router.delete('/community/messages/:id', authenticate, communityController.deleteCommunityMessage);
 router.post('/community/messages/:id/delete-for-me', authenticate, communityController.deleteCommunityMessageForMe);
 router.post('/community/upload-media', tempUpload.single('file'), communityController.uploadCommunityMedia);
-router.get('/community/live/token', optionalAuthenticate, liveController.createCommunityLiveToken);
+router.get('/community/live/token', authenticate, liveController.createCommunityLiveToken);
 
 // App Settings API Routes
-router.get('/settings', dashboardController.getAppSettings);
-router.get('/dashboard/settings', dashboardController.getAppSettings);
-router.post('/dashboard/settings', dashboardController.updateDashboardSettings);
+router.get('/settings', optionalAuthenticate, dashboardController.getAppSettings);
+router.get('/dashboard/settings', optionalAuthenticate, dashboardController.getAppSettings);
+router.post('/dashboard/settings', authenticate, requireRole('admin'), dashboardController.updateDashboardSettings);
 router.get('/dashboard/backup', dashboardController.backupDatabase);
 router.post('/dashboard/restore', tempUpload.single('backup'), dashboardController.restoreDatabase);
 
@@ -77,6 +77,7 @@ router.delete('/dashboard/users/:id', dashboardController.deleteDashboardUser);
 router.get('/dashboard/direct-payments', dashboardController.getDirectPaymentUsers);
 router.post('/dashboard/direct-payments/:id/pay', dashboardController.createDirectPayment);
 router.patch('/dashboard/direct-payments/:id/blacklist', dashboardController.setPaymentBlacklist);
+router.patch('/dashboard/direct-payments/:id/live-access', dashboardController.setUserLiveAccess);
 router.patch('/dashboard/direct-payments/:id/badge', dashboardController.setUserBadge);
 router.get('/dashboard/ai-overages', dashboardController.getAiOverages);
 router.delete('/dashboard/ai-overages', dashboardController.clearAiOverages);

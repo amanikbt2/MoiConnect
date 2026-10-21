@@ -6,6 +6,7 @@ import { sendCommunityMessagePush } from '../services/pushNotificationService';
 import { uploadTempFileToCloudinary } from '../services/tempFileService';
 import { getCampusBotsGeneration, isBotStopCommand, runCampusBotConversation, shouldCampusBotRespond, stopCampusBots } from '../services/campusBotService';
 import { getAppSettingValue } from '../models/AppSetting';
+import { getForumAccessPolicy, isForumParticipationAllowed } from '../services/forumAccessService';
 
 const getPublicAvatarUrl = (value?: string): string | undefined => {
   const normalized = String(value || '').trim();
@@ -17,6 +18,21 @@ export const getCommunityMessages = async (req: Request, res: Response): Promise
   try {
     const syncWatermark = new Date();
     const { since, before, limit } = req.query;
+    const forumPolicy = await getForumAccessPolicy();
+    const forumAccessAllowed = isForumParticipationAllowed((req as any).user?.email, forumPolicy);
+    const allowCommunityChat = await getAppSettingValue('allowCommunityChat', true);
+    if (!forumAccessAllowed) {
+      res.json({
+        success: true,
+        data: [],
+        count: 0,
+        hasMore: false,
+        allowCommunityChat,
+        forumAccessAllowed: false,
+        syncedAt: syncWatermark.toISOString()
+      });
+      return;
+    }
     const query: any = {};
     const userId = (req as any).user?._id;
     if (userId) query.hiddenForUserIds = { $ne: userId };
@@ -70,8 +86,6 @@ export const getCommunityMessages = async (req: Request, res: Response): Promise
       senderAvatarUrl: getPublicAvatarUrl(avatarByUserId.get(String(message.senderId || '')) || message.senderAvatarUrl)
     }));
 
-    const allowCommunityChat = await getAppSettingValue('allowCommunityChat', true);
-
     res.json({
       success: true,
       data: responseMessages,
@@ -80,6 +94,7 @@ export const getCommunityMessages = async (req: Request, res: Response): Promise
         ? matchingCount > responseMessages.length
         : (isOlderPage ? responseMessages.length === maxLimit : undefined),
       allowCommunityChat,
+      forumAccessAllowed: true,
       syncedAt: syncWatermark.toISOString()
     });
   } catch (error: any) {
@@ -123,6 +138,11 @@ export const postCommunityMessage = async (req: Request, res: Response): Promise
     }
     const { clientMsgId, text, fileAttachment, stickerId, replyTo, senderName, senderEmail, senderFaculty, senderCourse, senderYear, senderPhone, senderAvatarUrl, senderBadge, avatarBg, senderId } = req.body;
     const user = (req as any).user;
+    const forumPolicy = await getForumAccessPolicy();
+    if (!isForumParticipationAllowed(user?.email, forumPolicy)) {
+      res.status(403).json({ success: false, error: 'You are not eligible for forum participation.' });
+      return;
+    }
 
     if (isBotStopCommand(text)) {
       stopCampusBots();
@@ -186,7 +206,10 @@ export const postCommunityMessage = async (req: Request, res: Response): Promise
             typing ? 'community:user_typing' : 'community:user_stop_typing',
             { userId: assistant.kind === 'bot' ? 'campus-bot' : 'campus-ai', userName: assistant.name }
           ),
-          onReply: (assistantMessage) => getSocketIO()?.to('community_room').emit('community:receive_message', assistantMessage)
+          onReply: (assistantMessage) => {
+            getSocketIO()?.to('community_room').emit('community:receive_message', assistantMessage);
+            void sendCommunityMessagePush(assistantMessage);
+          }
         }, botGeneration).catch((botError) => console.error('[Campus assistants] Reply error:', botError));
       });
     }
@@ -206,6 +229,11 @@ export const toggleCommunityReaction = async (req: Request, res: Response): Prom
     const { id } = req.params;
     const { emoji, reactorId } = req.body;
     const user = (req as any).user;
+    const forumPolicy = await getForumAccessPolicy();
+    if (!isForumParticipationAllowed(user?.email, forumPolicy)) {
+      res.status(403).json({ success: false, error: 'You are not eligible for forum participation.' });
+      return;
+    }
     const actorId = user?._id?.toString() || (typeof reactorId === 'string' ? reactorId.trim() : '');
 
     if (!emoji || !actorId) {

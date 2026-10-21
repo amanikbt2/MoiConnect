@@ -1,5 +1,6 @@
 import { Types } from 'mongoose';
 import { DeviceToken } from '../models/DeviceToken';
+import { getForumAccessPolicy, isForumParticipationAllowed } from './forumAccessService';
 import { Notification } from '../models/Notification';
 import { User } from '../models/User';
 import { getSocketIO } from '../socket';
@@ -420,7 +421,10 @@ export const formatSmartNotificationSnippet = (
   fileAttachment?: any,
   stickerId?: string
 ): string => {
-  const cleanText = (text || '').trim();
+  // Chat markup is only for the in-app bubble. Keep Android push previews
+  // readable by removing its lightweight formatting characters and collapsing
+  // quote paragraph line breaks into a normal notification snippet.
+  const cleanText = (text || '').replace(/[*~_|]/g, '').replace(/\s+/g, ' ').trim();
 
   if (fileAttachment && (fileAttachment.url || fileAttachment.name || fileAttachment.type || fileAttachment.paperId)) {
     const rawType = (fileAttachment.type || '').toLowerCase();
@@ -489,11 +493,17 @@ export const sendCommunityMessagePush = async (messagePayload: {
     // Resolve all registered devices first, then exclude only the sender in
     // code. Older tokens may have no userId/email populated, so a Mongo `$ne`
     // query can accidentally omit valid recipients.
-    const registeredDevices = await DeviceToken.find({}).select('token userId email').lean();
+    const forumPolicy = await getForumAccessPolicy();
+    const registeredDevices = await DeviceToken.find({}).select('token userId email').populate('userId', 'email').lean();
     const recipientTokens = registeredDevices
       .filter((device: any) => {
-        const deviceUserId = device.userId ? String(device.userId) : '';
+        const deviceUserId = device.userId
+          ? String(typeof device.userId === 'object' ? device.userId._id : device.userId)
+          : '';
+        const linkedUserEmail = device.userId && typeof device.userId === 'object' ? device.userId.email : '';
         const deviceEmail = String(device.email || '').trim().toLowerCase();
+        const recipientEmail = linkedUserEmail || deviceEmail;
+        if (!isForumParticipationAllowed(recipientEmail, forumPolicy)) return false;
         const isSender = (senderIdStr && deviceUserId === senderIdStr) ||
           (senderEmailStr && deviceEmail === senderEmailStr);
         return !isSender;

@@ -9,20 +9,24 @@ export const createCommunityLiveToken = async (
   req: AuthenticatedRequest,
   res: Response
 ): Promise<void> => {
-  const userId = req.user?._id?.toString() || (req.query.userId as string) || `student_${Date.now()}`;
-  const displayName = String(req.user?.name || req.query.name || 'Moi Student').slice(0, 80);
+  const user = req.user;
+  if (!user) {
+    res.status(401).json({ success: false, error: 'Sign in to join a live room.' });
+    return;
+  }
+  const role = req.query.role === 'host' ? 'host' : 'viewer';
+  const userId = user._id.toString();
+  const displayName = String(user.name || 'Moi Student').slice(0, 80);
+
+  if (role === 'host') {
+    if (!user.canGoLive) {
+      res.status(403).json({ success: false, error: 'Go Live is not enabled for your account. Contact an administrator if you think this is a mistake.' });
+      return;
+    }
+  }
 
   if (!config.livekit.url || !config.livekit.apiKey || !config.livekit.apiSecret) {
-    res.json({
-      success: true,
-      data: {
-        url: '',
-        token: 'socket_fallback_mode',
-        roomName: LIVE_ROOM_NAME,
-        participantName: displayName,
-        isConfigured: false
-      }
-    });
+    res.status(503).json({ success: false, error: 'Live streaming is not configured on the server.' });
     return;
   }
   const token = new AccessToken(config.livekit.apiKey, config.livekit.apiSecret, {
@@ -34,7 +38,7 @@ export const createCommunityLiveToken = async (
   token.addGrant({
     room: LIVE_ROOM_NAME,
     roomJoin: true,
-    canPublish: true,
+    canPublish: role === 'host',
     canSubscribe: true,
     canPublishData: true
   });

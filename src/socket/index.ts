@@ -9,6 +9,7 @@ import { CommunityMessage } from '../models/CommunityMessage';
 import { getCampusBotsGeneration, isBotStopCommand, runCampusBotConversation, shouldCampusBotRespond, stopCampusBots } from '../services/campusBotService';
 import { sendCommunityMessagePush, sendDirectMessagePush } from '../services/pushNotificationService';
 import { getAppSettingValue } from '../models/AppSetting';
+import { ForumAccessPolicy, getForumAccessPolicy, isForumParticipationAllowed } from '../services/forumAccessService';
 
 export interface AuthenticatedSocket extends Socket {
   userId?: string;
@@ -47,6 +48,23 @@ export const getSocketIO = (): SocketIOServer | null => {
   return ioInstance;
 };
 
+export const refreshCommunityForumAccess = async (policy?: ForumAccessPolicy): Promise<void> => {
+  if (!ioInstance) return;
+  const activePolicy = policy || await getForumAccessPolicy();
+  const sockets = await ioInstance.fetchSockets();
+  await Promise.all(sockets.map(async (socket) => {
+    const allowed = isForumParticipationAllowed(socket.data.forumEmail, activePolicy);
+    socket.data.forumAccessAllowed = allowed;
+    if (allowed) await socket.join('community_room');
+    else await socket.leave('community_room');
+    socket.emit('community:forum_access', {
+      allowed,
+      message: allowed ? '' : 'You are not eligible for forum participation.'
+    });
+  }));
+  ioInstance.to('community_room').emit('community:online_count', getOnlineStats());
+};
+
 export const getOnlineStats = () => {
   let authenticatedCount = 0;
   let guestCount = 0;
@@ -73,12 +91,21 @@ export const setupSocketIO = (io: SocketIOServer): void => {
   ioInstance = io;
   // Connection Authentication Middleware (Supports both Authenticated users & Anonymous/Guest users)
   io.use(async (socket: AuthenticatedSocket, next) => {
+    const resolveForumAccess = async () => {
+      try {
+        const policy = await getForumAccessPolicy();
+        socket.data.forumAccessAllowed = isForumParticipationAllowed(socket.data.forumEmail, policy);
+      } catch {
+        socket.data.forumAccessAllowed = false;
+      }
+    };
     try {
       const token = socket.handshake.auth?.token || socket.handshake.headers?.authorization?.split(' ')[1];
       if (!token) {
         // Guest user (not signed in / unknown)
         socket.userId = undefined;
         socket.isGuest = true;
+        await resolveForumAccess();
         return next();
       }
 
@@ -87,10 +114,12 @@ export const setupSocketIO = (io: SocketIOServer): void => {
       if (user && user.accountStatus !== 'suspended') {
         socket.userId = user._id.toString();
         socket.isGuest = false;
+        socket.data.forumEmail = user.email;
       } else {
         socket.userId = undefined;
         socket.isGuest = true;
       }
+    await resolveForumAccess();
       next();
     } catch (err) {
       // Fallback to guest session on token verification error
@@ -122,13 +151,28 @@ export const setupSocketIO = (io: SocketIOServer): void => {
       socket.emit('community:online_count', getOnlineStats());
     });
 
+    socket.on('community:request_live_status', () => {
+      if (activeLiveBroadcast) {
+        socket.emit('community:live_start', {
+          hostName: activeLiveBroadcast.hostName,
+          hostAvatar: activeLiveBroadcast.hostAvatar,
+          hostId: activeLiveBroadcast.hostId
+        });
+      }
+    });
+
     // Join personal notification room if authenticated
     if (userId) {
       socket.join(`user:${userId}`);
     }
 
-    // Auto-join open community broadcast room
-    socket.join('community_room');
+    // Only eligible users receive community room broadcasts.
+    const forumAccessAllowed = socket.data.forumAccessAllowed !== false;
+    if (forumAccessAllowed) socket.join('community_room');
+    socket.emit('community:forum_access', {
+      allowed: forumAccessAllowed,
+      message: forumAccessAllowed ? '' : 'You are not eligible for forum participation.'
+    });
     broadcastOnlineCount();
 
     if (activeLiveBroadcast) {
@@ -162,19 +206,33 @@ export const setupSocketIO = (io: SocketIOServer): void => {
       }).catch(() => {});
     }
 
-    socket.on('join_community', () => {
+    socket.on('join_community', async () => {
+      const policy = await getForumAccessPolicy();
+      const allowed = isForumParticipationAllowed(socket.data.forumEmail, policy);
+      socket.data.forumAccessAllowed = allowed;
+      if (!allowed) {
+        socket.leave('community_room');
+        socket.emit('community:forum_access', { allowed: false, message: 'You are not eligible for forum participation.' });
+        return;
+      }
       socket.join('community_room');
+      socket.emit('community:forum_access', { allowed: true, message: '' });
       broadcastOnlineCount();
     });
 
-    socket.on('community:live_start', (data: { hostName?: string; hostAvatar?: string; hostId?: string }) => {
-      if (activeLiveBroadcast) return;
+    socket.on('community:live_start', async () => {
+      if (!userId || activeLiveBroadcast) return;
+      const host = await User.findById(userId).select('name avatarUrl createdAt').lean();
+      if (!host) return;
+      const hostEligibleAt = new Date(host.createdAt);
+      hostEligibleAt.setMonth(hostEligibleAt.getMonth() + 6);
+      if (hostEligibleAt > new Date()) return;
 
       activeLiveBroadcast = {
-        hostId: data?.hostId || userId || socket.id,
+        hostId: userId,
         hostSocketId: socket.id,
-        hostName: data?.hostName || 'Moi Student',
-        hostAvatar: data?.hostAvatar,
+        hostName: host.name || 'Moi Student',
+        hostAvatar: host.avatarUrl,
         participants: new Map()
       };
 
@@ -186,12 +244,12 @@ export const setupSocketIO = (io: SocketIOServer): void => {
     });
 
     socket.on('community:live_join', (data: { id?: string; name?: string; avatar?: string }) => {
-      if (!activeLiveBroadcast || !data?.id) return;
+      if (!userId || !activeLiveBroadcast || !data?.id) return;
 
       const participant: LiveParticipant = {
-        id: data.id,
-        name: data.name || 'Moi Student',
-        avatar: data.avatar,
+        id: socket.id,
+        name: (socket as any).user?.name || data.name || 'Moi Student',
+        avatar: (socket as any).user?.avatarUrl || data.avatar,
         socketId: socket.id
       };
       activeLiveBroadcast.participants.set(participant.id, participant);
@@ -277,6 +335,16 @@ export const setupSocketIO = (io: SocketIOServer): void => {
         }
         const { clientMsgId, text, fileAttachment, stickerId, replyTo, senderName, senderEmail, senderFaculty, senderCourse, senderYear, senderPhone, senderAvatarUrl, senderBadge, avatarBg } = data;
         if (!text?.trim() && !fileAttachment && !stickerId) return;
+
+        const forumPolicy = await getForumAccessPolicy();
+        const forumAccessAllowed = isForumParticipationAllowed(socket.data.forumEmail, forumPolicy);
+        if (!forumAccessAllowed) {
+          socket.data.forumAccessAllowed = false;
+          socket.leave('community_room');
+          socket.emit('community:forum_access', { allowed: false, message: 'You are not eligible for forum participation.' });
+          ack?.({ success: false, error: 'You are not eligible for forum participation.' });
+          return;
+        }
 
         if (clientMsgId && processedClientMsgIds.has(clientMsgId)) {
           const existingId = processedClientMsgIds.get(clientMsgId);
@@ -386,7 +454,10 @@ export const setupSocketIO = (io: SocketIOServer): void => {
                   typing ? 'community:user_typing' : 'community:user_stop_typing',
                   { userId: assistant.kind === 'bot' ? 'campus-bot' : 'campus-ai', userName: assistant.name }
                 ),
-                onReply: (assistantMessage) => io.to('community_room').emit('community:receive_message', assistantMessage)
+                onReply: (assistantMessage) => {
+                  io.to('community_room').emit('community:receive_message', assistantMessage);
+                  void sendCommunityMessagePush(assistantMessage);
+                }
               }, botGeneration).catch((botError) => console.error('[Campus assistants] Reply error:', botError));
             }
           } catch (dbErr) {

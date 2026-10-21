@@ -30,6 +30,7 @@ export interface IUser {
   landlordStatus: LandlordStatus;
   accountStatus: AccountStatus;
   points?: number;
+  canGoLive?: boolean;
   createdAt: string;
   updatedAt: string;
 }

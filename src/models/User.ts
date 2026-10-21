@@ -17,6 +17,7 @@ export interface IUserDocument extends Document {
   points: number;
   badge?: 'blue' | 'red' | 'green';
   paymentBlacklisted: boolean;
+  canGoLive: boolean;
   landlordRequestDetails?: {
     idNumber: string;
     proofDetails: string;
@@ -68,6 +69,11 @@ const userSchema = new Schema<IUserDocument>(
       enum: ['blue', 'red', 'green']
     },
     paymentBlacklisted: {
+      type: Boolean,
+      default: false,
+      index: true
+    },
+    canGoLive: {
       type: Boolean,
       default: false,
       index: true

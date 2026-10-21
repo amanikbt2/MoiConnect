@@ -63,7 +63,9 @@ const assistants: Record<AssistantKind, Assistant> = {
   bot: { kind: 'bot', name: 'Campus Bot', email: CAMPUS_BOT_EMAIL, id: new Types.ObjectId('000000000000000000000001'), avatarBg: '#6366f1', aliases: /(^|\s)@(bot|campusbot|campus[\s_]+bot)\b|\bcampus[\s_]+bot\b/i },
   ai: { kind: 'ai', name: 'Campus AI', email: CAMPUS_AI_EMAIL, id: new Types.ObjectId('000000000000000000000002'), avatarBg: '#d4a017', aliases: /(^|\s)@(ai|campusai|campus[\s_]+ai)\b|\bcampus[\s_]+ai\b/i }
 };
-const REQUEST_TIMEOUT_MS = 8000;
+// Allow enough time for a complete, detailed answer instead of aborting while
+// Gemini is still generating. The user can still stop an active generation.
+const REQUEST_TIMEOUT_MS = 120_000;
 const KEY_COOLDOWN_MS = 60_000;
 const MODEL_CANDIDATES = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
 const MAX_TURNS_PER_CHAIN = 4;
@@ -287,7 +289,10 @@ const askGemini = async (apiKey: string, apiLabel: string, model: string, messag
 
     const requestBody: any = {
       contents: [{ role: 'user', parts: [{ text: stripAssistantMentions(messageText) || messageText }] }],
-      generationConfig: { temperature: 0.4, maxOutputTokens: 300 }
+      // 8,192 is the common supported output ceiling across the configured
+      // fallback models. This replaces the old 300-token cap that cut answers
+      // off early; the model/provider still enforces its own hard maximum.
+      generationConfig: { temperature: 0.4, maxOutputTokens: 8192 }
     };
 
     if (systemInstructionText.trim()) {
