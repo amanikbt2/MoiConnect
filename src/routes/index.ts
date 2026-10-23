@@ -52,6 +52,7 @@ router.post('/payments/mpesa/b2c/timeout', async (req, res) => {
 router.get('/community/messages', optionalAuthenticate, communityController.getCommunityMessages);
 router.get('/community/mention-users', communityController.getMentionUsers);
 router.post('/community/messages', optionalAuthenticate, communityController.postCommunityMessage);
+router.post('/community/private-messages', authenticate, communityController.postPrivateCommunityMessage);
 router.post('/community/messages/:id/read', authenticate, communityController.markCommunityMessageRead);
 router.post('/community/messages/:id/reaction', optionalAuthenticate, communityController.toggleCommunityReaction);
 router.delete('/community/messages/:id', authenticate, communityController.deleteCommunityMessage);

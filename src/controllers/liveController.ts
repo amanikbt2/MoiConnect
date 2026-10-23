@@ -38,7 +38,8 @@ export const createCommunityLiveToken = async (
   token.addGrant({
     room: LIVE_ROOM_NAME,
     roomJoin: true,
-    canPublish: role === 'host',
+    // Viewers may temporarily publish mic/camera while holding the room controls.
+    canPublish: true,
     canSubscribe: true,
     canPublishData: true
   });

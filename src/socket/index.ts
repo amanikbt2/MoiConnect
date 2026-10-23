@@ -152,13 +152,12 @@ export const setupSocketIO = (io: SocketIOServer): void => {
     });
 
     socket.on('community:request_live_status', () => {
-      if (activeLiveBroadcast) {
-        socket.emit('community:live_start', {
+      socket.emit('community:live_status', activeLiveBroadcast ? {
+        active: true,
           hostName: activeLiveBroadcast.hostName,
           hostAvatar: activeLiveBroadcast.hostAvatar,
           hostId: activeLiveBroadcast.hostId
-        });
-      }
+      } : { active: false });
     });
 
     // Join personal notification room if authenticated
@@ -222,11 +221,8 @@ export const setupSocketIO = (io: SocketIOServer): void => {
 
     socket.on('community:live_start', async () => {
       if (!userId || activeLiveBroadcast) return;
-      const host = await User.findById(userId).select('name avatarUrl createdAt').lean();
-      if (!host) return;
-      const hostEligibleAt = new Date(host.createdAt);
-      hostEligibleAt.setMonth(hostEligibleAt.getMonth() + 6);
-      if (hostEligibleAt > new Date()) return;
+      const host = await User.findById(userId).select('name avatarUrl canGoLive').lean();
+      if (!host?.canGoLive) return;
 
       activeLiveBroadcast = {
         hostId: userId,
@@ -236,7 +232,7 @@ export const setupSocketIO = (io: SocketIOServer): void => {
         participants: new Map()
       };
 
-      socket.to('community_room').emit('community:live_start', {
+      io.to('community_room').emit('community:live_start', {
         hostName: activeLiveBroadcast.hostName,
         hostAvatar: activeLiveBroadcast.hostAvatar,
         hostId: activeLiveBroadcast.hostId
@@ -566,7 +562,7 @@ export const setupSocketIO = (io: SocketIOServer): void => {
     socket.on('disconnect', () => {
       if (activeLiveBroadcast?.hostSocketId === socket.id) {
         activeLiveBroadcast = null;
-        socket.to('community_room').emit('community:live_end');
+        io.to('community_room').emit('community:live_end');
       } else if (activeLiveBroadcast) {
         const participant = Array.from(activeLiveBroadcast.participants.values()).find((entry) => entry.socketId === socket.id);
         if (participant) {

@@ -1,8 +1,9 @@
 import { Request, Response } from 'express';
+import { Types } from 'mongoose';
 import { CommunityMessage } from '../models/CommunityMessage';
 import { User } from '../models/User';
 import { getSocketIO } from '../socket';
-import { sendCommunityMessagePush } from '../services/pushNotificationService';
+import { sendCommunityMessagePush, sendPrivateCommunityMessagePush } from '../services/pushNotificationService';
 import { uploadTempFileToCloudinary } from '../services/tempFileService';
 import { getCampusBotsGeneration, isBotStopCommand, runCampusBotConversation, shouldCampusBotRespond, stopCampusBots } from '../services/campusBotService';
 import { getAppSettingValue } from '../models/AppSetting';
@@ -80,11 +81,26 @@ export const getCommunityMessages = async (req: Request, res: Response): Promise
       : [];
     const badgeByUserId = new Map(badgeUsers.map((user: any) => [String(user._id), user.badge]));
     const avatarByUserId = new Map(badgeUsers.map((user: any) => [String(user._id), user.avatarUrl]));
-    const responseMessages = messages.map((message: any) => ({
-      ...message,
-      senderBadge: badgeByUserId.get(String(message.senderId || '')) || undefined,
-      senderAvatarUrl: getPublicAvatarUrl(avatarByUserId.get(String(message.senderId || '')) || message.senderAvatarUrl)
-    }));
+    const requesterId = userId ? String(userId) : '';
+    const responseMessages = messages.map((message: any) => {
+      const isPrivate = Boolean(message.isPrivate);
+      const canViewPrivateText = isPrivate && requesterId.length > 0 && (
+        String(message.senderId || '') === requesterId || String(message.recipientId || '') === requesterId
+      );
+      const redactPrivateText = isPrivate && !canViewPrivateText;
+      return {
+        ...message,
+        text: redactPrivateText ? '' : message.text,
+        fileAttachment: redactPrivateText ? undefined : message.fileAttachment,
+        stickerId: redactPrivateText ? undefined : message.stickerId,
+        replyTo: redactPrivateText ? undefined : message.replyTo,
+        reactions: redactPrivateText ? {} : message.reactions,
+        readBy: redactPrivateText ? [] : message.readBy,
+        privateNotice: redactPrivateText,
+        senderBadge: badgeByUserId.get(String(message.senderId || '')) || undefined,
+        senderAvatarUrl: getPublicAvatarUrl(avatarByUserId.get(String(message.senderId || '')) || message.senderAvatarUrl)
+      };
+    });
 
     res.json({
       success: true,
@@ -99,6 +115,89 @@ export const getCommunityMessages = async (req: Request, res: Response): Promise
     });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message || 'Failed to fetch community messages' });
+  }
+};
+
+export const postPrivateCommunityMessage = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const sender = (req as any).user;
+    if (!sender?._id) {
+      res.status(401).json({ success: false, error: 'Sign in to send a private message.' });
+      return;
+    }
+
+    const allowChat = await getAppSettingValue('allowCommunityChat', true);
+    if (!allowChat) {
+      res.status(403).json({ success: false, error: 'Community chat disabled by administrator.' });
+      return;
+    }
+
+    const recipientId = String(req.body?.recipientId || '').trim();
+    const text = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
+    if (!Types.ObjectId.isValid(recipientId)) {
+      res.status(400).json({ success: false, error: 'Choose a valid recipient.' });
+      return;
+    }
+    if (!text || text.length > 2000) {
+      res.status(400).json({ success: false, error: 'Enter a message of 1 to 2,000 characters.' });
+      return;
+    }
+    if (String(sender._id) === recipientId) {
+      res.status(400).json({ success: false, error: 'Choose someone else to receive the private message.' });
+      return;
+    }
+
+    const recipient = await User.findById(recipientId).select('_id name email accountStatus');
+    if (!recipient || recipient.accountStatus === 'suspended') {
+      res.status(404).json({ success: false, error: 'That user could not be found.' });
+      return;
+    }
+
+    const forumPolicy = await getForumAccessPolicy();
+    if (!isForumParticipationAllowed(sender.email, forumPolicy) || !isForumParticipationAllowed(recipient.email, forumPolicy)) {
+      res.status(403).json({ success: false, error: 'Both users must be eligible for forum participation.' });
+      return;
+    }
+
+    const savedMessage = await CommunityMessage.create({
+      senderId: sender._id,
+      senderName: sender.name || 'Moi Student',
+      senderEmail: sender.email || '',
+      senderFaculty: 'Moi Student',
+      senderCourse: sender.course,
+      senderYear: sender.yearOfStudy,
+      senderAvatarUrl: getPublicAvatarUrl(sender.avatarUrl),
+      senderBadge: sender.badge,
+      avatarBg: '#15803d',
+      text,
+      isPrivate: true,
+      recipientId: recipient._id,
+      recipientName: recipient.name || 'a student',
+      readBy: [sender._id]
+    });
+
+    const message = savedMessage.toObject();
+    const publicNotice = {
+      ...message,
+      text: '',
+      fileAttachment: undefined,
+      stickerId: undefined,
+      replyTo: undefined,
+      privateNotice: true
+    };
+    const io = getSocketIO();
+    // Keep the redacted public notice out of the sender's and recipient's feeds.
+    // They receive the full private message through their personal rooms below.
+    io?.to('community_room')
+      .except([`user:${String(sender._id)}`, `user:${String(recipient._id)}`])
+      .emit('community:receive_message', publicNotice);
+    io?.to(`user:${String(sender._id)}`).to(`user:${String(recipient._id)}`).emit('community:private_message', message);
+
+    void sendPrivateCommunityMessagePush(String(recipient._id), String(savedMessage._id));
+
+    res.status(201).json({ success: true, message: 'Private message sent.', data: message });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to send private message.' });
   }
 };
 
@@ -246,6 +345,13 @@ export const toggleCommunityReaction = async (req: Request, res: Response): Prom
       res.status(404).json({ success: false, error: 'Message not found.' });
       return;
     }
+    if (message.isPrivate) {
+      const userId = String(user?._id || '');
+      if (userId !== String(message.senderId) && userId !== String(message.recipientId || '')) {
+        res.status(404).json({ success: false, error: 'Message not found.' });
+        return;
+      }
+    }
 
     if (!message.reactions) message.reactions = new Map();
     if (!message.reactionUsers) message.reactionUsers = new Map();
@@ -286,12 +392,17 @@ export const toggleCommunityReaction = async (req: Request, res: Response): Prom
     const reactions = Object.fromEntries(message.reactions);
     const io = getSocketIO();
     if (io) {
-      io.to('community_room').emit('community:reaction_updated', {
+      const reactionEvent = {
         messageId: id,
         reactions,
         actorId,
         myReaction
-      });
+      };
+      if (message.isPrivate) {
+        io.to(`user:${String(message.senderId)}`).to(`user:${String(message.recipientId)}`).emit('community:reaction_updated', reactionEvent);
+      } else {
+        io.to('community_room').emit('community:reaction_updated', reactionEvent);
+      }
     }
 
     res.json({ success: true, data: { messageId: id, reactions, myReaction } });
@@ -307,15 +418,16 @@ export const markCommunityMessageRead = async (req: Request, res: Response): Pro
       res.status(401).json({ success: false, error: 'Authentication required.' });
       return;
     }
-    const message = await CommunityMessage.findByIdAndUpdate(
-      req.params.id,
-      { $addToSet: { readBy: userId } },
-      { new: true }
-    ).select('_id');
+    const message = await CommunityMessage.findById(req.params.id).select('_id isPrivate senderId recipientId');
     if (!message) {
       res.status(404).json({ success: false, error: 'Message not found.' });
       return;
     }
+    if (message.isPrivate && String(userId) !== String(message.senderId) && String(userId) !== String(message.recipientId || '')) {
+      res.status(404).json({ success: false, error: 'Message not found.' });
+      return;
+    }
+    await CommunityMessage.updateOne({ _id: message._id }, { $addToSet: { readBy: userId } });
     res.json({ success: true, message: 'Community message marked as read.' });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message || 'Failed to mark message as read.' });

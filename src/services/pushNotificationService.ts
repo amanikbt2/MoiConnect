@@ -416,6 +416,31 @@ export const sendPushToTokens = async (
   return { totalTokens: tokens.length, sentCount, failedCount };
 };
 
+export const sendPrivateCommunityMessagePush = async (
+  recipientUserId: string,
+  messageId: string
+): Promise<void> => {
+  try {
+    const recipientTokens = await DeviceToken.find({ userId: recipientUserId }).distinct('token');
+    await sendPushToTokens(
+      recipientTokens,
+      'Private message',
+      'You received a private message.',
+      {
+        screen: 'community',
+        channelId: 'mconnect_messages_v2',
+        categoryId: 'community_message',
+        notificationType: 'private_community_message',
+        messageId,
+        messagePreview: 'Private message',
+        notificationSubtitle: 'Private message'
+      }
+    );
+  } catch (error) {
+    console.error('[Private Community Message Push]:', error);
+  }
+};
+
 export const formatSmartNotificationSnippet = (
   text?: string,
   fileAttachment?: any,

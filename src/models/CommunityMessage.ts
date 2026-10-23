@@ -30,6 +30,9 @@ export interface ICommunityMessage extends Document {
   senderBadge?: 'blue' | 'red' | 'green';
   avatarBg: string;
   text: string;
+  isPrivate?: boolean;
+  recipientId?: Types.ObjectId;
+  recipientName?: string;
   stickerId?: string;
   fileAttachment?: IFileAttachment;
   replyTo?: IReplyTo;
@@ -56,6 +59,9 @@ const communityMessageSchema = new Schema<ICommunityMessage>(
     senderBadge: { type: String, enum: ['blue', 'red', 'green'] },
     avatarBg: { type: String, default: '#15803d' },
     text: { type: String, default: '' },
+    isPrivate: { type: Boolean, default: false, index: true },
+    recipientId: { type: Schema.Types.ObjectId, ref: 'User', index: true },
+    recipientName: { type: String, trim: true },
     stickerId: { type: String, trim: true },
     fileAttachment: {
       name: { type: String },
