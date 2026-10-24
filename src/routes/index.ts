@@ -82,6 +82,8 @@ router.patch('/dashboard/direct-payments/:id/live-access', dashboardController.s
 router.patch('/dashboard/direct-payments/:id/badge', dashboardController.setUserBadge);
 router.get('/dashboard/ai-overages', dashboardController.getAiOverages);
 router.delete('/dashboard/ai-overages', dashboardController.clearAiOverages);
+router.get('/dashboard/ai-turn-limit', dashboardController.getAiTurnLimit);
+router.put('/dashboard/ai-turn-limit', dashboardController.updateAiTurnLimit);
 router.get('/dashboard/ai-context', dashboardController.getAiContextSettings);
 router.put('/dashboard/ai-context', dashboardController.updateAiContextSettings);
 router.get('/dashboard/materials/search', dashboardController.searchDashboardMaterials);

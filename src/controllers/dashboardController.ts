@@ -37,7 +37,7 @@ import { awardPaperApprovalPoints } from '../services/rewardService';
 import { purgeUserAccountAndData } from '../services/accountPurgeService';
 import { randomDownloadCount, randomRatingScore } from '../utils/materialStats';
 import { getForumAccessPolicy, isForumParticipationAllowed, saveForumAccessPolicy } from '../services/forumAccessService';
-import { clearAiTelemetry, getAiPromptSettings, getAiTelemetry, saveAiPromptSettings } from '../services/campusBotService';
+import { AssistantKind, clearAiTelemetry, getAiConversationTurnLimit, getAiPromptSettings, getAiTelemetry, MAX_AI_TURN_LIMIT, MIN_AI_TURN_LIMIT, saveAiConversationTurnLimit, saveAiPromptSettings } from '../services/campusBotService';
 import { generateSmartMtid } from '../utils/mtidHelper';
 
 const COMMUNITY_ASSISTANT_USERS = [
@@ -86,9 +86,32 @@ export const clearAiOverages = async (_req: Request, res: Response): Promise<voi
   }
 };
 
+export const getAiTurnLimit = async (_req: Request, res: Response): Promise<void> => {
+  try {
+    res.json({ success: true, data: { limit: await getAiConversationTurnLimit(), min: MIN_AI_TURN_LIMIT, max: MAX_AI_TURN_LIMIT } });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to load the AI conversation limit.' });
+  }
+};
+
+export const updateAiTurnLimit = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const limit = Number(req.body?.limit);
+    if (!Number.isInteger(limit) || limit < MIN_AI_TURN_LIMIT || limit > MAX_AI_TURN_LIMIT) {
+      res.status(400).json({ success: false, error: `Choose a whole number from ${MIN_AI_TURN_LIMIT} to ${MAX_AI_TURN_LIMIT}.` });
+      return;
+    }
+    const savedLimit = await saveAiConversationTurnLimit(limit);
+    res.json({ success: true, data: { limit: savedLimit }, message: `AI conversation limit set to ${savedLimit} turns.` });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to save the AI conversation limit.' });
+  }
+};
+
 export const getAiContextSettings = async (_req: Request, res: Response): Promise<void> => {
   try {
-    res.json({ success: true, data: await getAiPromptSettings() });
+    const assistant: AssistantKind = _req.query.assistant === 'ai' ? 'ai' : 'bot';
+    res.json({ success: true, data: await getAiPromptSettings(assistant), assistant });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message || 'Failed to load AI context.' });
   }
@@ -97,6 +120,7 @@ export const getAiContextSettings = async (_req: Request, res: Response): Promis
 export const updateAiContextSettings = async (req: Request, res: Response): Promise<void> => {
   try {
     const body = req.body || {};
+    const assistant: AssistantKind = body.assistant === 'ai' ? 'ai' : 'bot';
     const context = typeof body.context === 'string' ? body.context : '';
     const persona = typeof body.persona === 'string' ? body.persona : '';
     const responseRules = typeof body.responseRules === 'string' ? body.responseRules : '';
@@ -105,8 +129,8 @@ export const updateAiContextSettings = async (req: Request, res: Response): Prom
       res.status(400).json({ success: false, error: 'At least one AI instruction is required.' });
       return;
     }
-    const saved = await saveAiPromptSettings({ context, persona, responseRules, safetyRules });
-    res.json({ success: true, data: saved, message: 'AI instructions saved.' });
+    const saved = await saveAiPromptSettings({ context, persona, responseRules, safetyRules }, assistant);
+    res.json({ success: true, data: saved, assistant, message: `${assistant === 'ai' ? 'Campus AI' : 'Campus Bot'} instructions saved.` });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message || 'Failed to save AI context.' });
   }
@@ -3661,6 +3685,11 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
             </div>
             <button onclick="loadAiContext()" class="btn btn-view" style="padding:6px 10px;font-size:11px;">Reload</button>
           </div>
+          <div style="display:flex;gap:8px;margin-bottom:12px;">
+            <button id="ai-context-tab-bot" onclick="setAiContextAssistant('bot')" class="btn btn-view" style="padding:7px 14px;font-size:12px;">Campus Bot @bot</button>
+            <button id="ai-context-tab-ai" onclick="setAiContextAssistant('ai')" class="btn btn-view" style="padding:7px 14px;font-size:12px;">Campus AI @ai</button>
+          </div>
+          <div id="ai-context-assistant-note" style="font-size:11px;color:#64748b;margin:-5px 0 10px;">Editing Campus Bot instructions. These settings apply only when students mention @bot.</div>
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;">
             <label style="font-size:12px;font-weight:800;color:#334155;">Primary Context
               <textarea id="ai-context-input" rows="5" maxlength="5000" placeholder="What should the assistant know about its purpose?" style="display:block;width:100%;box-sizing:border-box;resize:vertical;margin-top:5px;border:1px solid #cbd5e1;border-radius:8px;padding:10px;font:inherit;font-size:13px;color:#1e293b;background:#fff;"></textarea>
@@ -3678,6 +3707,18 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
           <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:8px;">
             <span id="ai-context-status" style="font-size:11px;color:#64748b;"></span>
             <button onclick="saveAiContext()" class="btn btn-approve">Save AI Instructions</button>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px;margin:-6px 0 16px;">
+          <div>
+            <div style="font-size:13px;font-weight:800;color:#0f172a;">AI-to-AI Conversation Limit</div>
+            <div style="font-size:11px;color:#64748b;margin-top:3px;">Maximum assistant replies in one chain. New conversations use the saved limit (1–20 turns).</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <label for="ai-turn-limit-input" style="font-size:12px;font-weight:700;color:#334155;">Turns</label>
+            <input id="ai-turn-limit-input" type="number" min="1" max="20" step="1" value="4" style="width:76px;border:1px solid #cbd5e1;border-radius:7px;padding:8px;font:inherit;font-size:13px;">
+            <button onclick="saveAiTurnLimit()" class="btn btn-approve" style="padding:8px 12px;font-size:12px;">Save limit</button>
+            <span id="ai-turn-limit-status" style="font-size:11px;color:#64748b;"></span>
           </div>
         </div>
         <div id="ai-overages-summary" class="stats-grid" style="margin-bottom: 18px;"></div>
@@ -5168,12 +5209,29 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
     }
 
     let aiOveragesRefreshTimer = null;
+    let aiContextAssistant = 'bot';
+
+    function setAiContextAssistant(assistant) {
+      aiContextAssistant = assistant === 'ai' ? 'ai' : 'bot';
+      const botTab = document.getElementById('ai-context-tab-bot');
+      const aiTab = document.getElementById('ai-context-tab-ai');
+      const note = document.getElementById('ai-context-assistant-note');
+      if (botTab) botTab.style.background = aiContextAssistant === 'bot' ? '#dcfce7' : '#fff';
+      if (botTab) botTab.style.borderColor = aiContextAssistant === 'bot' ? '#86efac' : '#cbd5e1';
+      if (aiTab) aiTab.style.background = aiContextAssistant === 'ai' ? '#dcfce7' : '#fff';
+      if (aiTab) aiTab.style.borderColor = aiContextAssistant === 'ai' ? '#86efac' : '#cbd5e1';
+      if (note) note.innerText = aiContextAssistant === 'ai'
+        ? 'Editing Campus AI instructions. These settings apply only when students mention @ai.'
+        : 'Editing Campus Bot instructions. These settings apply only when students mention @bot.';
+      loadAiContext();
+    }
+
     function toggleAiContextEditor() {
       const editor = document.getElementById('ai-context-editor');
       if (!editor) return;
       const opening = editor.classList.contains('hidden');
       editor.classList.toggle('hidden');
-      if (opening) loadAiContext();
+      if (opening) setAiContextAssistant(aiContextAssistant);
     }
 
     async function loadAiContext() {
@@ -5185,7 +5243,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       if (!contextInput) return;
       if (status) status.innerText = 'Loading saved AI instructions...';
       try {
-        const response = await fetch('/api/v1/dashboard/ai-context');
+        const response = await fetch('/api/v1/dashboard/ai-context?assistant=' + encodeURIComponent(aiContextAssistant));
         const json = await response.json();
         if (!json.success) throw new Error(json.error || 'Failed to load AI context');
         contextInput.value = json.data?.context || '';
@@ -5214,7 +5272,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       }
       if (status) status.innerText = 'Saving...';
       try {
-        const response = await fetch('/api/v1/dashboard/ai-context', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ context, persona, responseRules, safetyRules }) });
+        const response = await fetch('/api/v1/dashboard/ai-context', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ assistant: aiContextAssistant, context, persona, responseRules, safetyRules }) });
         const json = await response.json();
         if (!json.success) throw new Error(json.error || 'Failed to save AI context');
         if (contextInput) contextInput.value = json.data?.context || context;
@@ -5229,7 +5287,45 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       }
     }
 
+    async function loadAiTurnLimit() {
+      const input = document.getElementById('ai-turn-limit-input');
+      const status = document.getElementById('ai-turn-limit-status');
+      if (!input) return;
+      try {
+        const response = await fetch('/api/v1/dashboard/ai-turn-limit');
+        const json = await response.json();
+        if (!json.success) throw new Error(json.error || 'Failed to load turn limit');
+        input.value = json.data?.limit || 4;
+        if (status) status.innerText = 'Current limit';
+      } catch (error) {
+        if (status) status.innerText = 'Could not load limit';
+      }
+    }
+
+    async function saveAiTurnLimit() {
+      const input = document.getElementById('ai-turn-limit-input');
+      const status = document.getElementById('ai-turn-limit-status');
+      const limit = input ? Number(input.value) : NaN;
+      if (!Number.isInteger(limit) || limit < 1 || limit > 20) {
+        if (status) status.innerText = 'Enter a whole number from 1 to 20.';
+        return;
+      }
+      if (status) status.innerText = 'Saving...';
+      try {
+        const response = await fetch('/api/v1/dashboard/ai-turn-limit', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limit }) });
+        const json = await response.json();
+        if (!json.success) throw new Error(json.error || 'Failed to save turn limit');
+        if (input) input.value = json.data?.limit || limit;
+        if (status) status.innerText = 'Saved. New conversations will use this limit.';
+        showToast(json.message || 'AI conversation limit saved.');
+      } catch (error) {
+        if (status) status.innerText = 'Failed to save: ' + error.message;
+        showToast('Failed to save AI conversation limit: ' + error.message, true);
+      }
+    }
+
     async function loadAiOverages() {
+      loadAiTurnLimit();
       const summary = document.getElementById('ai-overages-summary');
       const tbody = document.getElementById('ai-overages-table-body');
       const logs = document.getElementById('ai-logs-container');

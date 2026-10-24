@@ -32,6 +32,7 @@ export const createCommunityLiveToken = async (
   const token = new AccessToken(config.livekit.apiKey, config.livekit.apiSecret, {
     identity: userId,
     name: displayName,
+    metadata: JSON.stringify({ avatarUrl: user.avatarUrl || '' }),
     ttl: '2h'
   });
 

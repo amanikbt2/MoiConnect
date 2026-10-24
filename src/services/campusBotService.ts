@@ -24,15 +24,24 @@ export const DEFAULT_AI_PROMPT_SETTINGS: AiPromptSettings = {
 
 const cleanPromptSetting = (value: unknown, fallback: string = ''): string => typeof value === 'string' ? value.trim().slice(0, 5000) : fallback;
 
-export const getAiPromptSettings = async (): Promise<AiPromptSettings> => {
+export type AssistantKind = 'bot' | 'ai';
+
+const cleanAiPromptSettings = (stored: any): AiPromptSettings => ({
+  context: cleanPromptSetting(stored?.context, ''),
+  persona: cleanPromptSetting(stored?.persona, ''),
+  responseRules: cleanPromptSetting(stored?.responseRules, ''),
+  safetyRules: cleanPromptSetting(stored?.safetyRules, '')
+});
+
+export const getAiPromptSettings = async (assistant: AssistantKind = 'bot'): Promise<AiPromptSettings> => {
+  const assistantSettings = await getAppSettingValue<Partial<AiPromptSettings> | null>(`aiAssistantPromptSettings_${assistant}`, null);
+  if (assistantSettings && typeof assistantSettings === 'object') return cleanAiPromptSettings(assistantSettings);
+
+  // Older installs used one shared setting. Keep that context available to both
+  // assistants until each assistant is independently customized.
   const stored = await getAppSettingValue<Partial<AiPromptSettings> | null>('aiAssistantPromptSettings', null);
   if (stored && typeof stored === 'object') {
-    return {
-      context: cleanPromptSetting(stored.context, ''),
-      persona: cleanPromptSetting(stored.persona, ''),
-      responseRules: cleanPromptSetting(stored.responseRules, ''),
-      safetyRules: cleanPromptSetting(stored.safetyRules, '')
-    };
+    return cleanAiPromptSettings(stored);
   }
 
   // Preserve original single-context setting created by older deployments.
@@ -42,22 +51,20 @@ export const getAiPromptSettings = async (): Promise<AiPromptSettings> => {
   };
 };
 
-export const saveAiPromptSettings = async (settings: Partial<AiPromptSettings>): Promise<AiPromptSettings> => {
+export const saveAiPromptSettings = async (settings: Partial<AiPromptSettings>, assistant: AssistantKind = 'bot'): Promise<AiPromptSettings> => {
   const saved: AiPromptSettings = {
     context: cleanPromptSetting(settings.context, ''),
     persona: cleanPromptSetting(settings.persona, ''),
     responseRules: cleanPromptSetting(settings.responseRules, ''),
     safetyRules: cleanPromptSetting(settings.safetyRules, '')
   };
-  await setAppSettingValue('aiAssistantPromptSettings', saved);
-  await setAppSettingValue('aiAssistantContext', saved.context);
+  await setAppSettingValue(`aiAssistantPromptSettings_${assistant}`, saved);
   return saved;
 };
 
-export const getAiContext = async (): Promise<string> => (await getAiPromptSettings()).context;
-export const saveAiContext = async (context: string): Promise<string> => (await saveAiPromptSettings({ ...(await getAiPromptSettings()), context })).context;
+export const getAiContext = async (assistant: AssistantKind = 'bot'): Promise<string> => (await getAiPromptSettings(assistant)).context;
+export const saveAiContext = async (context: string, assistant: AssistantKind = 'bot'): Promise<string> => (await saveAiPromptSettings({ ...(await getAiPromptSettings(assistant)), context }, assistant)).context;
 
-type AssistantKind = 'bot' | 'ai';
 type Assistant = { kind: AssistantKind; name: string; email: string; id: Types.ObjectId; avatarBg: string; aliases: RegExp };
 const assistants: Record<AssistantKind, Assistant> = {
   bot: { kind: 'bot', name: 'Campus Bot', email: CAMPUS_BOT_EMAIL, id: new Types.ObjectId('000000000000000000000001'), avatarBg: '#6366f1', aliases: /(^|\s)@(bot|campusbot|campus[\s_]+bot)\b|\bcampus[\s_]+bot\b/i },
@@ -68,7 +75,9 @@ const assistants: Record<AssistantKind, Assistant> = {
 const REQUEST_TIMEOUT_MS = 120_000;
 const KEY_COOLDOWN_MS = 60_000;
 const MODEL_CANDIDATES = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
-const MAX_TURNS_PER_CHAIN = 4;
+export const DEFAULT_AI_TURN_LIMIT = 4;
+export const MIN_AI_TURN_LIMIT = 1;
+export const MAX_AI_TURN_LIMIT = 20;
 let preferredKeyIndex = 0;
 let preferredModelIndex = 0;
 let stopGeneration = 0;
@@ -99,6 +108,17 @@ type AiLogEntry = {
 const aiPoolUsage = new Map<string, { used: number; successes: number; failures: number; lastUsedAt: string | null }>();
 const aiLogs: AiLogEntry[] = [];
 const MAX_AI_LOGS = 250;
+
+export const getAiConversationTurnLimit = async (): Promise<number> => {
+  const stored = Number(await getAppSettingValue('aiConversationTurnLimit', DEFAULT_AI_TURN_LIMIT));
+  return Number.isInteger(stored) ? Math.max(MIN_AI_TURN_LIMIT, Math.min(MAX_AI_TURN_LIMIT, stored)) : DEFAULT_AI_TURN_LIMIT;
+};
+
+export const saveAiConversationTurnLimit = async (limit: number): Promise<number> => {
+  const safeLimit = Math.max(MIN_AI_TURN_LIMIT, Math.min(MAX_AI_TURN_LIMIT, Math.trunc(limit)));
+  await setAppSettingValue('aiConversationTurnLimit', safeLimit);
+  return safeLimit;
+};
 
 const addAiLog = (entry: Omit<AiLogEntry, 'timestamp'>): void => {
   const log = { ...entry, timestamp: new Date().toISOString() };
@@ -337,7 +357,7 @@ const generateReply = async (messageText: string, assistant: Assistant, signal: 
     return CAMPUS_BOT_FALLBACK;
   }
   const models = getGeminiModels();
-  const promptSettings = await getAiPromptSettings();
+  const promptSettings = await getAiPromptSettings(assistant.kind);
   const firstKeyIndex = preferredKeyIndex % keys.length;
   const firstModelIndex = preferredModelIndex % models.length;
 
@@ -396,9 +416,10 @@ type ConversationHooks = {
 export const runCampusBotConversation = async (message: any, hooks: ConversationHooks = {}, requestedGeneration = stopGeneration): Promise<void> => {
   if (!message?._id || !shouldCampusBotRespond(message.text, message.replyTo)) return;
   const generationAtStart = requestedGeneration;
+  const maxTurns = await getAiConversationTurnLimit();
   let source = message;
   let assistant = getAssistantForMessage(source.text, source.replyTo);
-  for (let turn = 0; assistant && turn < MAX_TURNS_PER_CHAIN; turn += 1) {
+  for (let turn = 0; assistant && turn < maxTurns; turn += 1) {
     if (generationAtStart !== stopGeneration) return;
     const sourceId = String(source._id);
     const clientKey = source.clientMsgId ? String(source.clientMsgId) : sourceId;
