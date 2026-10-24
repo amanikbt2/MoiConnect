@@ -235,7 +235,7 @@ export const postCommunityMessage = async (req: Request, res: Response): Promise
       res.status(403).json({ success: false, error: 'Community chat disabled by administrator' });
       return;
     }
-    const { clientMsgId, text, fileAttachment, stickerId, replyTo, senderName, senderEmail, senderFaculty, senderCourse, senderYear, senderPhone, senderAvatarUrl, senderBadge, avatarBg, senderId } = req.body;
+    const { clientMsgId, text, fileAttachment, stickerId, replyTo, senderName, senderEmail, senderFaculty, senderCourse, senderYear, senderPhone, senderAvatarUrl, senderBadge, avatarBg, senderId, mentions } = req.body;
     const user = (req as any).user;
     const forumPolicy = await getForumAccessPolicy();
     if (!isForumParticipationAllowed(user?.email, forumPolicy)) {
@@ -255,18 +255,22 @@ export const postCommunityMessage = async (req: Request, res: Response): Promise
       return;
     }
 
+    const mentionedUserIds = Array.isArray(mentions)
+      ? Array.from(new Set(mentions.map(String).filter((id: string) => Types.ObjectId.isValid(id)))).slice(0, 25)
+      : [];
+
     let message: any = null;
     if (clientMsgId) {
       message = await CommunityMessage.findOne({ clientMsgId }).lean();
     }
 
     if (!message) {
-      const effectiveSenderName = senderName || user?.name || 'Moi Student';
+      const effectiveSenderName = user?.name || senderName || 'Moi Student';
       message = await CommunityMessage.create({
         clientMsgId,
         senderId: user?._id || senderId || '60d0fe4f5311236168a109ca',
         senderName: effectiveSenderName,
-        senderEmail: senderEmail || user?.email || '',
+        senderEmail: user?.email || senderEmail || '',
         senderFaculty: senderFaculty || 'Moi Student',
         senderCourse: senderCourse || (user?.course && user.course.toLowerCase() !== 'unset' ? user.course : undefined),
         senderYear: senderYear || (user?.yearOfStudy && user.yearOfStudy.toLowerCase() !== 'unset' ? user.yearOfStudy : undefined),
@@ -275,6 +279,7 @@ export const postCommunityMessage = async (req: Request, res: Response): Promise
         senderBadge: user?.badge || senderBadge,
         avatarBg: avatarBg || '#15803d',
         text: text?.trim() || '',
+        mentions: mentionedUserIds,
         stickerId,
         fileAttachment,
         replyTo,

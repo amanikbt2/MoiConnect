@@ -419,6 +419,7 @@ export const runCampusBotConversation = async (message: any, hooks: Conversation
   const maxTurns = await getAiConversationTurnLimit();
   let source = message;
   let assistant = getAssistantForMessage(source.text, source.replyTo);
+  if (assistant && String(source.senderEmail || '').trim().toLowerCase() === assistant.email) return;
   for (let turn = 0; assistant && turn < maxTurns; turn += 1) {
     if (generationAtStart !== stopGeneration) return;
     const sourceId = String(source._id);

@@ -115,6 +115,7 @@ export const setupSocketIO = (io: SocketIOServer): void => {
         socket.userId = user._id.toString();
         socket.isGuest = false;
         socket.data.forumEmail = user.email;
+        socket.data.userEmail = user.email;
       } else {
         socket.userId = undefined;
         socket.isGuest = true;
@@ -310,6 +311,7 @@ export const setupSocketIO = (io: SocketIOServer): void => {
       clientMsgId?: string;
       senderId?: string;
       text: string;
+      mentions?: string[];
       fileAttachment?: any;
       stickerId?: string;
       replyTo?: any;
@@ -331,6 +333,9 @@ export const setupSocketIO = (io: SocketIOServer): void => {
         }
         const { clientMsgId, text, fileAttachment, stickerId, replyTo, senderName, senderEmail, senderFaculty, senderCourse, senderYear, senderPhone, senderAvatarUrl, senderBadge, avatarBg } = data;
         if (!text?.trim() && !fileAttachment && !stickerId) return;
+        const mentions = Array.isArray(data.mentions)
+          ? Array.from(new Set(data.mentions.map(String).filter((id) => Types.ObjectId.isValid(id)))).slice(0, 25)
+          : [];
 
         const forumPolicy = await getForumAccessPolicy();
         const forumAccessAllowed = isForumParticipationAllowed(socket.data.forumEmail, forumPolicy);
@@ -360,11 +365,11 @@ export const setupSocketIO = (io: SocketIOServer): void => {
           ? userId
           : ((data.senderId && Types.ObjectId.isValid(data.senderId)) ? data.senderId : new Types.ObjectId().toString());
 
-        const sEmail = (socket as any).user?.email || senderEmail || '';
+        const sEmail = socket.data.userEmail || senderEmail || '';
         const senderUser = userId && Types.ObjectId.isValid(userId)
-          ? await User.findById(userId).select('badge avatarUrl course yearOfStudy').lean()
+          ? await User.findById(userId).select('name email badge avatarUrl course yearOfStudy').lean()
           : null;
-        const effectiveSenderName = senderName || 'Moi Student';
+        const effectiveSenderName = senderUser?.name || senderName || 'Moi Student';
         const effectiveSenderAvatarUrl = /^https?:\/\//i.test(String(senderUser?.avatarUrl || ''))
           ? senderUser?.avatarUrl
           : (/^https?:\/\//i.test(String(senderAvatarUrl || '')) ? senderAvatarUrl : undefined);
@@ -393,6 +398,7 @@ export const setupSocketIO = (io: SocketIOServer): void => {
           senderBadge: senderUser?.badge || senderBadge,
           avatarBg: avatarBg || '#15803d',
           text: text?.trim() || '',
+          mentions,
           waitForBot: !stopBots && shouldCampusBotRespond(text, replyTo),
           stickerId,
           fileAttachment,
@@ -437,6 +443,7 @@ export const setupSocketIO = (io: SocketIOServer): void => {
               senderBadge: messagePayload.senderBadge,
               avatarBg: messagePayload.avatarBg,
               text: messagePayload.text,
+              mentions: messagePayload.mentions,
               stickerId: messagePayload.stickerId,
               fileAttachment,
               replyTo,

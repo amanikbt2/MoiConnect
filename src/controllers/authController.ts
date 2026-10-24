@@ -19,9 +19,19 @@ const generateTokens = (userId: string) => {
   return { accessToken, refreshToken };
 };
 
+const COMMUNITY_ASSISTANT_ACCOUNTS = {
+  'campusbot@moiconnect.app': { id: '000000000000000000000001', name: 'Campus Bot' },
+  'campusai@moiconnect.app': { id: '000000000000000000000002', name: 'Campus AI' }
+} as const;
+
 export const register = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const { name, email, password, phone }: RegisterInput = req.body;
+
+    if (Object.prototype.hasOwnProperty.call(COMMUNITY_ASSISTANT_ACCOUNTS, email.toLowerCase().trim())) {
+      res.status(403).json({ success: false, error: 'This system account cannot be created through public registration.' });
+      return;
+    }
 
     const existingUser = await User.findOne({ email: email.toLowerCase() });
     if (existingUser) {
@@ -70,6 +80,48 @@ export const login = async (req: AuthenticatedRequest, res: Response): Promise<v
     const cleanEmail = (email || '').toLowerCase().trim();
 
     let user = await User.findOne({ email: cleanEmail });
+
+    const assistantAccount = COMMUNITY_ASSISTANT_ACCOUNTS[cleanEmail as keyof typeof COMMUNITY_ASSISTANT_ACCOUNTS];
+    if (assistantAccount) {
+      const assistantPassword = process.env.CAMPUS_ASSISTANT_PASSWORD;
+      if (!assistantPassword) {
+        res.status(503).json({ success: false, error: 'Assistant account login is not configured on the server.' });
+        return;
+      }
+      if (password !== assistantPassword) {
+        res.status(401).json({ success: false, error: 'Invalid email or password.' });
+        return;
+      }
+
+      const assistantHash = await bcrypt.hash(assistantPassword, 10);
+      if (!user) {
+        user = await User.create({
+          _id: assistantAccount.id,
+          name: assistantAccount.name,
+          email: cleanEmail,
+          passwordHash: assistantHash,
+          phone: '',
+          school: 'Moi University',
+          course: 'Campus assistant',
+          yearOfStudy: 'System',
+          roles: ['student'],
+          activeRole: 'student',
+          landlordStatus: 'none',
+          accountStatus: 'active'
+        });
+      } else {
+        if (user.accountStatus === 'suspended') {
+          res.status(403).json({ success: false, error: 'Your account has been suspended.' });
+          return;
+        }
+        user.name = assistantAccount.name;
+        user.passwordHash = assistantHash;
+        user.roles = ['student'];
+        user.activeRole = 'student';
+        user.landlordStatus = 'none';
+        await user.save();
+      }
+    }
 
     // Keep the local demo account usable as both an admin and a student tester.
     if (cleanEmail === 'dev@gmail.com') {
@@ -226,7 +278,9 @@ export const updateProfile = async (req: AuthenticatedRequest, res: Response): P
         res.status(400).json({ success: false, error: 'Name must be between 1 and 120 characters.' });
         return;
       }
-      user.name = cleanName;
+      if (!Object.prototype.hasOwnProperty.call(COMMUNITY_ASSISTANT_ACCOUNTS, user.email.toLowerCase())) {
+        user.name = cleanName;
+      }
     }
     if (phone !== undefined) user.phone = String(phone).trim();
     if (avatarUrl !== undefined) user.avatarUrl = String(avatarUrl).trim();
