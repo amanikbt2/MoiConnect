@@ -221,7 +221,13 @@ export const setupSocketIO = (io: SocketIOServer): void => {
     });
 
     socket.on('community:live_start', async () => {
-      if (!userId || activeLiveBroadcast) return;
+      if (!userId) return;
+      if (activeLiveBroadcast) {
+        if (activeLiveBroadcast.hostId === userId) {
+          activeLiveBroadcast.hostSocketId = socket.id;
+        }
+        return;
+      }
       const host = await User.findById(userId).select('name avatarUrl canGoLive').lean();
       if (!host?.canGoLive) return;
 

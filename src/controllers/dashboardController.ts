@@ -806,6 +806,25 @@ export const setUserLiveAccess = async (req: Request, res: Response): Promise<vo
   }
 };
 
+export const setBulkLiveAccess = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { userIds, allowed } = req.body;
+    if (!Array.isArray(userIds) || typeof allowed !== 'boolean') {
+      res.status(400).json({ success: false, error: 'Choose whether Go Live access should be on or off and provide user IDs.' });
+      return;
+    }
+    const filter = userIds.length > 0 ? { _id: { $in: userIds } } : {};
+    const result = await User.updateMany(filter, { $set: { canGoLive: allowed } });
+    res.json({
+      success: true,
+      message: `${result.modifiedCount} user(s) ${allowed ? 'allowed to go live.' : 'live access disabled.'}`,
+      modifiedCount: result.modifiedCount
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to update Go Live access in bulk.' });
+  }
+};
+
 export const setUserBadge = async (req: Request, res: Response): Promise<void> => {
   try {
     const requestedBadge = String(req.body?.badge || '').trim().toLowerCase();
@@ -3259,12 +3278,17 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
     <!-- TAB: DIRECT PAYMENTS -->
     <section id="tab-content-direct-payments" class="tab-content hidden">
       <div class="card">
-        <div class="card-header">
+        <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
           <div>
             <h2 class="card-title">Direct Payment Management</h2>
-            <p class="card-sub">Manually send sandbox or production B2C payments and control payment eligibility.</p>
+            <p class="card-sub">Manually send sandbox or production B2C payments and manage user live streaming permissions.</p>
           </div>
-          <button type="button" class="btn btn-view" onclick="loadDirectPayments()">↻ Refresh Users</button>
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <input id="direct-payments-search" type="text" placeholder="Search user or email..." oninput="filterDirectPayments(this.value)" style="padding:7px 12px; border:1px solid #cbd5e1; border-radius:8px; font-size:12px; min-width:180px; outline:none; background:#ffffff;" />
+            <button type="button" class="btn" onclick="bulkToggleLiveAccess(true)" title="Allow live streaming for visible users" style="background:#dcfce7; color:#166534; border:1px solid #86efac; font-size:11px; padding:6px 11px; font-weight:700; border-radius:7px; cursor:pointer;">✓ Allow All</button>
+            <button type="button" class="btn" onclick="bulkToggleLiveAccess(false)" title="Turn off live streaming for visible users" style="background:#f1f5f9; color:#475569; border:1px solid #cbd5e1; font-size:11px; padding:6px 11px; font-weight:700; border-radius:7px; cursor:pointer;">✕ Turn Off All</button>
+            <button type="button" class="btn btn-view" onclick="loadDirectPayments()" style="padding:6px 11px; font-size:11px; border-radius:7px;">↻ Refresh Users</button>
+          </div>
         </div>
         <div style="margin: 0 0 14px; padding: 12px 14px; border-radius: 10px; background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; font-size: 12px;">
           Payments are sent to the phone number saved on the user profile. Blacklisted users are blocked from manual and automatic milestone payouts.
@@ -4974,50 +4998,134 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
           button.addEventListener('click', function() { togglePaymentBlacklist(button.dataset.paymentId, button.dataset.blacklisted === 'true'); });
         });
         tbody.querySelectorAll('.direct-live-access-btn').forEach(function(button) {
-          button.addEventListener('click', function() { toggleUserLiveAccess(button.dataset.paymentId, button.dataset.allowed === 'true'); });
+          button.addEventListener('click', function() { toggleUserLiveAccess(button); });
         });
         tbody.querySelectorAll('.direct-badge-select').forEach(function(select) {
           select.addEventListener('change', function() { awardUserBadge(select.dataset.badgeId, select.value); });
         });
+        const searchInput = document.getElementById('direct-payments-search');
+        if (searchInput && searchInput.value) {
+          filterDirectPayments(searchInput.value);
+        }
       } catch (error) {
         tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:28px;color:#dc2626;">' + directPaymentEscape(error.message || 'Failed to load payment users') + '</td></tr>';
       }
     }
 
-    async function sendDirectPayment(id, name) {
-      const input = document.getElementById('direct-amount-' + id);
-      const amount = Number(input && input.value);
-      if (!Number.isInteger(amount) || amount < 1) { showToast('Enter a whole-number payment amount.', true); return; }
-      if (!confirm('Send KSh ' + amount + ' to ' + name + '?')) return;
-      try {
-        const response = await fetch('/api/v1/dashboard/direct-payments/' + id + '/pay', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ amount: amount }) });
-        const json = await response.json();
-        if (!response.ok || !json.success) throw new Error(json.error || 'Payment failed');
-        showToast(json.message || 'Payment queued.');
-        loadDirectPayments();
-      } catch (error) { showToast(error.message || 'Payment failed.', true); }
+    function filterDirectPayments(query) {
+      const q = (query || '').toLowerCase().trim();
+      const rows = document.querySelectorAll('#direct-payments-table-body tr');
+      rows.forEach(function(row) {
+        if (!q) {
+          row.style.display = '';
+          return;
+        }
+        const text = row.textContent.toLowerCase();
+        row.style.display = text.includes(q) ? '' : 'none';
+      });
     }
 
-    async function togglePaymentBlacklist(id, blacklisted) {
-      const action = blacklisted ? 'blacklist' : 'restore payments for';
-      if (!confirm('Are you sure you want to ' + action + ' this user?')) return;
-      try {
-        const response = await fetch('/api/v1/dashboard/direct-payments/' + id + '/blacklist', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ blacklisted: blacklisted }) });
-        const json = await response.json();
-        if (!response.ok || !json.success) throw new Error(json.error || 'Update failed');
-        showToast(json.message || 'Payment access updated.');
-        loadDirectPayments();
-      } catch (error) { showToast(error.message || 'Update failed.', true); }
+    function setLiveBtnState(btn, isAllowed, isSaving) {
+      if (!btn) return;
+      btn.dataset.allowed = String(!isAllowed);
+      btn.setAttribute('aria-pressed', String(isAllowed));
+      btn.style.transition = 'all 0.15s ease-in-out';
+      btn.style.fontWeight = '700';
+      btn.style.cursor = isSaving ? 'wait' : 'pointer';
+      btn.style.opacity = isSaving ? '0.65' : '1';
+      if (isAllowed) {
+        btn.style.background = '#dcfce7';
+        btn.style.color = '#166534';
+        btn.style.border = '1px solid #86efac';
+        btn.textContent = isSaving ? 'Allowed...' : 'Allowed';
+      } else {
+        btn.style.background = '#f1f5f9';
+        btn.style.color = '#475569';
+        btn.style.border = '1px solid #cbd5e1';
+        btn.textContent = isSaving ? 'Off...' : 'Off';
+      }
     }
 
-    async function toggleUserLiveAccess(id, allowed) {
+    async function toggleUserLiveAccess(button) {
+      if (!button || button.dataset.busy === 'true') return;
+      const id = button.dataset.paymentId;
+      const targetAllowed = button.dataset.allowed === 'true';
+      const prevAllowed = !targetAllowed;
+
+      // Optimistic background toggle: immediate visual switch without wiping or blinking the table
+      button.dataset.busy = 'true';
+      setLiveBtnState(button, targetAllowed, true);
+
       try {
-        const response = await fetch('/api/v1/dashboard/direct-payments/' + id + '/live-access', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ allowed: allowed }) });
+        const response = await fetch('/api/v1/dashboard/direct-payments/' + id + '/live-access', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ allowed: targetAllowed })
+        });
         const json = await response.json();
         if (!response.ok || !json.success) throw new Error(json.error || 'Go Live access update failed');
-        showToast(json.message || 'Go Live access updated.');
-        loadDirectPayments();
-      } catch (error) { showToast(error.message || 'Go Live access update failed.', true); }
+        button.dataset.busy = 'false';
+        setLiveBtnState(button, targetAllowed, false);
+        showToast(targetAllowed ? 'Go Live enabled for user.' : 'Go Live disabled for user.');
+      } catch (error) {
+        button.dataset.busy = 'false';
+        setLiveBtnState(button, prevAllowed, false);
+        showToast(error.message || 'Go Live access update failed.', true);
+      }
+    }
+
+    async function bulkToggleLiveAccess(allowed) {
+      const rows = Array.from(document.querySelectorAll('#direct-payments-table-body tr'));
+      const visibleButtons = rows
+        .filter(function(row) { return row.style.display !== 'none'; })
+        .map(function(row) { return row.querySelector('.direct-live-access-btn'); })
+        .filter(Boolean);
+
+      if (!visibleButtons.length) {
+        showToast('No users found in current view.', true);
+        return;
+      }
+
+      const targetButtons = visibleButtons.filter(function(btn) {
+        const currentAllowed = btn.getAttribute('aria-pressed') === 'true';
+        return currentAllowed !== allowed;
+      });
+
+      if (!targetButtons.length) {
+        showToast('All visible users are already ' + (allowed ? 'allowed' : 'off') + '.');
+        return;
+      }
+
+      const userIds = targetButtons.map(function(btn) { return btn.dataset.paymentId; });
+      const actionName = allowed ? 'allow live access for' : 'turn off live access for';
+      if (!confirm('Are you sure you want to ' + actionName + ' ' + userIds.length + ' user(s)?')) return;
+
+      targetButtons.forEach(function(btn) {
+        btn.dataset.busy = 'true';
+        setLiveBtnState(btn, allowed, true);
+      });
+
+      try {
+        const response = await fetch('/api/v1/dashboard/direct-payments/bulk-live-access', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userIds: userIds, allowed: allowed })
+        });
+        const json = await response.json();
+        if (!response.ok || !json.success) throw new Error(json.error || 'Bulk live access update failed');
+
+        targetButtons.forEach(function(btn) {
+          btn.dataset.busy = 'false';
+          setLiveBtnState(btn, allowed, false);
+        });
+        showToast(json.message || ('Updated live access for ' + targetButtons.length + ' user(s).'));
+      } catch (error) {
+        targetButtons.forEach(function(btn) {
+          btn.dataset.busy = 'false';
+          setLiveBtnState(btn, !allowed, false);
+        });
+        showToast(error.message || 'Bulk update failed.', true);
+      }
     }
 
     async function awardUserBadge(id, badge) {

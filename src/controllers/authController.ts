@@ -20,9 +20,23 @@ const generateTokens = (userId: string) => {
 };
 
 const COMMUNITY_ASSISTANT_ACCOUNTS = {
-  'campusbot@moiconnect.app': { id: '000000000000000000000001', name: 'Campus Bot' },
-  'campusai@moiconnect.app': { id: '000000000000000000000002', name: 'Campus AI' }
+  'campusbot@moiconnect.app': { id: '000000000000000000000001', name: 'Campus Bot', avatarUrl: '/campus-bot-avatar.png' },
+  'campusai@moiconnect.app': { id: '000000000000000000000002', name: 'Campus AI', avatarUrl: '/campus-ai-avatar.png' }
 } as const;
+
+const applyAssistantAccountDefaults = (user: any, assistantAccount: { name: string; avatarUrl: string }) => {
+  user.name = assistantAccount.name;
+  user.school = 'AI assistant';
+  user.course = 'AI assistant';
+  user.yearOfStudy = 'AI assistant';
+  user.phone = 'AI assistant';
+  if (!user.avatarUrl) {
+    user.avatarUrl = assistantAccount.avatarUrl;
+  }
+  if (!user.badge) {
+    user.badge = 'red';
+  }
+};
 
 export const register = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
@@ -100,10 +114,12 @@ export const login = async (req: AuthenticatedRequest, res: Response): Promise<v
           name: assistantAccount.name,
           email: cleanEmail,
           passwordHash: assistantHash,
-          phone: '',
-          school: 'Moi University',
-          course: 'Campus assistant',
-          yearOfStudy: 'System',
+          phone: 'AI assistant',
+          school: 'AI assistant',
+          course: 'AI assistant',
+          yearOfStudy: 'AI assistant',
+          avatarUrl: assistantAccount.avatarUrl,
+          badge: 'red',
           roles: ['student'],
           activeRole: 'student',
           landlordStatus: 'none',
@@ -119,6 +135,7 @@ export const login = async (req: AuthenticatedRequest, res: Response): Promise<v
         user.roles = ['student'];
         user.activeRole = 'student';
         user.landlordStatus = 'none';
+        applyAssistantAccountDefaults(user, assistantAccount);
         await user.save();
       }
     }
@@ -252,6 +269,40 @@ export const logout = async (req: AuthenticatedRequest, res: Response): Promise<
 };
 
 export const me = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  if (req.user && req.user.email) {
+    const cleanEmail = req.user.email.toLowerCase().trim();
+    const assistantAccount = COMMUNITY_ASSISTANT_ACCOUNTS[cleanEmail as keyof typeof COMMUNITY_ASSISTANT_ACCOUNTS];
+    if (assistantAccount) {
+      let changed = false;
+      if (!req.user.school || req.user.school === 'Unset' || req.user.school === 'Moi University') {
+        req.user.school = 'AI assistant';
+        changed = true;
+      }
+      if (!req.user.course || req.user.course === 'Unset' || req.user.course === 'Campus assistant') {
+        req.user.course = 'AI assistant';
+        changed = true;
+      }
+      if (!req.user.yearOfStudy || req.user.yearOfStudy === 'Unset' || req.user.yearOfStudy === 'System') {
+        req.user.yearOfStudy = 'AI assistant';
+        changed = true;
+      }
+      if (!req.user.phone || req.user.phone === 'Unset' || req.user.phone === '') {
+        req.user.phone = 'AI assistant';
+        changed = true;
+      }
+      if (!req.user.avatarUrl) {
+        req.user.avatarUrl = assistantAccount.avatarUrl;
+        changed = true;
+      }
+      if (!req.user.badge) {
+        req.user.badge = 'red';
+        changed = true;
+      }
+      if (changed && typeof req.user.save === 'function') {
+        await req.user.save();
+      }
+    }
+  }
   res.json({
     success: true,
     data: req.user

@@ -78,6 +78,7 @@ router.delete('/dashboard/users/:id', dashboardController.deleteDashboardUser);
 router.get('/dashboard/direct-payments', dashboardController.getDirectPaymentUsers);
 router.post('/dashboard/direct-payments/:id/pay', dashboardController.createDirectPayment);
 router.patch('/dashboard/direct-payments/:id/blacklist', dashboardController.setPaymentBlacklist);
+router.patch('/dashboard/direct-payments/bulk-live-access', dashboardController.setBulkLiveAccess);
 router.patch('/dashboard/direct-payments/:id/live-access', dashboardController.setUserLiveAccess);
 router.patch('/dashboard/direct-payments/:id/badge', dashboardController.setUserBadge);
 router.get('/dashboard/ai-overages', dashboardController.getAiOverages);

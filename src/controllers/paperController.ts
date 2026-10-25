@@ -102,6 +102,7 @@ export const getPapers = async (req: AuthenticatedRequest, res: Response): Promi
     if (year) query.examYear = parseInt(year as string, 10);
 
     const searchStr = search ? String(search).trim() : '';
+    let searchTokenGroups: any[] = [];
     const searchTokens = searchStr
       .toLowerCase()
       .replace(/\b(?:past|previous|old|question|exam|exams|examination|examinations|paper|papers|final|semester|main|special|supplementary|deferred|resit|retake|mock|model|revision|cat|cats|quiz|quizzes|continuous|assessment|class|test|tests|midterm|midterms|mid|notes?|lecture|slides|pdf|handout|handouts|reading|study|course|unit|material|materials|guide|guides|summary|summaries|solution|solutions|answer|answers|key|marking|scheme|schemes|worked|solved)\b/gi, ' ')
@@ -139,10 +140,12 @@ export const getPapers = async (req: AuthenticatedRequest, res: Response): Promi
         return conditions;
       };
 
-      // Each meaningful topic token must match somewhere; fields are alternatives
-      // within a token. Material-type words are handled by the explicit `type` filter.
-      const tokenGroups = searchTokens.map((token) => ({ $or: searchConditionsFor(token) }));
-      if (tokenGroups.length > 0) query.$and = [...(query.$and || []), ...tokenGroups];
+      // Fields are alternatives within a token; any meaningful token can match.
+      // The relevance score below ranks records matching more query words first.
+      searchTokenGroups = searchTokens.map((token) => ({ $or: searchConditionsFor(token) }));
+      if (searchTokenGroups.length > 0) {
+        query.$and = [...(query.$and || []), { $or: searchTokenGroups.flatMap((group) => group.$or) }];
+      }
     }
 
     const total = await Paper.countDocuments(query);
