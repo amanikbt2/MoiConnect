@@ -39,6 +39,8 @@ export const buildPaperResponseData = (paperDoc: any, req?: AuthenticatedRequest
   if (!data.thumbnail) {
     if (data.fileType === 'image' || cleanCloudinaryUrl?.match(/\.(jpg|jpeg|png|webp|gif)/i)) {
       data.thumbnail = cleanCloudinaryUrl;
+    } else if (cleanCloudinaryUrl?.match(/\.pdf($|\?)/i) && cleanCloudinaryUrl.includes('cloudinary.com')) {
+      data.thumbnail = cleanCloudinaryUrl.replace(/\/upload\/(?:[a-zA-Z0-9_,]+\/)?/g, '/upload/w_600,h_450,c_fill,pg_1,q_auto,f_jpg/').replace(/\.pdf$/i, '.jpg');
     } else if (Array.isArray(data.attachments)) {
       const imgAtt = data.attachments.find((att: any) => att.fileType === 'image' || att.fileUrl?.match(/\.(jpg|jpeg|png|webp|gif)/i));
       if (imgAtt && imgAtt.fileUrl) {
@@ -194,6 +196,8 @@ export const getPapers = async (req: AuthenticatedRequest, res: Response): Promi
       if (!data.thumbnail) {
         if (data.fileType === 'image' || data.fileUrl?.match(/\.(jpg|jpeg|png|webp|gif)/i)) {
           data.thumbnail = data.fileUrl;
+        } else if (data.fileUrl?.match(/\.pdf($|\?)/i) && data.fileUrl.includes('cloudinary.com')) {
+          data.thumbnail = data.fileUrl.replace(/\/upload\/(?:[a-zA-Z0-9_,]+\/)?/g, '/upload/w_600,h_450,c_fill,pg_1,q_auto,f_jpg/').replace(/\.pdf$/i, '.jpg');
         } else if (Array.isArray(data.attachments)) {
           const imgAtt = data.attachments.find((att: any) => att.fileType === 'image' || att.fileUrl?.match(/\.(jpg|jpeg|png|webp|gif)/i));
           if (imgAtt && imgAtt.fileUrl) {
@@ -333,6 +337,8 @@ export const createPaper = async (req: AuthenticatedRequest, res: Response): Pro
     if (!thumbnail) {
       if (input.fileType === 'image' || input.fileUrl?.match(/\.(jpg|jpeg|png|webp|gif)/i)) {
         thumbnail = input.fileUrl;
+      } else if (input.fileUrl?.match(/\.pdf($|\?)/i) && input.fileUrl.includes('cloudinary.com')) {
+        thumbnail = input.fileUrl.replace(/\/upload\/(?:[a-zA-Z0-9_,]+\/)?/g, '/upload/w_600,h_450,c_fill,pg_1,q_auto,f_jpg/').replace(/\.pdf$/i, '.jpg');
       } else if (Array.isArray((input as any).attachments)) {
         const imgAtt = (input as any).attachments.find((att: any) => att.fileType === 'image' || att.fileUrl?.match(/\.(jpg|jpeg|png|webp|gif)/i));
         if (imgAtt && imgAtt.fileUrl) {

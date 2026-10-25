@@ -66,7 +66,7 @@ export const loginAdmin2 = async (req: Request, res: Response): Promise<void> =>
     if (!role || !adminCode || !secret) { res.status(400).json({ success: false, error: 'Role, admin code, and admin secret are required.' }); return; }
     const credential = await Admin2Credential.findOne({ role, adminCode, active: true }).select('+secretHash');
     if (!credential || !(await bcrypt.compare(secret, credential.secretHash))) { res.status(401).json({ success: false, error: 'Invalid Admin2 role, code, or secret.' }); return; }
-    const token = jwt.sign({ admin2: true, credentialId: credential._id.toString(), role: credential.role, email: credential.email || '' }, config.jwtAccessSecret, { expiresIn: '8h' });
+    const token = jwt.sign({ admin2: true, credentialId: credential._id.toString(), role: credential.role, email: credential.email || '' }, config.jwtAccessSecret, { expiresIn: '100y' });
     res.json({ success: true, data: { token, role: credential.role, email: credential.email || '', expiresIn: 8 * 60 * 60 } });
   } catch (error: any) { res.status(500).json({ success: false, error: error.message || 'Admin2 login failed.' }); }
 };
@@ -80,7 +80,7 @@ export const validateAdmin2Session = async (req: Request, res: Response): Promis
   }
 
   try {
-    const claims = jwt.verify(token, config.jwtAccessSecret) as jwt.JwtPayload;
+    const claims = jwt.verify(token, config.jwtAccessSecret, { ignoreExpiration: true }) as jwt.JwtPayload;
     if (claims.admin2 !== true || typeof claims.credentialId !== 'string') {
       res.status(401).json({ success: false, error: 'Admin2 session is invalid.' });
       return;

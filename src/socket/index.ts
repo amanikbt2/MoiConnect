@@ -109,13 +109,23 @@ export const setupSocketIO = (io: SocketIOServer): void => {
         return next();
       }
 
-      const decoded = jwt.verify(token, config.jwtAccessSecret) as { userId: string };
+      const decoded = jwt.verify(token, config.jwtAccessSecret, { ignoreExpiration: true }) as { userId: string };
       const user = await User.findById(decoded.userId);
       if (user && user.accountStatus !== 'suspended') {
         socket.userId = user._id.toString();
         socket.isGuest = false;
         socket.data.forumEmail = user.email;
         socket.data.userEmail = user.email;
+        socket.data.user = {
+          name: user.name,
+          email: user.email,
+          badge: user.badge,
+          avatarUrl: user.avatarUrl,
+          course: user.course,
+          yearOfStudy: user.yearOfStudy,
+          school: user.school,
+          phone: user.phone
+        };
       } else {
         socket.userId = undefined;
         socket.isGuest = true;
@@ -271,8 +281,9 @@ export const setupSocketIO = (io: SocketIOServer): void => {
 
     socket.on('community:live_end', () => {
       if (!activeLiveBroadcast || activeLiveBroadcast.hostSocketId !== socket.id) return;
+      const hostName = activeLiveBroadcast.hostName;
       activeLiveBroadcast = null;
-      io.to('community_room').emit('community:live_end');
+      io.to('community_room').emit('community:live_end', { hostName });
     });
 
     // Typing Indicator Socket Handlers (Zero-DB In-Memory Sub-1ms Broadcast)
@@ -372,9 +383,9 @@ export const setupSocketIO = (io: SocketIOServer): void => {
           : ((data.senderId && Types.ObjectId.isValid(data.senderId)) ? data.senderId : new Types.ObjectId().toString());
 
         const sEmail = socket.data.userEmail || senderEmail || '';
-        const senderUser = userId && Types.ObjectId.isValid(userId)
+        const senderUser = socket.data.user || (userId && Types.ObjectId.isValid(userId)
           ? await User.findById(userId).select('name email badge avatarUrl course yearOfStudy').lean()
-          : null;
+          : null);
         const effectiveSenderName = senderUser?.name || senderName || 'Moi Student';
         const effectiveSenderAvatarUrl = /^https?:\/\//i.test(String(senderUser?.avatarUrl || ''))
           ? senderUser?.avatarUrl
@@ -574,8 +585,9 @@ export const setupSocketIO = (io: SocketIOServer): void => {
     // Clean up on disconnect instantly with zero delay or intervals
     socket.on('disconnect', () => {
       if (activeLiveBroadcast?.hostSocketId === socket.id) {
+        const hostName = activeLiveBroadcast.hostName;
         activeLiveBroadcast = null;
-        io.to('community_room').emit('community:live_end');
+        io.to('community_room').emit('community:live_end', { hostName });
       } else if (activeLiveBroadcast) {
         const participant = Array.from(activeLiveBroadcast.participants.values()).find((entry) => entry.socketId === socket.id);
         if (participant) {

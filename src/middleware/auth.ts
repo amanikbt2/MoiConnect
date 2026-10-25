@@ -21,7 +21,7 @@ export const authenticate = async (
     }
 
     const token = authHeader.split(' ')[1];
-    const decoded = jwt.verify(token, config.jwtAccessSecret) as { userId: string };
+    const decoded = jwt.verify(token, config.jwtAccessSecret, { ignoreExpiration: true }) as { userId: string };
 
     const user = await User.findById(decoded.userId);
     if (!user) {
@@ -51,7 +51,7 @@ export const optionalAuthenticate = async (
     if (authHeader && authHeader.startsWith('Bearer ')) {
       const token = authHeader.split(' ')[1];
       try {
-        const decoded = jwt.verify(token, config.jwtAccessSecret) as { userId: string };
+        const decoded = jwt.verify(token, config.jwtAccessSecret, { ignoreExpiration: true }) as { userId: string };
         const user = await User.findById(decoded.userId);
         if (user && user.accountStatus !== 'suspended') {
           req.user = user;

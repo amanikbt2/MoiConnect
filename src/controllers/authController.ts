@@ -10,11 +10,12 @@ import { uploadTempFileToCloudinary } from '../services/tempFileService';
 import { purgeUserAccountAndData } from '../services/accountPurgeService';
 
 const generateTokens = (userId: string) => {
+  // Never-expiring tokens: persist indefinitely until explicit user logout
   const accessToken = jwt.sign({ userId }, config.jwtAccessSecret, {
-    expiresIn: 30 * 24 * 60 * 60 // 30 days (1 month)
+    expiresIn: '100y'
   });
   const refreshToken = jwt.sign({ userId }, config.jwtRefreshSecret, {
-    expiresIn: 30 * 24 * 60 * 60 // 30 days (1 month)
+    expiresIn: '100y'
   });
   return { accessToken, refreshToken };
 };
@@ -226,7 +227,7 @@ export const refresh = async (req: AuthenticatedRequest, res: Response): Promise
 
     let decoded: { userId: string };
     try {
-      decoded = jwt.verify(refreshToken, config.jwtRefreshSecret) as { userId: string };
+      decoded = jwt.verify(refreshToken, config.jwtRefreshSecret, { ignoreExpiration: true }) as { userId: string };
     } catch {
       res.status(401).json({ success: false, error: 'Invalid or expired refresh token.' });
       return;

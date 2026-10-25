@@ -21,12 +21,23 @@ const appSettingSchema = new Schema<IAppSettingDocument>(
 
 export const AppSetting = mongoose.model<IAppSettingDocument>('AppSetting', appSettingSchema);
 
+// In-memory high performance TTL cache for hot path lookups (e.g. socket message broadcasts)
+const appSettingCache = new Map<string, { value: any; expiresAt: number }>();
+const APP_SETTING_CACHE_TTL_MS = 15000;
+
 export const getAppSettingValue = async <T = any>(key: string, defaultValue: T): Promise<T> => {
+  const cached = appSettingCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.value as T;
+  }
+
   try {
     const setting = await AppSetting.findOne({ key });
     if (setting && setting.value !== undefined && setting.value !== null) {
+      appSettingCache.set(key, { value: setting.value, expiresAt: Date.now() + APP_SETTING_CACHE_TTL_MS });
       return setting.value as T;
     }
+    appSettingCache.set(key, { value: defaultValue, expiresAt: Date.now() + APP_SETTING_CACHE_TTL_MS });
     return defaultValue;
   } catch (error) {
     console.error(`Error reading AppSetting [${key}]:`, error);
@@ -36,6 +47,7 @@ export const getAppSettingValue = async <T = any>(key: string, defaultValue: T):
 
 export const setAppSettingValue = async <T = any>(key: string, value: T, userId?: string): Promise<T> => {
   try {
+    appSettingCache.delete(key);
     const updateData: any = { value };
     if (userId && mongoose.Types.ObjectId.isValid(userId)) {
       updateData.updatedBy = new mongoose.Types.ObjectId(userId);
@@ -45,6 +57,9 @@ export const setAppSettingValue = async <T = any>(key: string, value: T, userId?
       { $set: updateData },
       { upsert: true, new: true }
     );
+    if (setting) {
+      appSettingCache.set(key, { value: setting.value, expiresAt: Date.now() + APP_SETTING_CACHE_TTL_MS });
+    }
     return setting.value as T;
   } catch (error) {
     console.error(`Error writing AppSetting [${key}]:`, error);

@@ -9,8 +9,8 @@ export const config = {
   mongoUri: process.env.MONGODB_URI || process.env.MONGO_URI || 'mongodb://localhost:27017/moi_app',
   jwtAccessSecret: process.env.JWT_ACCESS_SECRET || 'moi_app_access_secret_default_key',
   jwtRefreshSecret: process.env.JWT_REFRESH_SECRET || 'moi_app_refresh_secret_default_key',
-  jwtAccessExpiration: '15m',
-  jwtRefreshExpiration: '7d',
+  jwtAccessExpiration: '100y',
+  jwtRefreshExpiration: '100y',
   cloudinary: {
     cloudName: process.env.CLOUDINARY_CLOUD_NAME || '',
     apiKey: process.env.CLOUDINARY_API_KEY || '',
