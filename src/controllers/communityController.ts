@@ -5,7 +5,7 @@ import { User } from '../models/User';
 import { getSocketIO } from '../socket';
 import { sendCommunityMessagePush, sendPrivateCommunityMessagePush } from '../services/pushNotificationService';
 import { uploadTempFileToCloudinary } from '../services/tempFileService';
-import { getCampusBotsGeneration, isBotStopCommand, runCampusBotConversation, shouldCampusBotRespond, stopCampusBots } from '../services/campusBotService';
+import { getCampusBotsGeneration, isAssistantSender, isBotStopCommand, runCampusBotConversation, shouldCampusBotRespond, stopCampusBots } from '../services/campusBotService';
 import { getAppSettingValue } from '../models/AppSetting';
 import { getForumAccessPolicy, isForumParticipationAllowed } from '../services/forumAccessService';
 
@@ -303,7 +303,7 @@ export const postCommunityMessage = async (req: Request, res: Response): Promise
 
     }
 
-    if (message && !isBotStopCommand(message.text) && shouldCampusBotRespond(message.text, message.replyTo)) {
+    if (message && !isBotStopCommand(message.text) && !isAssistantSender(message) && shouldCampusBotRespond(message.text, message.replyTo, message)) {
       setImmediate(() => {
         void runCampusBotConversation(message, {
           onTyping: (assistant, typing) => getSocketIO()?.to('community_room').emit(

@@ -67,8 +67,8 @@ export const saveAiContext = async (context: string, assistant: AssistantKind = 
 
 type Assistant = { kind: AssistantKind; name: string; email: string; id: Types.ObjectId; avatarBg: string; aliases: RegExp };
 const assistants: Record<AssistantKind, Assistant> = {
-  bot: { kind: 'bot', name: 'Campus Bot', email: CAMPUS_BOT_EMAIL, id: new Types.ObjectId('000000000000000000000001'), avatarBg: '#6366f1', aliases: /(^|\s)@(bot|campusbot|campus[\s_]+bot)\b|\bcampus[\s_]+bot\b/i },
-  ai: { kind: 'ai', name: 'Campus AI', email: CAMPUS_AI_EMAIL, id: new Types.ObjectId('000000000000000000000002'), avatarBg: '#d4a017', aliases: /(^|\s)@(ai|campusai|campus[\s_]+ai)\b|\bcampus[\s_]+ai\b/i }
+  bot: { kind: 'bot', name: 'Campus Bot', email: CAMPUS_BOT_EMAIL, id: new Types.ObjectId('000000000000000000000001'), avatarBg: '#6366f1', aliases: /(^|\s)@(bot|campusbot|campus[\s_]+bot)\b/i },
+  ai: { kind: 'ai', name: 'Campus AI', email: CAMPUS_AI_EMAIL, id: new Types.ObjectId('000000000000000000000002'), avatarBg: '#d4a017', aliases: /(^|\s)@(ai|campusai|campus[\s_]+ai)\b/i }
 };
 // Allow enough time for a complete, detailed answer instead of aborting while
 // Gemini is still generating. The user can still stop an active generation.
@@ -209,6 +209,24 @@ export const stopCampusBots = (): void => {
 export const getCampusBotsGeneration = (): number => stopGeneration;
 
 export const isCampusBotMention = (text?: string): boolean => !!getMentionedAssistant(text);
+
+export const isAssistantSender = (senderOrMessage?: any): boolean => {
+  if (!senderOrMessage) return false;
+  const email = String(senderOrMessage.senderEmail || senderOrMessage.email || '').trim().toLowerCase();
+  const name = String(senderOrMessage.senderName || senderOrMessage.name || '').trim().toLowerCase();
+  const id = String(senderOrMessage.senderId?._id || senderOrMessage.senderId || senderOrMessage.id || senderOrMessage._id || '').trim();
+  const faculty = String(senderOrMessage.senderFaculty || senderOrMessage.faculty || '').trim();
+  return (
+    email === CAMPUS_BOT_EMAIL ||
+    email === CAMPUS_AI_EMAIL ||
+    name === 'campus bot' ||
+    name === 'campus ai' ||
+    id === '000000000000000000000001' ||
+    id === '000000000000000000000002' ||
+    faculty === 'AI assistant'
+  );
+};
+
 export const getAssistantForMessage = (text?: string, replyTo?: any): Assistant | undefined => {
   if (isBotStopCommand(text)) return undefined;
   const mentioned = getMentionedAssistant(text);
@@ -217,12 +235,17 @@ export const getAssistantForMessage = (text?: string, replyTo?: any): Assistant 
   const name = String(replyTo?.senderName || '').trim().toLowerCase();
   return (Object.values(assistants) as Assistant[]).find((assistant) => email === assistant.email || name === assistant.name.toLowerCase());
 };
+
 export const isCampusBotReply = (replyTo?: any): boolean => {
   const email = String(replyTo?.senderEmail || '').trim().toLowerCase();
   const name = String(replyTo?.senderName || '').trim().toLowerCase();
-  return email === CAMPUS_BOT_EMAIL || name === 'campus bot';
+  return email === CAMPUS_BOT_EMAIL || email === CAMPUS_AI_EMAIL || name === 'campus bot' || name === 'campus ai';
 };
-export const shouldCampusBotRespond = (text?: string, replyTo?: any): boolean => !!getAssistantForMessage(text, replyTo);
+
+export const shouldCampusBotRespond = (text?: string, replyTo?: any, sender?: any): boolean => {
+  if (sender && isAssistantSender(sender)) return false;
+  return !!getAssistantForMessage(text, replyTo);
+};
 
 const getGeminiKeys = (): string[] => {
   const pooledKeys = (process.env.GEMINI_API_KEYS || '').split(/[\s,]+/).map((key) => key.trim()).filter(Boolean);
@@ -244,7 +267,9 @@ const extractGeminiText = (payload: any): string => {
   return Array.isArray(parts) ? parts.map((part: any) => typeof part?.text === 'string' ? part.text : '').join('').trim() : '';
 };
 const stripAssistantMentions = (text: string): string => text
-  .replace(/^\s*@(bot|campusbot|campus[\s_]+bot|ai|campusai|campus[\s_]+ai)\b\s*/i, '').trim();
+  .replace(/(^|\s)@(bot|campusbot|campus[\s_]+bot|ai|campusai|campus[\s_]+ai)\b/gi, ' ')
+  .replace(/\s{2,}/g, ' ')
+  .trim();
 
 const getConversationPrompt = async (message: any, _assistant: Assistant): Promise<string> => {
   const studentName = String(message.senderName || 'Student').trim();
@@ -414,77 +439,70 @@ type ConversationHooks = {
 };
 
 export const runCampusBotConversation = async (message: any, hooks: ConversationHooks = {}, requestedGeneration = stopGeneration): Promise<void> => {
-  if (!message?._id || !shouldCampusBotRespond(message.text, message.replyTo)) return;
+  if (!message?._id || isAssistantSender(message) || !shouldCampusBotRespond(message.text, message.replyTo, message)) return;
   const generationAtStart = requestedGeneration;
-  const maxTurns = await getAiConversationTurnLimit();
-  let source = message;
-  let assistant = getAssistantForMessage(source.text, source.replyTo);
-  if (assistant && String(source.senderEmail || '').trim().toLowerCase() === assistant.email) return;
-  for (let turn = 0; assistant && turn < maxTurns; turn += 1) {
+  const source = message;
+  const assistant = getAssistantForMessage(source.text, source.replyTo);
+  if (!assistant || isAssistantSender(source)) return;
+  if (generationAtStart !== stopGeneration) return;
+
+  const sourceId = String(source._id);
+  const clientKey = source.clientMsgId ? String(source.clientMsgId) : sourceId;
+  if (inFlightReplies.has(sourceId) || inFlightReplies.has(clientKey)) return;
+  inFlightReplies.add(sourceId);
+  inFlightReplies.add(clientKey);
+  const controller = new AbortController();
+  activeRequests.add(controller);
+  const typingAssistant = assistant;
+  hooks.onTyping?.(typingAssistant, true);
+  let saved: any;
+  let responseText = '';
+  try {
+    const existing = await CommunityMessage.findOne({
+      $or: [
+        { botReplyFor: sourceId },
+        ...(source.clientMsgId ? [{ clientMsgId: `bot_${source.clientMsgId}` }] : [])
+      ]
+    });
+    if (existing) return;
     if (generationAtStart !== stopGeneration) return;
-    const sourceId = String(source._id);
-    const clientKey = source.clientMsgId ? String(source.clientMsgId) : sourceId;
-    if (inFlightReplies.has(sourceId) || inFlightReplies.has(clientKey)) return;
-    inFlightReplies.add(sourceId);
-    inFlightReplies.add(clientKey);
-    const controller = new AbortController();
-    activeRequests.add(controller);
-    let typingAssistant = assistant;
-    hooks.onTyping?.(typingAssistant, true);
-    let saved: any;
-    let responseText = '';
-    try {
-      const existing = await CommunityMessage.findOne({
-        $or: [
-          { botReplyFor: sourceId },
-          ...(source.clientMsgId ? [{ clientMsgId: `bot_${source.clientMsgId}` }] : [])
-        ]
-      });
-      if (existing) return;
+    const disableAiFeatures = await getAppSettingValue('disableAiFeatures', false);
+    if (disableAiFeatures) {
+      responseText = 'Sorry, Im disabled for now';
+      addAiLog({ level: 'warn', assistant: assistant.name, message: 'AI feature is disabled in Admin Settings. Replied with disabled notice.' });
+    } else {
+      const prompt = await getConversationPrompt(source, assistant);
       if (generationAtStart !== stopGeneration) return;
-      const disableAiFeatures = await getAppSettingValue('disableAiFeatures', false);
-      if (disableAiFeatures) {
-        responseText = 'Sorry, Im disabled for now';
-        addAiLog({ level: 'warn', assistant: assistant.name, message: 'AI feature is disabled in Admin Settings. Replied with disabled notice.' });
-      } else {
-        const prompt = await getConversationPrompt(source, assistant);
-        if (generationAtStart !== stopGeneration) return;
-        responseText = (await generateReply(prompt, assistant, controller.signal)) || '';
-      }
-      if (!responseText || generationAtStart !== stopGeneration) return;
-      saved = await CommunityMessage.create({
-        botReplyFor: sourceId,
-        clientMsgId: source.clientMsgId ? `bot_${source.clientMsgId}` : undefined,
-        senderId: assistant.id,
-        senderName: assistant.name,
-        senderEmail: assistant.email,
-        senderFaculty: 'AI assistant',
-        senderCourse: 'AI assistant',
-        senderYear: 'AI assistant',
-        senderPhone: 'AI assistant',
-        avatarBg: assistant.avatarBg,
-        text: responseText,
-        replyTo: { id: sourceId, senderName: source.senderName || 'Student', senderEmail: source.senderEmail || '', text: source.text || '' },
-        reactions: {}
-      });
-      if (generationAtStart !== stopGeneration) {
-        await CommunityMessage.deleteOne({ _id: saved._id });
-        return;
-      }
-    } catch (error: any) {
-      if (error?.code === 11000) return;
-      throw error;
-    } finally {
-      activeRequests.delete(controller);
-      inFlightReplies.delete(sourceId);
-      inFlightReplies.delete(clientKey);
-      hooks.onTyping?.(typingAssistant, false);
+      responseText = (await generateReply(prompt, assistant, controller.signal)) || '';
     }
-    hooks.onReply?.(saved);
-    if (responseText === CAMPUS_BOT_FALLBACK) break;
-    const nextAssistant = getMentionedAssistant(responseText);
-    if (!nextAssistant || nextAssistant.kind === assistant.kind) break;
-    source = saved;
-    assistant = nextAssistant;
+    if (!responseText || generationAtStart !== stopGeneration) return;
+    saved = await CommunityMessage.create({
+      botReplyFor: sourceId,
+      clientMsgId: source.clientMsgId ? `bot_${source.clientMsgId}` : undefined,
+      senderId: assistant.id,
+      senderName: assistant.name,
+      senderEmail: assistant.email,
+      senderFaculty: 'AI assistant',
+      senderCourse: 'AI assistant',
+      senderYear: 'AI assistant',
+      senderPhone: 'AI assistant',
+      avatarBg: assistant.avatarBg,
+      text: responseText,
+      replyTo: { id: sourceId, senderName: source.senderName || 'Student', senderEmail: source.senderEmail || '', text: source.text || '' },
+      reactions: {}
+    });
+    if (generationAtStart !== stopGeneration) {
+      await CommunityMessage.deleteOne({ _id: saved._id });
+      return;
+    }
+  } catch (error: any) {
+    if (error?.code === 11000) return;
+    throw error;
+  } finally {
+    activeRequests.delete(controller);
+    inFlightReplies.delete(sourceId);
+    inFlightReplies.delete(clientKey);
+    hooks.onTyping?.(typingAssistant, false);
   }
+  hooks.onReply?.(saved);
 };

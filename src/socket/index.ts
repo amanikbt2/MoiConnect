@@ -6,7 +6,7 @@ import { User } from '../models/User';
 import { Conversation } from '../models/Conversation';
 import { Message } from '../models/Message';
 import { CommunityMessage } from '../models/CommunityMessage';
-import { getCampusBotsGeneration, isBotStopCommand, runCampusBotConversation, shouldCampusBotRespond, stopCampusBots } from '../services/campusBotService';
+import { getCampusBotsGeneration, isAssistantSender, isBotStopCommand, runCampusBotConversation, shouldCampusBotRespond, stopCampusBots } from '../services/campusBotService';
 import { sendCommunityMessagePush, sendDirectMessagePush } from '../services/pushNotificationService';
 import { getAppSettingValue } from '../models/AppSetting';
 import { ForumAccessPolicy, getForumAccessPolicy, isForumParticipationAllowed } from '../services/forumAccessService';
@@ -468,7 +468,7 @@ export const setupSocketIO = (io: SocketIOServer): void => {
             });
             ack?.({ success: true, id: generatedId });
             void sendCommunityMessagePush(messagePayload).catch(() => {});
-            if (!stopBots && shouldCampusBotRespond(messagePayload.text, messagePayload.replyTo)) {
+            if (!stopBots && !isAssistantSender(messagePayload) && shouldCampusBotRespond(messagePayload.text, messagePayload.replyTo, messagePayload)) {
               void runCampusBotConversation(savedMessage, {
                 onTyping: (assistant, typing) => io.to('community_room').emit(
                   typing ? 'community:user_typing' : 'community:user_stop_typing',
