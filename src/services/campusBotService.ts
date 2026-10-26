@@ -67,8 +67,8 @@ export const saveAiContext = async (context: string, assistant: AssistantKind = 
 
 type Assistant = { kind: AssistantKind; name: string; email: string; id: Types.ObjectId; avatarBg: string; aliases: RegExp };
 const assistants: Record<AssistantKind, Assistant> = {
-  bot: { kind: 'bot', name: 'Campus Bot', email: CAMPUS_BOT_EMAIL, id: new Types.ObjectId('000000000000000000000001'), avatarBg: '#6366f1', aliases: /(^|\s)@(bot|campusbot|campus[\s_]+bot)\b/i },
-  ai: { kind: 'ai', name: 'Campus AI', email: CAMPUS_AI_EMAIL, id: new Types.ObjectId('000000000000000000000002'), avatarBg: '#d4a017', aliases: /(^|\s)@(ai|campusai|campus[\s_]+ai)\b/i }
+  bot: { kind: 'bot', name: 'Campus Bot', email: CAMPUS_BOT_EMAIL, id: new Types.ObjectId('000000000000000000000001'), avatarBg: '#6366f1', aliases: /(?:^|[^\w@])@(bot|campusbot|campus[\s_]+bot)\b/i },
+  ai: { kind: 'ai', name: 'Campus AI', email: CAMPUS_AI_EMAIL, id: new Types.ObjectId('000000000000000000000002'), avatarBg: '#d4a017', aliases: /(?:^|[^\w@])@(ai|campusai|campus[\s_]+ai)\b/i }
 };
 // Allow enough time for a complete, detailed answer instead of aborting while
 // Gemini is still generating. The user can still stop an active generation.
@@ -190,8 +190,50 @@ export const clearAiTelemetry = async (): Promise<void> => {
   await Promise.all([AiPoolUsage.deleteMany({}), AiFailureLog.deleteMany({})]);
 };
 
-const getMentionedAssistant = (text = ''): Assistant | undefined => {
-  const matches = (Object.values(assistants) as Assistant[])
+export const getAssistantKind = (senderOrMessage?: any): AssistantKind | undefined => {
+  if (!senderOrMessage) return undefined;
+  const email = String(senderOrMessage.senderEmail || senderOrMessage.email || '').trim().toLowerCase();
+  const name = String(senderOrMessage.senderName || senderOrMessage.name || '').trim().toLowerCase();
+  const id = String(senderOrMessage.senderId?._id || senderOrMessage.senderId || senderOrMessage.id || senderOrMessage._id || '').trim();
+  const faculty = String(senderOrMessage.senderFaculty || senderOrMessage.faculty || '').trim();
+
+  if (
+    email === CAMPUS_BOT_EMAIL ||
+    email.includes('campusbot') ||
+    name === 'campus bot' ||
+    name === 'bot' ||
+    name.includes('campus bot') ||
+    name.replace(/[\s_]/g, '') === 'campusbot' ||
+    id === '000000000000000000000001' ||
+    id === 'campus-bot'
+  ) {
+    return 'bot';
+  }
+  if (
+    email === CAMPUS_AI_EMAIL ||
+    email.includes('campusai') ||
+    name === 'campus ai' ||
+    name === 'ai' ||
+    name.includes('campus ai') ||
+    name.replace(/[\s_]/g, '') === 'campusai' ||
+    id === '000000000000000000000002' ||
+    id === 'campus-ai'
+  ) {
+    return 'ai';
+  }
+  if (faculty === 'AI assistant') {
+    if (name.includes('bot') || email.includes('bot')) return 'bot';
+    if (name.includes('ai') || email.includes('ai')) return 'ai';
+  }
+  return undefined;
+};
+
+export const isAssistantSender = (senderOrMessage?: any): boolean => !!getAssistantKind(senderOrMessage);
+
+export const getMentionedAssistant = (text = '', excludeKind?: AssistantKind): Assistant | undefined => {
+  const list = Object.values(assistants) as Assistant[];
+  const candidates = excludeKind ? list.filter((a) => a.kind !== excludeKind) : list;
+  const matches = candidates
     .map((assistant) => ({ assistant, index: text.search(assistant.aliases) }))
     .filter((match) => match.index >= 0)
     .sort((a, b) => a.index - b.index);
@@ -208,43 +250,50 @@ export const stopCampusBots = (): void => {
 };
 export const getCampusBotsGeneration = (): number => stopGeneration;
 
-export const isCampusBotMention = (text?: string): boolean => !!getMentionedAssistant(text);
+export const isCampusBotMention = (text?: string, excludeKind?: AssistantKind): boolean => !!getMentionedAssistant(text, excludeKind);
 
-export const isAssistantSender = (senderOrMessage?: any): boolean => {
-  if (!senderOrMessage) return false;
-  const email = String(senderOrMessage.senderEmail || senderOrMessage.email || '').trim().toLowerCase();
-  const name = String(senderOrMessage.senderName || senderOrMessage.name || '').trim().toLowerCase();
-  const id = String(senderOrMessage.senderId?._id || senderOrMessage.senderId || senderOrMessage.id || senderOrMessage._id || '').trim();
-  const faculty = String(senderOrMessage.senderFaculty || senderOrMessage.faculty || '').trim();
-  return (
-    email === CAMPUS_BOT_EMAIL ||
-    email === CAMPUS_AI_EMAIL ||
-    name === 'campus bot' ||
-    name === 'campus ai' ||
-    id === '000000000000000000000001' ||
-    id === '000000000000000000000002' ||
-    faculty === 'AI assistant'
-  );
-};
-
-export const getAssistantForMessage = (text?: string, replyTo?: any): Assistant | undefined => {
+export const getAssistantForMessage = (
+  text?: string,
+  replyTo?: any,
+  excludeKind?: AssistantKind
+): Assistant | undefined => {
   if (isBotStopCommand(text)) return undefined;
-  const mentioned = getMentionedAssistant(text);
+
+  // 1. Explicit mention in text takes highest precedence
+  const mentioned = getMentionedAssistant(text, excludeKind);
   if (mentioned) return mentioned;
-  const email = String(replyTo?.senderEmail || '').trim().toLowerCase();
-  const name = String(replyTo?.senderName || '').trim().toLowerCase();
-  return (Object.values(assistants) as Assistant[]).find((assistant) => email === assistant.email || name === assistant.name.toLowerCase());
+
+  // 2. Direct swipe-reply to an assistant message
+  if (replyTo) {
+    const replyKind = getAssistantKind(replyTo);
+    if (replyKind && replyKind !== excludeKind) {
+      return assistants[replyKind];
+    }
+    const email = String(replyTo.senderEmail || '').trim().toLowerCase();
+    const name = String(replyTo.senderName || '').trim().toLowerCase();
+    const list = excludeKind
+      ? (Object.values(assistants) as Assistant[]).filter((a) => a.kind !== excludeKind)
+      : (Object.values(assistants) as Assistant[]);
+
+    const found = list.find((a) => {
+      if (email && email === a.email.toLowerCase()) return true;
+      if (name && (name === a.name.toLowerCase() || name.replace(/[\s_]/g, '') === a.name.toLowerCase().replace(/[\s_]/g, ''))) return true;
+      if (a.kind === 'bot' && (name.includes('campus bot') || name === 'bot' || email.includes('campusbot'))) return true;
+      if (a.kind === 'ai' && (name.includes('campus ai') || name === 'ai' || email.includes('campusai'))) return true;
+      return false;
+    });
+    if (found) return found;
+  }
+
+  return undefined;
 };
 
-export const isCampusBotReply = (replyTo?: any): boolean => {
-  const email = String(replyTo?.senderEmail || '').trim().toLowerCase();
-  const name = String(replyTo?.senderName || '').trim().toLowerCase();
-  return email === CAMPUS_BOT_EMAIL || email === CAMPUS_AI_EMAIL || name === 'campus bot' || name === 'campus ai';
-};
+export const isCampusBotReply = (replyTo?: any): boolean => !!getAssistantKind(replyTo);
 
 export const shouldCampusBotRespond = (text?: string, replyTo?: any, sender?: any): boolean => {
-  if (sender && isAssistantSender(sender)) return false;
-  return !!getAssistantForMessage(text, replyTo);
+  if (isBotStopCommand(text)) return false;
+  const senderKind = getAssistantKind(sender);
+  return !!getAssistantForMessage(text, replyTo, senderKind);
 };
 
 const getGeminiKeys = (): string[] => {
@@ -266,46 +315,57 @@ const extractGeminiText = (payload: any): string => {
   const parts = payload?.candidates?.[0]?.content?.parts;
   return Array.isArray(parts) ? parts.map((part: any) => typeof part?.text === 'string' ? part.text : '').join('').trim() : '';
 };
-const stripAssistantMentions = (text: string): string => text
-  .replace(/(^|\s)@(bot|campusbot|campus[\s_]+bot|ai|campusai|campus[\s_]+ai)\b/gi, ' ')
-  .replace(/\s{2,}/g, ' ')
+export const cleanLeadingAssistantMention = (text: string): string => text
+  .replace(/^(?:\s*['"\(]?@[a-z0-9_]+['"\)]?[:,\s]*)+/i, '')
   .trim();
+export const stripAssistantMentions = cleanLeadingAssistantMention;
 
-const getConversationPrompt = async (message: any, _assistant: Assistant): Promise<string> => {
-  const studentName = String(message.senderName || 'Student').trim();
-  const studentMessage = stripAssistantMentions(String(message.text || '').trim());
+const getConversationPrompt = async (message: any, assistant: Assistant): Promise<string> => {
+  const isFromAssistant = isAssistantSender(message);
+  const senderName = String(message.senderName || (isFromAssistant ? 'Assistant' : 'Student')).trim();
+  const rawText = String(message.text || '').trim();
+  const messageText = cleanLeadingAssistantMention(rawText) || rawText;
 
-  // Direct mention without swipe reply -> keep strictly name + message to save tokens
-  if (!message.replyTo) {
-    return `Student name: ${studentName}\nStudent message: ${studentMessage}`;
-  }
-
-  // Swipe to reply -> include immediate reply context (replied message + previous user prompt if applicable)
   const promptLines: string[] = [];
   const replyToObj = message.replyTo;
-  const replyTargetId = replyToObj.id || replyToObj._id;
+  const replyTargetId = replyToObj?.id || replyToObj?._id;
 
   if (replyTargetId) {
-    const repliedDoc = await CommunityMessage.findById(replyTargetId).catch(() => null);
-    if (repliedDoc?.botReplyFor) {
-      const origUserDoc = await CommunityMessage.findById(repliedDoc.botReplyFor).catch(() => null);
-      if (origUserDoc?.text) {
-        const origText = stripAssistantMentions(String(origUserDoc.text).trim());
-        if (origText) {
-          promptLines.push(`Previous user message: ${origText}`);
-        }
+    let currId: string | undefined = String(replyTargetId);
+    const threadChain: { sender: string; text: string }[] = [];
+    const visited = new Set<string>();
+
+    for (let depth = 0; depth < 4 && currId && !visited.has(currId); depth++) {
+      visited.add(currId);
+      const doc: any = await CommunityMessage.findById(currId).lean().catch(() => null);
+      if (!doc) break;
+      const docText = String(doc.text || '').trim();
+      if (docText) {
+        threadChain.unshift({
+          sender: doc.senderName || 'User',
+          text: docText
+        });
       }
+      currId = doc.replyTo?.id ? String(doc.replyTo.id) : (doc.botReplyFor ? String(doc.botReplyFor).replace(/_(bot|ai)$/, '') : undefined);
+    }
+
+    if (threadChain.length > 0) {
+      promptLines.push('--- Conversation Context ---');
+      for (const item of threadChain) {
+        promptLines.push(`${item.sender}: ${item.text}`);
+      }
+      promptLines.push('-----------------------------');
     }
   }
 
-  const replySender = String(replyToObj.senderName || 'User').trim();
-  const replyText = stripAssistantMentions(String(replyToObj.text || '').trim());
-  if (replyText) {
-    promptLines.push(`Replied message (${replySender}): ${replyText}`);
+  if (isFromAssistant) {
+    promptLines.push(`You are in a lively conversation with ${senderName} in the Moi University campus forum.`);
+    promptLines.push(`Latest message from ${senderName}: ${rawText}`);
+    promptLines.push(`Respond directly to ${senderName}. Be conversational, witty, concise (1-3 sentences), and friendly. Tag @${senderName.toLowerCase().includes('bot') ? 'bot' : 'ai'} naturally.`);
+  } else {
+    promptLines.push(`Student name: ${senderName}`);
+    promptLines.push(`Student message: ${messageText}`);
   }
-
-  promptLines.push(`Student name: ${studentName}`);
-  promptLines.push(`Student message: ${studentMessage}`);
 
   return promptLines.join('\n');
 };
@@ -333,7 +393,7 @@ const askGemini = async (apiKey: string, apiLabel: string, model: string, messag
     const systemInstructionText = parts.join('\n\n');
 
     const requestBody: any = {
-      contents: [{ role: 'user', parts: [{ text: stripAssistantMentions(messageText) || messageText }] }],
+      contents: [{ role: 'user', parts: [{ text: messageText }] }],
       // 8,192 is the common supported output ceiling across the configured
       // fallback models. This replaces the old 300-token cap that cut answers
       // off early; the model/provider still enforces its own hard maximum.
@@ -438,47 +498,73 @@ type ConversationHooks = {
   onReply?: (message: any) => void;
 };
 
-export const runCampusBotConversation = async (message: any, hooks: ConversationHooks = {}, requestedGeneration = stopGeneration): Promise<void> => {
-  if (!message?._id || isAssistantSender(message) || !shouldCampusBotRespond(message.text, message.replyTo, message)) return;
+export const runCampusBotConversation = async (
+  message: any,
+  hooks: ConversationHooks = {},
+  requestedGeneration = stopGeneration,
+  chainTurnOverride?: number
+): Promise<void> => {
+  if (!message?._id) return;
   const generationAtStart = requestedGeneration;
-  const source = message;
-  const assistant = getAssistantForMessage(source.text, source.replyTo);
-  if (!assistant || isAssistantSender(source)) return;
   if (generationAtStart !== stopGeneration) return;
 
-  const sourceId = String(source._id);
-  const clientKey = source.clientMsgId ? String(source.clientMsgId) : sourceId;
-  if (inFlightReplies.has(sourceId) || inFlightReplies.has(clientKey)) return;
-  inFlightReplies.add(sourceId);
-  inFlightReplies.add(clientKey);
+  const senderKind = getAssistantKind(message);
+  const isFromAssistant = !!senderKind;
+  const assistant = getAssistantForMessage(message.text, message.replyTo, senderKind);
+  if (!assistant) return;
+  if (senderKind && assistant.kind === senderKind) return;
+
+  // Determine turn count in current chain
+  const currentTurn = chainTurnOverride !== undefined
+    ? chainTurnOverride
+    : (isFromAssistant ? (Number(message.aiChainTurnCount) || 1) + 1 : 1);
+
+  // If this turn is between assistants, enforce the configured AI-to-AI turn limit
+  if (isFromAssistant) {
+    const turnLimit = await getAiConversationTurnLimit();
+    if (currentTurn > turnLimit) {
+      addAiLog({
+        level: 'info',
+        assistant: assistant.name,
+        message: `AI-to-AI conversation reached turn limit (${turnLimit} turns). No further response triggered.`
+      });
+      return;
+    }
+  }
+
+  const sourceId = String(message._id);
+  const replyLockKey = `${assistant.kind}_${sourceId}`;
+  if (inFlightReplies.has(replyLockKey)) return;
+  inFlightReplies.add(replyLockKey);
+
   const controller = new AbortController();
   activeRequests.add(controller);
   const typingAssistant = assistant;
   hooks.onTyping?.(typingAssistant, true);
   let saved: any;
   let responseText = '';
+
   try {
     const existing = await CommunityMessage.findOne({
-      $or: [
-        { botReplyFor: sourceId },
-        ...(source.clientMsgId ? [{ clientMsgId: `bot_${source.clientMsgId}` }] : [])
-      ]
+      botReplyFor: `${sourceId}_${assistant.kind}`
     });
     if (existing) return;
     if (generationAtStart !== stopGeneration) return;
+
     const disableAiFeatures = await getAppSettingValue('disableAiFeatures', false);
     if (disableAiFeatures) {
       responseText = 'Sorry, Im disabled for now';
       addAiLog({ level: 'warn', assistant: assistant.name, message: 'AI feature is disabled in Admin Settings. Replied with disabled notice.' });
     } else {
-      const prompt = await getConversationPrompt(source, assistant);
+      const prompt = await getConversationPrompt(message, assistant);
       if (generationAtStart !== stopGeneration) return;
       responseText = (await generateReply(prompt, assistant, controller.signal)) || '';
     }
     if (!responseText || generationAtStart !== stopGeneration) return;
+
     saved = await CommunityMessage.create({
-      botReplyFor: sourceId,
-      clientMsgId: source.clientMsgId ? `bot_${source.clientMsgId}` : undefined,
+      botReplyFor: `${sourceId}_${assistant.kind}`,
+      clientMsgId: message.clientMsgId ? `bot_${assistant.kind}_${message.clientMsgId}` : undefined,
       senderId: assistant.id,
       senderName: assistant.name,
       senderEmail: assistant.email,
@@ -488,9 +574,16 @@ export const runCampusBotConversation = async (message: any, hooks: Conversation
       senderPhone: 'AI assistant',
       avatarBg: assistant.avatarBg,
       text: responseText,
-      replyTo: { id: sourceId, senderName: source.senderName || 'Student', senderEmail: source.senderEmail || '', text: source.text || '' },
+      replyTo: {
+        id: sourceId,
+        senderName: message.senderName || (senderKind === 'ai' ? 'Campus AI' : (senderKind === 'bot' ? 'Campus Bot' : 'Student')),
+        senderEmail: message.senderEmail || '',
+        text: message.text || ''
+      },
+      aiChainTurnCount: currentTurn,
       reactions: {}
     });
+
     if (generationAtStart !== stopGeneration) {
       await CommunityMessage.deleteOne({ _id: saved._id });
       return;
@@ -500,9 +593,34 @@ export const runCampusBotConversation = async (message: any, hooks: Conversation
     throw error;
   } finally {
     activeRequests.delete(controller);
-    inFlightReplies.delete(sourceId);
-    inFlightReplies.delete(clientKey);
+    inFlightReplies.delete(replyLockKey);
     hooks.onTyping?.(typingAssistant, false);
   }
+
+  // 1. Emit the assistant reply to room
   hooks.onReply?.(saved);
+
+  // 2. Check if this assistant reply triggers the OTHER assistant in an AI-to-AI conversation
+  if (generationAtStart === stopGeneration) {
+    const nextAssistant = getAssistantForMessage(saved.text, saved.replyTo, assistant.kind);
+    if (nextAssistant && nextAssistant.kind !== assistant.kind) {
+      const turnLimit = await getAiConversationTurnLimit();
+      const nextTurn = currentTurn + 1;
+      if (nextTurn <= turnLimit) {
+        // Natural human-like conversational pause (1.3s) before the other assistant replies
+        setTimeout(() => {
+          if (generationAtStart !== stopGeneration) return;
+          void runCampusBotConversation(saved, hooks, generationAtStart, nextTurn).catch((err) => {
+            console.error('[AI-to-AI Chain Error]:', err);
+          });
+        }, 1300);
+      } else {
+        addAiLog({
+          level: 'info',
+          assistant: assistant.name,
+          message: `AI-to-AI conversation reached turn limit (${turnLimit} turns). Chain completed.`
+        });
+      }
+    }
+  }
 };

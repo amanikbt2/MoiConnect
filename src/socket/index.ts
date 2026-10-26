@@ -416,7 +416,7 @@ export const setupSocketIO = (io: SocketIOServer): void => {
           avatarBg: avatarBg || '#15803d',
           text: text?.trim() || '',
           mentions,
-          waitForBot: !stopBots && shouldCampusBotRespond(text, replyTo),
+          waitForBot: !stopBots && shouldCampusBotRespond(text, replyTo, { senderId: sId, senderName: effectiveSenderName, senderEmail: sEmail }),
           stickerId,
           fileAttachment,
           replyTo,

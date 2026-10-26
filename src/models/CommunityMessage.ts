@@ -37,6 +37,7 @@ export interface ICommunityMessage extends Document {
   stickerId?: string;
   fileAttachment?: IFileAttachment;
   replyTo?: IReplyTo;
+  aiChainTurnCount?: number;
   reactions?: Map<string, number>;
   reactionUsers?: Map<string, string[]>;
   readBy?: Types.ObjectId[];
@@ -79,6 +80,7 @@ const communityMessageSchema = new Schema<ICommunityMessage>(
       text: { type: String },
       fileAttachment: Schema.Types.Mixed
     },
+    aiChainTurnCount: { type: Number, default: 0 },
     reactions: {
       type: Map,
       of: Number,
