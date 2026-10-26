@@ -112,15 +112,19 @@ export const getPapers = async (req: AuthenticatedRequest, res: Response): Promi
       .filter((token: string) => token.length > 1 && !['and', 'the', 'of', 'in', 'for', 'to', 'with', 'a', 'an', 'at', 'by', 'from', 'on', 'or', 'as', 'is', 'it'].includes(token));
 
     if (searchStr) {
-      const normalizedCode = searchStr.replace(/[^a-zA-Z0-9]/g, '');
-      const unitCodeVariant = /^[a-zA-Z]{2,4}\d{2,3}$/.test(normalizedCode)
-        ? new RegExp(normalizedCode.replace(/([a-zA-Z]+)(\d+)/, '$1[- ]?$2'), 'i')
+      // 1. Extract unit code embedded in query e.g. "sta 111 exam" -> "STA 111"
+      const unitCodeRegexMatch = searchStr.match(/\b([a-zA-Z]{2,4})[-_ ]?(\d{2,3}[a-zA-Z]?)\b/i);
+      const unitCodePrefix = unitCodeRegexMatch ? unitCodeRegexMatch[1].toUpperCase() : null;
+      const unitCodeNum = unitCodeRegexMatch ? unitCodeRegexMatch[2] : null;
+      const unitCodeVariant = unitCodePrefix && unitCodeNum
+        ? new RegExp(`^${unitCodePrefix}[-_ ]?${unitCodeNum}($|[^0-9])`, 'i')
         : null;
 
       const searchConditionsFor = (token: string) => {
         const escapedToken = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const prefixRegex = new RegExp(`^${escapedToken}`, 'i');
-        const wordRegex = new RegExp(`(^|\\s|[._-])${escapedToken}`, 'i');
+        // Match token with trailing boundary so "sta" does not match "status" or "stage"
+        const wordRegex = new RegExp(`(^|\\s|[._-])${escapedToken}(?:\\s|[._-]|$|[0-9])`, 'i');
 
         const conditions: any[] = [
           { unitCode: prefixRegex },
@@ -143,30 +147,50 @@ export const getPapers = async (req: AuthenticatedRequest, res: Response): Promi
       };
 
       // Fields are alternatives within a token; any meaningful token can match.
-      // The relevance score below ranks records matching more query words first.
       searchTokenGroups = searchTokens.map((token) => ({ $or: searchConditionsFor(token) }));
-      if (searchTokenGroups.length > 0) {
-        query.$and = [...(query.$and || []), { $or: searchTokenGroups.flatMap((group) => group.$or) }];
+      const baseConditions = searchTokenGroups.flatMap((group) => group.$or);
+      if (unitCodeVariant) {
+        baseConditions.push({ unitCode: unitCodeVariant }, { courseCode: unitCodeVariant });
+      }
+      if (baseConditions.length > 0) {
+        query.$and = [...(query.$and || []), { $or: baseConditions }];
       }
     }
 
     const total = await Paper.countDocuments(query);
     let papers: any[];
-    if (searchStr && searchTokens.length > 0) {
-      const regexFor = (token: string) => `(^|\\s|[._-])${token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`;
+    if (searchStr && (searchTokens.length > 0 || searchStr.length >= 2)) {
+      const regexFor = (token: string) => `(^|\\s|[._-])${token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:\\s|[._-]|$|[0-9])`;
+      const cleanRawSearch = searchStr.toLowerCase().trim();
+      const unitCodeRegexMatch = searchStr.match(/\b([a-zA-Z]{2,4})[-_ ]?(\d{2,3}[a-zA-Z]?)\b/i);
+      const unitCodePrefix = unitCodeRegexMatch ? unitCodeRegexMatch[1].toUpperCase() : null;
+      const unitCodeNum = unitCodeRegexMatch ? unitCodeRegexMatch[2] : null;
+
       const relevanceParts: any[] = [
-        { $cond: [{ $eq: [{ $toLower: { $ifNull: ['$unitCode', ''] } }, searchStr.toLowerCase()] }, 120, 0] },
-        { $cond: [{ $eq: [{ $toLower: { $ifNull: ['$courseCode', ''] } }, searchStr.toLowerCase()] }, 110, 0] }
+        { $cond: [{ $eq: [{ $toLower: { $ifNull: ['$unitCode', ''] } }, cleanRawSearch] }, 500, 0] },
+        { $cond: [{ $eq: [{ $toLower: { $ifNull: ['$courseCode', ''] } }, cleanRawSearch] }, 450, 0] },
+        { $cond: [{ $regexMatch: { input: { $ifNull: ['$title', ''] }, regex: cleanRawSearch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), options: 'i' } }, 200, 0] }
       ];
+
+      // Massive boost for exact unit code match e.g. STA 111 / STA-111 / STA111
+      if (unitCodePrefix && unitCodeNum) {
+        const strictCodePattern = `^${unitCodePrefix}[-_ ]?${unitCodeNum}($|[^0-9])`;
+        relevanceParts.push(
+          { $cond: [{ $regexMatch: { input: { $ifNull: ['$unitCode', ''] }, regex: strictCodePattern, options: 'i' } }, 600, 0] },
+          { $cond: [{ $regexMatch: { input: { $ifNull: ['$courseCode', ''] }, regex: strictCodePattern, options: 'i' } }, 550, 0] },
+          { $cond: [{ $regexMatch: { input: { $ifNull: ['$title', ''] }, regex: strictCodePattern, options: 'i' } }, 400, 0] }
+        );
+      }
+
       for (const token of searchTokens) {
         const regex = regexFor(token);
         const scoreFor = (field: string, weight: number) => ({
           $cond: [{ $regexMatch: { input: { $ifNull: [field, ''] }, regex, options: 'i' } }, weight, 0]
         });
         relevanceParts.push(
-          scoreFor('$unitCode', 16), scoreFor('$courseCode', 15),
-          scoreFor('$title', 12), scoreFor('$unitName', 11),
-          scoreFor('$department', 5), scoreFor('$school', 4),
+          scoreFor('$unitCode', 40), scoreFor('$courseCode', 35),
+          scoreFor('$title', 30), scoreFor('$unitName', 25),
+          scoreFor('$department', 5), scoreFor('$school', 3),
           scoreFor('$description', 2)
         );
       }
