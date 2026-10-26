@@ -5899,24 +5899,39 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
           return;
         }
 
+        function escapePopupHistoryHtml(value) {
+          return String(value == null ? '' : value).replace(/[&<>"']/g, function(character) {
+            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character];
+          });
+        }
+
         container.innerHTML = json.data.map(function(item) {
+          const audienceLabels = { all: 'All users', unauthenticated: 'Guests only', emails: 'Specific emails' };
+          const audienceLabel = audienceLabels[item.targetAudience] || 'All users';
+          const targetEmails = Array.isArray(item.targetEmails) ? item.targetEmails : [];
           return '<div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; font-size: 12px;">' +
             '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">' +
               '<span style="font-weight: 800; color: #0f172a; display: flex; align-items: center; gap: 6px;">' +
-                '<span style="background: #15803d; color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 10px;">' + item.popupId + '</span>' +
-                item.title +
+                '<span style="background: #15803d; color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 10px;">' + escapePopupHistoryHtml(item.popupId) + '</span>' +
+                escapePopupHistoryHtml(item.title) +
               '</span>' +
               '<span style="display:flex;align-items:center;gap:6px;">' +
                 (item.type === 'interactive' ? '<button type="button" data-popup-id="' + item._id + '" onclick="viewPopupResponses(this.dataset.popupId)" class="btn" style="background: #dcfce7; color: #15803d; padding: 3px 8px; font-size: 10px; font-weight: 800; border: 1px solid #86efac; border-radius: 6px;">View responses</button>' : '') +
                 '<button type="button" data-id="' + item._id + '" onclick="handleDeletePopup(this.dataset.id)" class="btn" style="background: #fee2e2; color: #dc2626; padding: 3px 8px; font-size: 10px; font-weight: 800; border: 1px solid #fca5a5; border-radius: 6px; cursor: pointer;">🗑️ Delete</button>' +
               '</span>' +
             '</div>' +
-            (item.subtitle ? '<div style="font-size: 11px; font-weight: 700; color: #15803d; margin-bottom: 4px;">' + item.subtitle + '</div>' : '') +
-            '<div style="display: flex; gap: 8px; font-size: 11px; color: #64748b; margin-top: 6px;">' +
-              '<span>Type: <strong style="color: #0f172a;">' + item.type + '</strong></span>' +
-              (item.actionTarget ? '<span>Target: <strong style="color: #15803d;">' + item.actionTarget + '</strong></span>' : '') +
-              (item.minAppVersion ? '<span>Min Ver: <strong style="color: #2563eb;">' + item.minAppVersion + '</strong></span>' : '') +
+            (item.subtitle ? '<div style="font-size: 11px; font-weight: 700; color: #15803d; margin-bottom: 4px;">' + escapePopupHistoryHtml(item.subtitle) + '</div>' : '') +
+            '<div style="display: flex; flex-wrap: wrap; gap: 8px 12px; font-size: 11px; color: #64748b; margin-top: 6px; align-items:center;">' +
+              '<span>Type: <strong style="color: #0f172a;">' + escapePopupHistoryHtml(item.type) + '</strong></span>' +
+              (item.actionTarget ? '<span>Target: <strong style="color: #15803d;">' + escapePopupHistoryHtml(item.actionTarget) + '</strong></span>' : '') +
+              (item.minAppVersion ? '<span>Min Ver: <strong style="color: #2563eb;">' + escapePopupHistoryHtml(item.minAppVersion) + '</strong></span>' : '') +
+              '<span>Audience: <strong style="color:#334155;">' + audienceLabel + '</strong></span>' +
             '</div>' +
+            (item.targetAudience === 'emails' ?
+              '<details style="margin-top:8px;border-top:1px solid #e2e8f0;padding-top:7px;">' +
+                '<summary style="width:max-content;max-width:100%;cursor:pointer;color:#2563eb;font-size:11px;font-weight:700;user-select:none;">' + (targetEmails.length ? 'Show ' + targetEmails.length + ' targeted email' + (targetEmails.length === 1 ? '' : 's') : 'No targeted emails') + '</summary>' +
+                (targetEmails.length ? '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;">' + targetEmails.map(function(email) { return '<span style="background:#eff6ff;border:1px solid #dbeafe;color:#1e40af;border-radius:999px;padding:4px 8px;font-size:11px;overflow-wrap:anywhere;">' + escapePopupHistoryHtml(email) + '</span>'; }).join('') + '</div>' : '') +
+              '</details>' : '') +
           '</div>';
         }).join('');
       } catch (err) {
