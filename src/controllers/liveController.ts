@@ -29,10 +29,20 @@ export const createCommunityLiveToken = async (
     res.status(503).json({ success: false, error: 'Live streaming is not configured on the server.' });
     return;
   }
+
+  // Generate a unique session identity per device/tab to prevent DUPLICATE_IDENTITY disconnect collisions
+  const sessionNonce = Math.random().toString(36).slice(2, 8);
+  const participantIdentity = `${userId}_${sessionNonce}`;
+  const metadata = JSON.stringify({
+    userId,
+    avatarUrl: user.avatarUrl || '',
+    role
+  });
+
   const token = new AccessToken(config.livekit.apiKey, config.livekit.apiSecret, {
-    identity: userId,
+    identity: participantIdentity,
     name: displayName,
-    metadata: JSON.stringify({ avatarUrl: user.avatarUrl || '' }),
+    metadata,
     ttl: '2h'
   });
 
@@ -55,4 +65,3 @@ export const createCommunityLiveToken = async (
     }
   });
 };
-

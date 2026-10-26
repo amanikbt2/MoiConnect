@@ -559,7 +559,7 @@ export const streamPaperPdfByUrl = async (req: AuthenticatedRequest, res: Respon
     }
 
     const parsedUrl = new URL(rawUrl);
-    if (parsedUrl.protocol !== 'https:' || !['res.cloudinary.com', 'api.cloudinary.com'].includes(parsedUrl.hostname.toLowerCase())) {
+    if (!['https:', 'http:'].includes(parsedUrl.protocol) || !['res.cloudinary.com', 'api.cloudinary.com'].includes(parsedUrl.hostname.toLowerCase())) {
       res.status(400).send('Only secure Cloudinary PDF URLs are supported.');
       return;
     }

@@ -42,6 +42,7 @@ interface ActiveLiveBroadcast {
 const activeSockets = new Map<string, OnlineSession>();
 const processedClientMsgIds = new Map<string, string>();
 let activeLiveBroadcast: ActiveLiveBroadcast | null = null;
+let hostDisconnectGraceTimer: ReturnType<typeof setTimeout> | null = null;
 let ioInstance: SocketIOServer | null = null;
 
 export const getSocketIO = (): SocketIOServer | null => {
@@ -234,9 +235,17 @@ export const setupSocketIO = (io: SocketIOServer): void => {
       if (!userId) return;
       if (activeLiveBroadcast) {
         if (activeLiveBroadcast.hostId === userId) {
+          if (hostDisconnectGraceTimer) {
+            clearTimeout(hostDisconnectGraceTimer);
+            hostDisconnectGraceTimer = null;
+          }
           activeLiveBroadcast.hostSocketId = socket.id;
         }
         return;
+      }
+      if (hostDisconnectGraceTimer) {
+        clearTimeout(hostDisconnectGraceTimer);
+        hostDisconnectGraceTimer = null;
       }
       const host = await User.findById(userId).select('name avatarUrl canGoLive').lean();
       if (!host?.canGoLive) return;
@@ -280,7 +289,12 @@ export const setupSocketIO = (io: SocketIOServer): void => {
     });
 
     socket.on('community:live_end', () => {
-      if (!activeLiveBroadcast || activeLiveBroadcast.hostSocketId !== socket.id) return;
+      if (!activeLiveBroadcast) return;
+      if (activeLiveBroadcast.hostSocketId !== socket.id && activeLiveBroadcast.hostId !== userId) return;
+      if (hostDisconnectGraceTimer) {
+        clearTimeout(hostDisconnectGraceTimer);
+        hostDisconnectGraceTimer = null;
+      }
       const hostName = activeLiveBroadcast.hostName;
       activeLiveBroadcast = null;
       io.to('community_room').emit('community:live_end', { hostName });
@@ -586,8 +600,17 @@ export const setupSocketIO = (io: SocketIOServer): void => {
     socket.on('disconnect', () => {
       if (activeLiveBroadcast?.hostSocketId === socket.id) {
         const hostName = activeLiveBroadcast.hostName;
-        activeLiveBroadcast = null;
-        io.to('community_room').emit('community:live_end', { hostName });
+        const hostId = activeLiveBroadcast.hostId;
+        // Do not instantly terminate the live broadcast on transient mobile socket drops.
+        // Provide a 45-second grace window to allow the host to reconnect smoothly.
+        if (hostDisconnectGraceTimer) clearTimeout(hostDisconnectGraceTimer);
+        hostDisconnectGraceTimer = setTimeout(() => {
+          if (activeLiveBroadcast && activeLiveBroadcast.hostId === hostId) {
+            activeLiveBroadcast = null;
+            io.to('community_room').emit('community:live_end', { hostName });
+          }
+          hostDisconnectGraceTimer = null;
+        }, 45000);
       } else if (activeLiveBroadcast) {
         const participant = Array.from(activeLiveBroadcast.participants.values()).find((entry) => entry.socketId === socket.id);
         if (participant) {
