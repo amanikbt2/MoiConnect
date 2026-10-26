@@ -71,10 +71,11 @@ export const createPopup = async (req: Request, res: Response): Promise<void> =>
       expiresAt
     } = req.body;
 
-    if (!title) {
+    if (!title && type !== 'interactive') {
       res.status(400).json({ success: false, error: 'Title is required for popup.' });
       return;
     }
+    const popupTitle = String(title || '').trim() || (type === 'interactive' ? 'Interactive popup' : '');
 
     const parsedActions = Array.isArray(actions)
       ? actions
@@ -87,7 +88,7 @@ export const createPopup = async (req: Request, res: Response): Promise<void> =>
       : [];
     const normalizedActions = parsedActions.length
       ? parsedActions
-      : title
+      : popupTitle && type !== 'interactive'
         ? [{ label: actionButtonText || 'Explore', target: actionTarget || '/community', type: 'in_app' as const }]
         : [];
     const normalizedInputs = Array.isArray(inputs)
@@ -118,7 +119,7 @@ export const createPopup = async (req: Request, res: Response): Promise<void> =>
     const newPopup = await Popup.create({
       popupId,
       type,
-      title,
+      title: popupTitle,
       subtitle,
       body,
       imageUrl,
@@ -235,7 +236,7 @@ export const checkClientPopup = async (req: Request, res: Response): Promise<voi
     const normalPopups = await Popup.find({
       type: { $in: ['normal', 'interactive'] },
       $or: [{ expiresAt: { $exists: false } }, { expiresAt: null }, { expiresAt: { $gt: now } }]
-    }).sort({ createdAt: -1 });
+    }).sort({ createdAt: 1 });
 
     for (const item of normalPopups) {
       if (dismissedList.includes(item.popupId)) {

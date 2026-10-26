@@ -3496,10 +3496,10 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
             </form>
 
             <form id="popup-interactive-form" onsubmit="handleCreateInteractivePopup(event)" class="hidden" style="display: flex; flex-direction: column; gap: 14px;">
-              <div><label>Popup Title *</label><input type="text" id="pop-interactive-title" class="form-control" required /></div>
+              <div><label>Popup Title (optional)</label><input type="text" id="pop-interactive-title" class="form-control" placeholder="Add a title" /></div>
               <div><label>Banner Image</label><input type="file" id="pop-interactive-image" accept="image/jpeg,image/png,image/webp,image/gif" class="form-control" /></div>
-              <div><label>Subtitle</label><input type="text" id="pop-interactive-subtitle" class="form-control" /></div>
-              <div><label>Body</label><textarea id="pop-interactive-body" class="form-control" rows="3"></textarea></div>
+              <div><label>Subtitle (optional)</label><input type="text" id="pop-interactive-subtitle" class="form-control" /></div>
+              <div><label>Body (optional)</label><textarea id="pop-interactive-body" class="form-control" rows="3"></textarea></div>
               <div><label>Questions / Inputs</label><div id="interactive-inputs"></div><button type="button" onclick="addInteractiveInput()">+ Add input</button></div>
               <div><label>Target Audience</label><select id="pop-interactive-audience" class="form-control"><option value="all">All Users and Guests</option><option value="unauthenticated">Guests Only</option><option value="emails">Specific Email List</option></select></div>
               <textarea id="pop-interactive-emails" class="form-control" rows="2" placeholder="student@example.com, ..." style="display: none;"></textarea>
