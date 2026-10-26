@@ -5719,14 +5719,33 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       const index = container.children.length + 1;
       const row = document.createElement('div');
       row.className = 'interactive-input-row';
-      row.style.cssText = 'border: 1px solid #dbeafe; background: #f8fdff; border-radius: 10px; padding: 10px; display: grid; gap: 7px;';
-      row.innerHTML = '<div style="display:grid;grid-template-columns:1fr 130px;gap:8px;">' +
-        '<input class="form-control interactive-label" placeholder="Question label" required />' +
-        '<select class="form-control interactive-type"><option value="text">Text box</option><option value="radio">Radio choices</option><option value="toggle">Toggle</option><option value="checkbox">Checkbox</option></select></div>' +
-        '<input class="form-control interactive-options" placeholder="Choices separated by commas (for radio)" />' +
-        '<label style="font-size:11px;font-weight:700;"><input type="checkbox" class="interactive-required" /> Required</label>' +
-        '<button type="button" onclick="this.closest(&quot;.interactive-input-row&quot;).remove()" style="width:max-content;border:0;background:transparent;color:#dc2626;font-size:11px;font-weight:800;">Remove input</button>';
+      row.style.cssText = 'border:1px solid #dbe3ef;background:#fff;border-radius:12px;padding:14px;display:grid;gap:12px;box-shadow:0 1px 2px rgba(15,23,42,.04);';
+      row.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">' +
+        '<strong class="interactive-question-number" style="font-size:12px;color:#334155;">Question ' + index + '</strong>' +
+        '<button type="button" class="interactive-remove" style="border:0;background:#fff1f2;color:#be123c;border-radius:7px;padding:5px 9px;font-size:11px;font-weight:700;cursor:pointer;">Remove</button></div>' +
+        '<div style="display:grid;grid-template-columns:minmax(0,1fr) 160px;gap:10px;align-items:end;">' +
+        '<label style="display:grid;gap:5px;font-size:11px;font-weight:700;color:#475569;">Question label *<input class="form-control interactive-label" placeholder="e.g. What do you think of the app?" required /></label>' +
+        '<label style="display:grid;gap:5px;font-size:11px;font-weight:700;color:#475569;">Answer type<select class="form-control interactive-type"><option value="text">Text box</option><option value="radio">Radio choices</option><option value="checkbox">Checkbox</option></select></label></div>' +
+        '<div class="interactive-options-wrap" style="display:none;">' +
+        '<label style="display:grid;gap:5px;font-size:11px;font-weight:700;color:#475569;">Radio choices *<input class="form-control interactive-options" placeholder="Enter choices separated by commas" /></label>' +
+        '<small style="display:block;margin-top:4px;color:#64748b;font-size:11px;">Separate each option with a comma, for example: Good, Fair, Poor</small></div>' +
+        '<label style="display:flex;align-items:center;gap:8px;width:max-content;font-size:12px;font-weight:600;color:#475569;cursor:pointer;"><input type="checkbox" class="interactive-required" /> Require an answer</label>';
+      row.querySelector('.interactive-remove').addEventListener('click', function() {
+        row.remove();
+        Array.from(container.querySelectorAll('.interactive-input-row')).forEach(function(item, position) {
+          item.querySelector('.interactive-question-number').textContent = 'Question ' + (position + 1);
+        });
+      });
+      const typeSelect = row.querySelector('.interactive-type');
+      const optionsWrap = row.querySelector('.interactive-options-wrap');
+      const optionsInput = row.querySelector('.interactive-options');
+      function syncInteractiveOptions() {
+        const showOptions = typeSelect.value === 'radio';
+        optionsWrap.style.display = showOptions ? 'block' : 'none';
+      }
+      typeSelect.addEventListener('change', syncInteractiveOptions);
       container.appendChild(row);
+      syncInteractiveOptions();
     }
 
     document.getElementById('pop-interactive-audience')?.addEventListener('change', function() {
@@ -5737,7 +5756,8 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
     function collectInteractiveInputs() {
       return Array.from(document.querySelectorAll('#interactive-inputs .interactive-input-row')).map(function(row, index) {
         const type = row.querySelector('.interactive-type').value;
-        return { id: 'field_' + (index + 1), label: row.querySelector('.interactive-label').value.trim(), type: type, required: row.querySelector('.interactive-required').checked, options: row.querySelector('.interactive-options').value.split(',').map(function(value) { return value.trim(); }).filter(Boolean) };
+        const options = type === 'radio' ? row.querySelector('.interactive-options').value.split(',').map(function(value) { return value.trim(); }).filter(Boolean) : [];
+        return { id: 'field_' + (index + 1), label: row.querySelector('.interactive-label').value.trim(), type: type, required: row.querySelector('.interactive-required').checked, options: options };
       }).filter(function(input) { return input.label; });
     }
 
@@ -5745,6 +5765,10 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       e.preventDefault();
       const inputs = collectInteractiveInputs();
       if (!inputs.length) { showToast('Add at least one input.', true); return; }
+      if (inputs.some(function(input) { return input.type === 'radio' && input.options.length < 2; })) {
+        showToast('Add at least two choices for each radio question.', true);
+        return;
+      }
       const btn = document.getElementById('btn-submit-pop-interactive');
       btn.disabled = true;
       try {
@@ -5773,12 +5797,30 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       const response = await fetch('/api/v1/notify/popups/' + encodeURIComponent(id) + '/responses');
       const json = await response.json();
       if (!json.success) { showToast(json.error || 'Could not load responses.', true); return; }
+      function escapeResponseHtml(value) {
+        return String(value == null ? '' : value).replace(/[&<>"']/g, function(character) {
+          return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character];
+        });
+      }
+      const questions = json.data.popup?.inputs || [];
       const rows = (json.data.responses || []).map(function(item) {
-        return '<div style="border-bottom:1px solid #e2e8f0;padding:12px 0;"><strong>' + (item.name || 'Guest') + '</strong><div style="font-size:11px;color:#64748b;">' + (item.email || 'No email') + '</div><div style="margin-top:6px;white-space:pre-wrap;">' + Object.entries(item.responses || {}).map(function(entry) { return entry[0] + ': ' + entry[1]; }).join(' | ') + '</div></div>';
+        const answers = questions.map(function(question) {
+          const value = (item.responses || {})[question.id];
+          const answer = value === undefined || value === null || value === '' ? 'No answer' : typeof value === 'boolean' ? (value ? 'Yes' : 'No') : String(value);
+          return '<div style="display:grid;grid-template-columns:minmax(120px, .8fr) minmax(0, 1.2fr);gap:12px;padding:10px 12px;border-radius:8px;background:#f8fafc;align-items:start;">' +
+            '<div style="font-size:12px;font-weight:700;color:#475569;line-height:1.5;">' + escapeResponseHtml(question.label || question.id) + '</div>' +
+            '<div style="font-size:13px;color:#0f172a;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere;">' + escapeResponseHtml(answer) + '</div></div>';
+        }).join('');
+        const submittedAt = item.createdAt ? new Date(item.createdAt).toLocaleString() : '';
+        return '<article style="border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin:12px 0;background:#fff;">' +
+          '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:12px;">' +
+          '<div><strong style="display:block;font-size:14px;color:#0f172a;">' + escapeResponseHtml(item.name || 'Guest') + '</strong><span style="display:block;margin-top:3px;font-size:12px;color:#64748b;">' + escapeResponseHtml(item.email || 'No email') + '</span></div>' +
+          (submittedAt ? '<time style="font-size:11px;color:#64748b;text-align:right;">' + escapeResponseHtml(submittedAt) + '</time>' : '') +
+          '</div><div style="display:grid;gap:7px;">' + (answers || '<div style="font-size:12px;color:#64748b;">No question details available for this response.</div>') + '</div></article>';
       }).join('');
       const overlay = document.createElement('div');
       overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;padding:20px;z-index:9999;';
-      overlay.innerHTML = '<div style="background:#fff;border-radius:14px;width:min(620px,100%);max-height:80vh;overflow:auto;padding:20px;box-shadow:0 20px 50px rgba(0,0,0,.25);"><div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #e2e8f0;padding-bottom:10px;"><div><h3 style="margin:0;color:#0f172a;">Popup responses</h3><p style="margin:4px 0 0;color:#64748b;font-size:12px;">' + (json.data.popup?.title || '') + '</p></div><button id="close-popup-responses" style="border:0;background:#f1f5f9;border-radius:8px;padding:7px 10px;cursor:pointer;">Close</button></div><div style="margin-top:8px;">' + (rows || '<div style="padding:20px;color:#64748b;text-align:center;">No responses yet.</div>') + '</div></div>';
+      overlay.innerHTML = '<div style="background:#f8fafc;border-radius:16px;width:min(760px,100%);max-height:85vh;overflow:auto;padding:20px;box-shadow:0 24px 60px rgba(15,23,42,.28);"><div style="position:sticky;top:-20px;z-index:1;display:flex;justify-content:space-between;align-items:center;gap:16px;background:#fff;border-bottom:1px solid #e2e8f0;margin:-20px -20px 12px;padding:16px 20px;border-radius:16px 16px 0 0;"><div><h3 style="margin:0;color:#0f172a;font-size:17px;">Popup responses</h3><p style="margin:4px 0 0;color:#64748b;font-size:12px;">' + escapeResponseHtml(json.data.popup?.title || '') + ' · ' + (json.data.responses || []).length + ' response' + ((json.data.responses || []).length === 1 ? '' : 's') + '</p></div><button id="close-popup-responses" style="border:0;background:#f1f5f9;color:#334155;border-radius:8px;padding:8px 12px;font-weight:700;cursor:pointer;">Close</button></div><div>' + (rows || '<div style="padding:28px 16px;color:#64748b;text-align:center;background:#fff;border:1px dashed #cbd5e1;border-radius:12px;">No responses yet.</div>') + '</div></div>';
       document.body.appendChild(overlay);
       overlay.querySelector('#close-popup-responses').onclick = function() { overlay.remove(); };
       overlay.onclick = function(event) { if (event.target === overlay) overlay.remove(); };
