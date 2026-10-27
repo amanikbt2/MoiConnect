@@ -517,7 +517,9 @@ export const runCampusBotConversation = async (
   // Determine turn count in current chain
   const currentTurn = chainTurnOverride !== undefined
     ? chainTurnOverride
-    : (isFromAssistant ? (Number(message.aiChainTurnCount) || 1) + 1 : 1);
+    : (isFromAssistant
+      ? (Number(message.aiChainTurnCount) > 0 ? Number(message.aiChainTurnCount) + 1 : 1)
+      : 1);
 
   // If this turn is between assistants, enforce the configured AI-to-AI turn limit
   if (isFromAssistant) {

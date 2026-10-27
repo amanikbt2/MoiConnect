@@ -6,7 +6,7 @@ import { User } from '../models/User';
 import { Conversation } from '../models/Conversation';
 import { Message } from '../models/Message';
 import { CommunityMessage } from '../models/CommunityMessage';
-import { getCampusBotsGeneration, isAssistantSender, isBotStopCommand, runCampusBotConversation, shouldCampusBotRespond, stopCampusBots } from '../services/campusBotService';
+import { getCampusBotsGeneration, isBotStopCommand, runCampusBotConversation, shouldCampusBotRespond, stopCampusBots } from '../services/campusBotService';
 import { sendCommunityMessagePush, sendDirectMessagePush } from '../services/pushNotificationService';
 import { getAppSettingValue } from '../models/AppSetting';
 import { ForumAccessPolicy, getForumAccessPolicy, isForumParticipationAllowed } from '../services/forumAccessService';
@@ -482,7 +482,7 @@ export const setupSocketIO = (io: SocketIOServer): void => {
             });
             ack?.({ success: true, id: generatedId });
             void sendCommunityMessagePush(messagePayload).catch(() => {});
-            if (!stopBots && !isAssistantSender(messagePayload) && shouldCampusBotRespond(messagePayload.text, messagePayload.replyTo, messagePayload)) {
+            if (!stopBots && shouldCampusBotRespond(messagePayload.text, messagePayload.replyTo, messagePayload)) {
               void runCampusBotConversation(savedMessage, {
                 onTyping: (assistant, typing) => io.to('community_room').emit(
                   typing ? 'community:user_typing' : 'community:user_stop_typing',
@@ -602,7 +602,7 @@ export const setupSocketIO = (io: SocketIOServer): void => {
         const hostName = activeLiveBroadcast.hostName;
         const hostId = activeLiveBroadcast.hostId;
         // Do not instantly terminate the live broadcast on transient mobile socket drops.
-        // Provide a 45-second grace window to allow the host to reconnect smoothly.
+        // Give mobile hosts two minutes to recover from a network handoff or app suspension.
         if (hostDisconnectGraceTimer) clearTimeout(hostDisconnectGraceTimer);
         hostDisconnectGraceTimer = setTimeout(() => {
           if (activeLiveBroadcast && activeLiveBroadcast.hostId === hostId) {
@@ -610,7 +610,7 @@ export const setupSocketIO = (io: SocketIOServer): void => {
             io.to('community_room').emit('community:live_end', { hostName });
           }
           hostDisconnectGraceTimer = null;
-        }, 45000);
+        }, 120000);
       } else if (activeLiveBroadcast) {
         const participant = Array.from(activeLiveBroadcast.participants.values()).find((entry) => entry.socketId === socket.id);
         if (participant) {
