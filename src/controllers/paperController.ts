@@ -67,10 +67,30 @@ export const getPapers = async (req: AuthenticatedRequest, res: Response): Promi
   try {
     const page = parseInt(req.query.page as string || '1', 10);
     const requestedLimit = parseInt(req.query.limit as string || '50', 10);
-    const limit = Number.isFinite(requestedLimit) ? Math.min(500, Math.max(1, requestedLimit)) : 50;
+    const limit = Number.isFinite(requestedLimit) ? Math.min(100, Math.max(1, requestedLimit)) : 50;
     const skip = (page - 1) * limit;
 
     const { school, courseCode, unitCode, type, semester, year, search, includePending } = req.query;
+
+    const cursorContext = JSON.stringify({
+      school: school || '', courseCode: courseCode || '', unitCode: unitCode || '',
+      type: type || '', semester: semester || '', year: year || '', search: String(search || '').trim().toLowerCase()
+    });
+    let cursor: any = null;
+    if (typeof req.query.cursor === 'string' && req.query.cursor) {
+      try {
+        cursor = JSON.parse(Buffer.from(req.query.cursor, 'base64url').toString('utf8'));
+        if (cursor.context !== cursorContext || !mongoose.Types.ObjectId.isValid(cursor.id)) {
+          res.status(400).json({ success: false, error: 'The result cursor is invalid for this query. Start a new search.' });
+          return;
+        }
+      } catch {
+        res.status(400).json({ success: false, error: 'The result cursor is invalid. Start a new search.' });
+        return;
+      }
+    }
+    const pageLimit = limit + 1;
+    const lightweightFeed = req.query.feed === '1' || req.query.feed === 'true';
 
     const query: any = {};
 
@@ -157,9 +177,12 @@ export const getPapers = async (req: AuthenticatedRequest, res: Response): Promi
       }
     }
 
-    const total = await Paper.countDocuments(query);
+    // Feed clients use hasMore/nextCursor and do not need an exact total.
+    // Avoid counting every match on each cursor page, especially for regex searches.
+    const total = lightweightFeed ? null : await Paper.countDocuments(query);
     let papers: any[];
-    if (searchStr && (searchTokens.length > 0 || searchStr.length >= 2)) {
+    const rankedSearch = Boolean(searchStr && (searchTokens.length > 0 || searchStr.length >= 2));
+    if (rankedSearch) {
       const regexFor = (token: string) => `(^|\\s|[._-])${token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:\\s|[._-]|$|[0-9])`;
       const cleanRawSearch = searchStr.toLowerCase().trim();
       const unitCodeRegexMatch = searchStr.match(/\b([a-zA-Z]{2,4})[-_ ]?(\d{2,3}[a-zA-Z]?)\b/i);
@@ -194,21 +217,63 @@ export const getPapers = async (req: AuthenticatedRequest, res: Response): Promi
           scoreFor('$description', 2)
         );
       }
-      papers = await Paper.aggregate([
+      const rankedPipeline: any[] = [
         { $match: query },
-        { $addFields: { _searchScore: { $add: relevanceParts } } },
-        { $sort: { _searchScore: -1, downloads: -1, createdAt: -1 } },
-        { $skip: skip },
-        { $limit: limit }
-      ]);
+        { $addFields: { _searchScore: { $add: relevanceParts }, _cursorDownloads: { $ifNull: ['$downloads', 0] } } }
+      ];
+      if (cursor) {
+        const cursorId = new mongoose.Types.ObjectId(cursor.id);
+        rankedPipeline.push({ $match: { $or: [
+          { _searchScore: { $lt: Number(cursor.score) } },
+          { _searchScore: Number(cursor.score), _cursorDownloads: { $lt: Number(cursor.downloads) } },
+          { _searchScore: Number(cursor.score), _cursorDownloads: Number(cursor.downloads), createdAt: { $lt: new Date(cursor.createdAt) } },
+          { _searchScore: Number(cursor.score), _cursorDownloads: Number(cursor.downloads), createdAt: new Date(cursor.createdAt), _id: { $lt: cursorId } }
+        ] } });
+      }
+      rankedPipeline.push(
+        { $sort: { _searchScore: -1, _cursorDownloads: -1, createdAt: -1, _id: -1 } },
+        ...(cursor ? [] : [{ $skip: skip }]),
+        { $limit: pageLimit },
+        ...(lightweightFeed ? [{ $project: {
+          _id: 1, _searchScore: 1, _cursorDownloads: 1, mtid: 1, title: 1, type: 1,
+          unitCode: 1, courseCode: 1, unitName: 1, school: 1, department: 1, semester: 1,
+          academicYear: 1, examYear: 1, description: 1, downloads: 1, ratingScore: 1,
+          thumbnail: 1, fileUrl: 1, fileType: 1, publicId: 1, ttsTextUrl: 1,
+          ttsTextPublicId: 1, submittedBy: 1, createdAt: 1
+        } }] : [])
+      );
+      papers = await Paper.aggregate(rankedPipeline);
       papers = await Paper.populate(papers, { path: 'submittedBy', select: 'name email avatarUrl' });
     } else {
-      papers = await Paper.find(query)
+      let findQuery = Paper.find(query)
         .populate('submittedBy', 'name email avatarUrl')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit);
+        .sort({ createdAt: -1, _id: -1 });
+      if (lightweightFeed) {
+        findQuery = findQuery.select('_id mtid title type unitCode courseCode unitName school department semester academicYear examYear description downloads ratingScore thumbnail fileUrl fileType publicId ttsTextUrl ttsTextPublicId submittedBy createdAt');
+      }
+      if (cursor) {
+        const cursorDate = new Date(cursor.createdAt);
+        const cursorId = new mongoose.Types.ObjectId(cursor.id);
+        findQuery = findQuery.where({ $or: [
+          { createdAt: { $lt: cursorDate } },
+          { createdAt: cursorDate, _id: { $lt: cursorId } }
+        ] });
+      } else {
+        findQuery = findQuery.skip(skip);
+      }
+      papers = await findQuery.limit(pageLimit);
     }
+
+    const hasMore = papers.length > limit;
+    if (hasMore) papers = papers.slice(0, limit);
+    const lastPaper = papers[papers.length - 1];
+    const nextCursor = hasMore && lastPaper ? Buffer.from(JSON.stringify({
+      context: cursorContext,
+      id: String(lastPaper._id),
+      createdAt: new Date(lastPaper.createdAt).toISOString(),
+      score: rankedSearch ? Number(lastPaper._searchScore || 0) : undefined,
+      downloads: rankedSearch ? Number(lastPaper._cursorDownloads || 0) : undefined
+    })).toString('base64url') : null;
 
     const formatPaperData = (paperDoc: any) => {
       const data = paperDoc.toObject ? paperDoc.toObject() : paperDoc;
@@ -241,7 +306,16 @@ export const getPapers = async (req: AuthenticatedRequest, res: Response): Promi
       return data;
     };
 
-    let papersWithSignedUrls = papers.map((doc) => buildPaperResponseData(doc, req));
+    const papersWithSignedUrls = papers.map((doc) => {
+      const data = buildPaperResponseData(doc, req);
+      if (lightweightFeed) {
+        delete data.attachments;
+        delete data.rawCloudinaryUrl;
+      }
+      delete data._searchScore;
+      delete data._cursorDownloads;
+      return data;
+    });
 
     res.json({
       success: true,
@@ -250,7 +324,9 @@ export const getPapers = async (req: AuthenticatedRequest, res: Response): Promi
         page,
         limit,
         total,
-        pages: Math.ceil(total / limit)
+        pages: total === null ? null : Math.ceil(total / limit),
+        hasMore,
+        nextCursor
       }
     });
   } catch (error: any) {
