@@ -245,22 +245,21 @@ export const getPapers = async (req: AuthenticatedRequest, res: Response): Promi
       papers = await Paper.aggregate(rankedPipeline);
       papers = await Paper.populate(papers, { path: 'submittedBy', select: 'name email avatarUrl' });
     } else {
-      let findQuery = Paper.find(query)
-        .populate('submittedBy', 'name email avatarUrl')
-        .sort({ createdAt: -1, _id: -1 });
-      if (lightweightFeed) {
-        findQuery = findQuery.select('_id mtid title type unitCode courseCode unitName school department semester academicYear examYear description downloads ratingScore thumbnail fileUrl fileType publicId ttsTextUrl ttsTextPublicId submittedBy createdAt');
-      }
       if (cursor) {
         const cursorDate = new Date(cursor.createdAt);
         const cursorId = new mongoose.Types.ObjectId(cursor.id);
-        findQuery = findQuery.where({ $or: [
+        query.$and = [...(query.$and || []), { $or: [
           { createdAt: { $lt: cursorDate } },
           { createdAt: cursorDate, _id: { $lt: cursorId } }
-        ] });
-      } else {
-        findQuery = findQuery.skip(skip);
+        ] }];
       }
+      const findQuery = Paper.find(query)
+        .populate('submittedBy', 'name email avatarUrl')
+        .sort({ createdAt: -1, _id: -1 });
+      if (lightweightFeed) {
+        findQuery.select('_id mtid title type unitCode courseCode unitName school department semester academicYear examYear description downloads ratingScore thumbnail fileUrl fileType publicId ttsTextUrl ttsTextPublicId submittedBy createdAt');
+      }
+      if (!cursor) findQuery.skip(skip);
       papers = await findQuery.limit(pageLimit);
     }
 
