@@ -7,6 +7,7 @@ export interface IUserDocument extends Document {
   passwordHash: string;
   phone?: string;
   school: string;
+  university?: string;
   course: string;
   yearOfStudy: string;
   avatarUrl?: string;
@@ -36,6 +37,7 @@ const userSchema = new Schema<IUserDocument>(
     passwordHash: { type: String, required: true },
     phone: { type: String, trim: true, default: '' },
     school: { type: String, trim: true, default: 'Unset' },
+    university: { type: String, trim: true, default: '' },
     course: { type: String, trim: true, default: 'Unset' },
     yearOfStudy: { type: String, trim: true, default: 'Unset' },
     avatarUrl: { type: String },

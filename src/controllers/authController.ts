@@ -314,16 +314,16 @@ export const updateProfile = async (req: AuthenticatedRequest, res: Response): P
   try {
     const user = req.user;
     if (!user) {
-      const { name, phone, avatarUrl, school, course, yearOfStudy } = req.body || {};
+      const { name, phone, avatarUrl, school, course, yearOfStudy, university } = req.body || {};
       res.json({
         success: true,
         message: 'Profile updated locally.',
-        data: { name: name || 'Moi Student', phone: phone || '', avatarUrl: avatarUrl || '', school: school || 'Unset', course: course || 'Unset', yearOfStudy: yearOfStudy || 'Unset' }
+        data: { name: name || 'Moi Student', phone: phone || '', avatarUrl: avatarUrl || '', school: school || 'Unset', course: course || 'Unset', yearOfStudy: yearOfStudy || 'Unset', university: university || '' }
       });
       return;
     }
 
-    const { name, phone, avatarUrl, school, course, yearOfStudy } = req.body || {};
+    const { name, phone, avatarUrl, school, course, yearOfStudy, university } = req.body || {};
     if (name !== undefined) {
       const cleanName = String(name).trim();
       if (!cleanName || cleanName.length > 120) {
@@ -337,6 +337,7 @@ export const updateProfile = async (req: AuthenticatedRequest, res: Response): P
     if (phone !== undefined) user.phone = String(phone).trim();
     if (avatarUrl !== undefined) user.avatarUrl = String(avatarUrl).trim();
     if (school !== undefined) user.school = String(school).trim() || 'Unset';
+    if (university !== undefined) user.university = String(university).trim();
     if (course !== undefined) user.course = String(course).trim() || 'Unset';
     if (yearOfStudy !== undefined) user.yearOfStudy = String(yearOfStudy).trim() || 'Unset';
 

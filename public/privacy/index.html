@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Privacy Policy & Account Deletion - MConnect</title>
+  <style>
+    :root {
+      --primary: #15803d;
+      --primary-dark: #166534;
+      --primary-light: #dcfce7;
+      --primary-border: #bbf7d0;
+      --text-main: #0f172a;
+      --text-muted: #475569;
+      --bg-page: #f8fafc;
+      --bg-card: #ffffff;
+      --border: #e2e8f0;
+      --code-bg: #f1f5f9;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: var(--bg-page);
+      color: var(--text-main);
+      line-height: 1.65;
+      padding: 24px 16px;
+    }
+    .container {
+      max-width: 860px;
+      margin: 0 auto;
+      background: var(--bg-card);
+      border-radius: 18px;
+      padding: 40px;
+      box-shadow: 0 4px 24px rgba(15, 23, 42, 0.06);
+      border: 1px solid var(--border);
+    }
+    .header {
+      text-align: center;
+      padding-bottom: 28px;
+      border-bottom: 2px solid #f1f5f9;
+      margin-bottom: 28px;
+    }
+    .badge {
+      display: inline-block;
+      background-color: var(--primary-light);
+      color: var(--primary);
+      font-weight: 800;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      padding: 6px 16px;
+      border-radius: 20px;
+      margin-bottom: 12px;
+    }
+    h1 {
+      font-size: 32px;
+      font-weight: 800;
+      color: var(--text-main);
+      margin-bottom: 8px;
+      letter-spacing: -0.5px;
+    }
+    .meta-bar {
+      font-size: 13px;
+      color: var(--text-muted);
+      display: flex;
+      justify-content: center;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin-top: 6px;
+    }
+    .meta-bar span { font-weight: 600; color: var(--text-main); }
+    h2 {
+      font-size: 20px;
+      font-weight: 800;
+      color: var(--text-main);
+      margin-top: 32px;
+      margin-bottom: 14px;
+      display: center;
+      align-items: center;
+      gap: 8px;
+    }
+    h3 {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--text-main);
+      margin-top: 18px;
+      margin-bottom: 8px;
+    }
+    p {
+      font-size: 15px;
+      color: var(--text-muted);
+      margin-bottom: 14px;
+    }
+    ul, ol {
+      margin-left: 24px;
+      margin-bottom: 16px;
+    }
+    li {
+      margin-bottom: 8px;
+      font-size: 15px;
+      color: var(--text-muted);
+    }
+    li strong {
+      color: var(--text-main);
+    }
+    code {
+      background: var(--code-bg);
+      padding: 2px 7px;
+      border-radius: 5px;
+      color: var(--text-main);
+      font-weight: 700;
+      font-size: 13px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+    .highlight-box {
+      background: #f0fdf4;
+      border: 2px solid var(--primary-border);
+      border-radius: 14px;
+      padding: 24px;
+      margin: 24px 0;
+    }
+    .highlight-box h3 {
+      font-size: 18px;
+      color: var(--primary);
+      margin-top: 0;
+      margin-bottom: 12px;
+      font-weight: 800;
+    }
+    .highlight-box p, .highlight-box li {
+      color: #166534;
+    }
+    .warning-box {
+      background: #fffbeb;
+      border: 1px solid #fef3c7;
+      border-left: 4px solid #f59e0b;
+      border-radius: 10px;
+      padding: 16px 20px;
+      margin: 18px 0;
+    }
+    .warning-box p {
+      color: #92400e;
+      margin-bottom: 0;
+      font-size: 14px;
+    }
+    .permission-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 16px 0 20px 0;
+      font-size: 14px;
+    }
+    .permission-table th, .permission-table td {
+      border: 1px solid var(--border);
+      padding: 12px 14px;
+      text-align: left;
+      vertical-align: top;
+    }
+    .permission-table th {
+      background: #f8fafc;
+      font-weight: 700;
+      color: var(--text-main);
+    }
+    .permission-table td {
+      color: var(--text-muted);
+    }
+    .permission-table td strong {
+      color: var(--text-main);
+    }
+    .contact-box {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 24px;
+      margin-top: 28px;
+    }
+    .contact-box h3 {
+      font-size: 16px;
+      color: var(--text-main);
+      margin-bottom: 6px;
+      margin-top: 0;
+    }
+    .contact-box a {
+      font-size: 17px;
+      font-weight: 800;
+      color: var(--primary);
+      text-decoration: none;
+    }
+    .contact-box a:hover {
+      text-decoration: underline;
+    }
+    .footer {
+      text-align: center;
+      margin-top: 40px;
+      padding-top: 20px;
+      border-top: 1px solid var(--border);
+      font-size: 13px;
+      color: #94a3b8;
+    }
+    @media (max-width: 640px) {
+      .container { padding: 22px 18px; }
+      h1 { font-size: 24px; }
+      h2 { font-size: 18px; }
+      .permission-table th, .permission-table td { padding: 8px 10px; font-size: 13px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <span class="badge">Official MConnect Privacy Document</span>
+      <h1>Privacy Policy & User Data Rights</h1>
+      <div class="meta-bar">
+        <div>Application: <span>MConnect</span></div>
+        <div>Package: <span>com.amanikbt1.moiconnect</span></div>
+        <div>Effective Date: <span>October 30, 2026</span></div>
+      </div>
+    </div>
+
+    <h2>1. Introduction & Developer Identity</h2>
+    <p>
+      Welcome to <strong>MConnect</strong> ("we", "our", or "us"), an academic resource sharing, student housing connection, and campus collaboration application developed for the university student community. We are dedicated to safeguarding your privacy and ensuring your personal information is protected in compliance with Google Play Developer Policies and applicable data protection regulations (including the Kenya Data Protection Act, 2019 and GDPR standards).
+    </p>
+    <p>
+      This Privacy Policy describes what information we collect, why we collect it, how sensitive device permissions are utilized, our strict data sharing policies, and the simple mechanisms provided to manage or permanently delete your account and personal data.
+    </p>
+
+    <h2>2. Information We Collect</h2>
+    <p>We collect only the minimum personal and usage data necessary to deliver core platform functionality:</p>
+    <ul>
+      <li><strong>Account Credentials & Profile Details:</strong> Full name, student or landlord email address, phone number (used for rental house inquiry contact), role selection (Student or Landlord), and secure cryptographically hashed passwords.</li>
+      <li><strong>Google Sign-In Profile Data:</strong> When you choose to authenticate via Google Sign-In, we receive your Google account email address, verified display name, and avatar image link provided by Google Identity Services to streamline authentication.</li>
+      <li><strong>Academic Resources & Study Content:</strong> Course codes, unit names, academic year, and user-submitted revision past papers or Continuous Assessment Tests (CATs) uploaded to assist campus peers.</li>
+      <li><strong>Rental Housing & Booking Data:</strong> Hostel booking inquiries, housing preferences, landlord property listings (room details, amenities, pricing, property photos), and verification records.</li>
+      <li><strong>In-App Messages & Community Discussion:</strong> Direct messaging between students and verified landlords, and public campus community discussion posts.</li>
+      <li><strong>Technical & Diagnostics Data:</strong> Network connection state, device model, operating system version, and anonymous crash telemetry used exclusively to maintain stability and performance.</li>
+    </ul>
+
+    <h2>3. Sensitive Permissions & Hardware Access</h2>
+    <p>
+      In accordance with Google Play's Sensitive Permissions Policy, the table below provides complete transparency regarding why each sensitive Android permission is requested and how the corresponding hardware or data is handled:
+    </p>
+
+    <table class="permission-table">
+      <thead>
+        <tr>
+          <th>Permission</th>
+          <th>Feature / Hardware</th>
+          <th>Purpose & Data Handling</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>CAMERA</code></td>
+          <td>Video Calling & Photo Capture</td>
+          <td>
+            Used for real-time video calls with verified landlords and study groups, capturing user profile pictures, and taking photos of revision documents or rental listings.
+            <strong>Video streams are transmitted live via WebRTC and are NEVER recorded, monitored, or stored on our servers.</strong>
+          </td>
+        </tr>
+        <tr>
+          <td><code>RECORD_AUDIO</code><br><code>MODIFY_AUDIO_SETTINGS</code><br><code>BLUETOOTH</code></td>
+          <td>Microphone & Call Audio Routing</td>
+          <td>
+            Used for real-time voice calls and audio notes between users, as well as routing audio dynamically to speakerphones, earpieces, or connected Bluetooth headsets.
+            <strong>Voice call audio is streamed in real-time and is NEVER recorded, listened to, or stored.</strong>
+          </td>
+        </tr>
+        <tr>
+          <td><code>POST_NOTIFICATIONS</code></td>
+          <td>Push Notifications</td>
+          <td>
+            Used to deliver instant push notifications for incoming voice/video calls, new direct messages from landlords or classmates, and critical academic updates. Can be disabled at any time in system settings.
+          </td>
+        </tr>
+        <tr>
+          <td><code>SYSTEM_ALERT_WINDOW</code></td>
+          <td>Incoming Call Overlay</td>
+          <td>
+            Allows displaying a prominent incoming call alert banner on the screen when a call is received while using other applications or when the screen is active.
+          </td>
+        </tr>
+        <tr>
+          <td><code>INTERNET</code><br><code>ACCESS_NETWORK_STATE</code></td>
+          <td>Network Connectivity</td>
+          <td>
+            Enables secure API communication over HTTPS/TLS, real-time messaging, and downloading approved academic papers.
+          </td>
+        </tr>
+        <tr>
+          <td><code>WAKE_LOCK</code><br><code>VIBRATE</code></td>
+          <td>Call & Alert Management</td>
+          <td>
+            Prevents the device screen and audio subsystem from going to sleep during active voice or video calls, and triggers haptic vibrations for notifications and incoming call ringing.
+          </td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="warning-box">
+      <p>
+        <strong>Note on Device Storage:</strong> MConnect does <strong>NOT</strong> request broad <code>READ_EXTERNAL_STORAGE</code> or <code>WRITE_EXTERNAL_STORAGE</code> permissions. All document and photo selections are conducted safely through the native Android system photo picker and document picker, ensuring we only access files you explicitly select.
+      </p>
+    </div>
+
+    <h2>4. How We Use Collected Information</h2>
+    <p>We process your information strictly for legitimate operational purposes:</p>
+    <ul>
+      <li>Authenticating accounts, preventing fraudulent signups, and maintaining platform security.</li>
+      <li>Enabling students to search, view, and download academic past papers and revision notes.</li>
+      <li>Connecting students with verified hostel landlords and facilitating direct property inquiries.</li>
+      <li>Delivering real-time voice and video communication and instant messaging.</li>
+      <li>Distributing push notifications for important messages and incoming calls.</li>
+    </ul>
+
+    <h2>5. Third-Party SDKs & Service Providers</h2>
+    <p>
+      To deliver real-time features and secure infrastructure, MConnect integrates reputable third-party service providers. Each provider processes only the data strictly necessary for their service:
+    </p>
+    <ul>
+      <li><strong>Google Identity & Play Services:</strong> Used for secure Google Sign-In authentication and base mobile services.</li>
+      <li><strong>LiveKit Cloud (WebRTC):</strong> Powers real-time peer-to-peer and relayed audio and video calling. Call media is ephemeral and end-to-end encrypted in transit.</li>
+      <li><strong>Cloudinary:</strong> Provides secure cloud storage for user-uploaded profile avatars, document assets, and landlord house photos.</li>
+      <li><strong>Socket.io:</strong> Powers real-time chat messaging, presence indicators, and call signaling.</li>
+      <li><strong>Expo Application Services (EAS):</strong> Manages application packaging and secure update delivery.</li>
+    </ul>
+    <p>
+      We do not allow any third-party SDK partner to access or utilize student data for cross-service profiling, advertising, or marketing.
+    </p>
+
+    <h2>6. Zero Sale of Personal Data</h2>
+    <p>
+      <strong>MConnect does NOT sell, rent, monetize, or trade your personal information</strong> with data brokers, advertisers, or third-party marketing companies. We do not participate in cross-app behavioral tracking or serve personalized targeted advertisements.
+    </p>
+
+    <h2>7. Data Security Practices</h2>
+    <p>
+      We implement industry-standard administrative, physical, and technical security measures to protect user data:
+    </p>
+    <ul>
+      <li><strong>Encryption in Transit:</strong> All communications between the mobile application and our servers are encrypted using modern Transport Layer Security (TLS 1.3 / HTTPS).</li>
+      <li><strong>Cryptographic Password Hashing:</strong> Passwords are cryptographically salted and hashed using standard bcrypt algorithms before database storage.</li>
+      <li><strong>Stateless Token Authentication:</strong> User sessions are authorized using secure JSON Web Tokens (JWT) stored in protected device storage.</li>
+    </ul>
+
+    <div class="highlight-box">
+      <h3>8. Account Deletion & User Data Rights (Google Play Standard)</h3>
+      <p>
+        In strict compliance with Google Play's Account Deletion Policy, users have the complete right to permanently delete their account and associated personal data at any time. We provide two easy methods:
+      </p>
+      
+      <h4 style="margin: 12px 0 6px 0; color: #15803d; font-size: 15px;">Method 1: In-App Account Deletion (Instant)</h4>
+      <ol>
+        <li>Open the <strong>MConnect</strong> app and sign in.</li>
+        <li>Navigate to the <strong>Profile</strong> tab.</li>
+        <li>Tap the <strong>three dots (⋮)</strong> menu in the top-right corner.</li>
+        <li>Select <strong>"Delete account"</strong>.</li>
+        <li>Confirm your decision. Your account and personal records are instantly and permanently purged from our database.</li>
+      </ol>
+
+      <h4 style="margin: 14px 0 6px 0; color: #15803d; font-size: 15px;">Method 2: Web & Email Deletion Request (For users without app access)</h4>
+      <p>
+        If you have uninstalled the app or cannot log in, send an email to <a href="mailto:amanikbt1@gmail.com" style="color: #15803d; font-weight: 800;">amanikbt1@gmail.com</a> with the subject line <code>"Account Deletion Request"</code> from your registered email address. Requests are validated and permanently executed within <strong>5 business days</strong>.
+      </p>
+
+      <h4 style="margin: 14px 0 6px 0; color: #15803d; font-size: 15px;">What Data is Permanently Deleted:</h4>
+      <ul>
+        <li>Personal identity details (Full Name, Email address, Phone number, and Password hashes).</li>
+        <li>User profile avatar images stored on cloud servers.</li>
+        <li>Landlord property listings, rooms, pricing, and uploaded property images.</li>
+        <li>Private direct chat messages, call records, and conversation history.</li>
+        <li>Hostel booking requests, inquiries, and saved favorites.</li>
+        <li>Push notification device tokens.</li>
+      </ul>
+
+      <h4 style="margin: 14px 0 6px 0; color: #15803d; font-size: 15px;">Data Retention / Community Anonymization:</h4>
+      <p>
+        Academic revision documents (past papers and CAT notes) that were uploaded for public student study access remain available to the campus community to maintain academic continuity; however, all personal author identifiers are permanently detached and anonymized so that the content is completely disassociated from your identity.
+      </p>
+    </div>
+
+    <h2>9. Children's Privacy (Under 13 / Minors)</h2>
+    <p>
+      MConnect is designed and intended strictly for higher education university and college students (typically aged 18 and older, and no younger than 13). We do not knowingly collect, request, or maintain personal information from children under the age of 13. If we become aware that personal data from a child under 13 has been collected, we will take prompt steps to immediately purge such information from our records.
+    </p>
+
+    <h2>10. Regulatory Compliance & User Rights</h2>
+    <p>Depending on your location, you hold the following statutory privacy rights:</p>
+    <ul>
+      <li><strong>Right to Access:</strong> You may request a summary of the personal data we hold about you.</li>
+      <li><strong>Right to Rectification:</strong> You may correct or update your personal information directly within your Profile screen.</li>
+      <li><strong>Right to Erasure:</strong> You can delete your account and data at any time as detailed in Section 8.</li>
+      <li><strong>Right to Data Portability:</strong> You may request an export of your personal information in a readable format.</li>
+    </ul>
+
+    <h2>11. Changes to This Privacy Policy</h2>
+    <p>
+      We may periodically update this Privacy Policy to reflect app enhancements, operational modifications, or updated Google Play developer policies. We will notify users of any substantial revisions through an in-app notice or by updating the "Effective Date" at the top of this document. Continued use of MConnect signifies acceptance of the updated terms.
+    </p>
+
+    <h2>12. Contact Information & Data Protection Officer</h2>
+    <p>
+      For any inquiries, feedback, privacy concerns, or data rights requests, please contact our designated Data Protection Administrator:
+    </p>
+    <div class="contact-box">
+      <h3>Data Protection & Platform Administrator:</h3>
+      <p><a href="mailto:amanikbt1@gmail.com">amanikbt1@gmail.com</a></p>
+      <p style="font-size: 13px; color: #64748b; margin-top: 6px;">MConnect Platform Administration · Moi University Campus</p>
+    </div>
+
+    <div class="footer">
+      &copy; 2026 MConnect. All rights reserved. · Package: com.amanikbt1.moiconnect
+    </div>
+  </div>
+</body>
+</html>

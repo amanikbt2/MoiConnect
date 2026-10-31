@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Frequently Asked Questions & Support - MConnect</title>
+  <style>
+    :root {
+      --primary: #15803d;
+      --primary-dark: #166534;
+      --primary-light: #dcfce7;
+      --primary-border: #bbf7d0;
+      --text-main: #0f172a;
+      --text-muted: #475569;
+      --bg-page: #f8fafc;
+      --bg-card: #ffffff;
+      --border: #e2e8f0;
+      --code-bg: #f1f5f9;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: var(--bg-page);
+      color: var(--text-main);
+      line-height: 1.65;
+      padding: 24px 16px;
+    }
+    .container {
+      max-width: 860px;
+      margin: 0 auto;
+      background: var(--bg-card);
+      border-radius: 18px;
+      padding: 40px;
+      box-shadow: 0 4px 24px rgba(15, 23, 42, 0.06);
+      border: 1px solid var(--border);
+    }
+    .header {
+      text-align: center;
+      padding-bottom: 28px;
+      border-bottom: 2px solid #f1f5f9;
+      margin-bottom: 28px;
+    }
+    .badge {
+      display: inline-block;
+      background-color: var(--primary-light);
+      color: var(--primary);
+      font-weight: 800;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      padding: 6px 16px;
+      border-radius: 20px;
+      margin-bottom: 12px;
+    }
+    h1 {
+      font-size: 32px;
+      font-weight: 800;
+      color: var(--text-main);
+      margin-bottom: 8px;
+      letter-spacing: -0.5px;
+    }
+    .meta-bar {
+      font-size: 13px;
+      color: var(--text-muted);
+      display: flex;
+      justify-content: center;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin-top: 6px;
+    }
+    .meta-bar span { font-weight: 600; color: var(--text-main); }
+    .deletion-banner {
+      background: #f0fdf4;
+      border: 2px solid var(--primary-border);
+      border-radius: 14px;
+      padding: 20px 24px;
+      margin-bottom: 28px;
+    }
+    .deletion-banner h2 {
+      font-size: 17px;
+      color: var(--primary);
+      margin-bottom: 8px;
+      font-weight: 800;
+    }
+    .deletion-banner p {
+      font-size: 14px;
+      color: #166534;
+      margin-bottom: 0;
+    }
+    .section-title {
+      font-size: 19px;
+      font-weight: 800;
+      color: var(--text-main);
+      margin-top: 32px;
+      margin-bottom: 16px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid var(--border);
+    }
+    .faq-card {
+      background: #ffffff;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 22px;
+      margin-bottom: 16px;
+      transition: all 0.2s ease;
+    }
+    .faq-card:hover {
+      border-color: #cbd5e1;
+      box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04);
+    }
+    .category-tag {
+      font-size: 11px;
+      font-weight: 800;
+      color: var(--primary);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 6px;
+    }
+    h3 {
+      font-size: 17px;
+      font-weight: 800;
+      color: var(--text-main);
+      margin-bottom: 10px;
+    }
+    p {
+      font-size: 14px;
+      color: var(--text-muted);
+      margin-bottom: 10px;
+    }
+    ul, ol {
+      margin-left: 22px;
+      margin-bottom: 12px;
+    }
+    li {
+      font-size: 14px;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+    li strong {
+      color: var(--text-main);
+    }
+    code {
+      background: var(--code-bg);
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-weight: 700;
+      color: var(--text-main);
+      font-size: 13px;
+    }
+    .contact-box {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 24px;
+      margin-top: 32px;
+    }
+    .contact-box h4 {
+      font-size: 16px;
+      color: var(--text-main);
+      margin-bottom: 6px;
+    }
+    .contact-box a {
+      font-size: 17px;
+      font-weight: 800;
+      color: var(--primary);
+      text-decoration: none;
+    }
+    .footer {
+      text-align: center;
+      margin-top: 40px;
+      padding-top: 20px;
+      border-top: 1px solid var(--border);
+      font-size: 13px;
+      color: #94a3b8;
+    }
+    @media (max-width: 640px) {
+      .container { padding: 22px 18px; }
+      h1 { font-size: 24px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <span class="badge">Official MConnect Help Center</span>
+      <h1>Frequently Asked Questions</h1>
+      <div class="meta-bar">
+        <div>Application: <span>MConnect</span></div>
+        <div>Package: <span>com.amanikbt1.moiconnect</span></div>
+        <div>Support: <span>amanikbt1@gmail.com</span></div>
+      </div>
+    </div>
+
+    <!-- Highlighted Deletion Banner -->
+    <div class="deletion-banner">
+      <h2>🛡️ Account & Data Deletion Procedures</h2>
+      <p>
+        Users have complete control over their personal data. You can delete your entire account instantly inside the app via <strong>Profile → More Options (⋮) → Delete account</strong>, or request full deletion via email at <strong><a href="mailto:amanikbt1@gmail.com" style="color: #15803d; font-weight: 800;">amanikbt1@gmail.com</a></strong>.
+      </p>
+    </div>
+
+    <!-- Section 1: Account & Data Privacy -->
+    <div class="section-title">1. Account & Data Privacy</div>
+
+    <div class="faq-card">
+      <div class="category-tag">Account Management</div>
+      <h3>How do I request deletion of my account and associated data?</h3>
+      <p>MConnect provides two convenient methods for users to completely and permanently delete their account and personal data:</p>
+      <ol>
+        <li>
+          <strong>In-App Deletion (Instant):</strong> Sign in to MConnect → open the <strong>Profile</strong> tab → tap the three-dot menu (<strong>⋮</strong>) in the top-right corner → choose <strong>"Delete account"</strong> → confirm the deletion prompt. Your account credentials, profile details, and private data are immediately and permanently erased.
+        </li>
+        <li>
+          <strong>Web & Email Deletion Request:</strong> If you cannot access the application or have uninstalled it, send an email to <code><a href="mailto:amanikbt1@gmail.com">amanikbt1@gmail.com</a></code> with the subject line <code>"Account Deletion Request"</code> from your registered email address. Requests are validated and permanently executed within <strong>5 business days</strong>.
+        </li>
+      </ol>
+    </div>
+
+    <div class="faq-card">
+      <div class="category-tag">Data Control</div>
+      <h3>Can I delete specific data without deleting my entire account?</h3>
+      <p><strong>Yes.</strong> You have granular control over your data directly within the app without needing to close your account:</p>
+      <ul>
+        <li><strong>Clear Downloaded Files:</strong> Open the <strong>Downloads</strong> tab → tap the options menu on any downloaded paper or summary → select <strong>"Delete"</strong> to remove the file from your device.</li>
+        <li><strong>Remove Favorites & Bookmarks:</strong> Simply un-favorite any saved paper or hostel listing to immediately remove it from your saved list.</li>
+        <li><strong>Manage Property Listings (Landlords):</strong> Landlords can update or delete specific hostel listings and photos at any time from their listings management screen.</li>
+        <li><strong>Update Profile Information:</strong> You can edit your name, phone number, and academic year directly from the Profile tab.</li>
+        <li><strong>Specific Removal Requests:</strong> If you wish to have a specific uploaded document or comment removed, email <code><a href="mailto:amanikbt1@gmail.com">amanikbt1@gmail.com</a></code> with the file details.</li>
+      </ul>
+    </div>
+
+    <div class="faq-card">
+      <div class="category-tag">Data Retention Policy</div>
+      <h3>What user data is permanently deleted or retained upon an account deletion request?</h3>
+      <p>When an account deletion is executed, the following personal data is permanently wiped from our database and cloud storage:</p>
+      <ul>
+        <li><strong>Personal Identity:</strong> Full Name, Email Address, Phone Number, and Password hashes.</li>
+        <li><strong>Media & Cloud Assets:</strong> User profile picture avatar stored on cloud servers.</li>
+        <li><strong>Direct Communications:</strong> 1-on-1 private messaging history between students and landlords.</li>
+        <li><strong>Hostel & Rental Records:</strong> Rental house booking inquiries and landlord property listings.</li>
+        <li><strong>Device Tokens:</strong> Push notification tokens and session authorization tokens.</li>
+      </ul>
+      <p>
+        <strong>Academic Material Continuity:</strong> User-submitted public academic revision papers and Continuous Assessment Tests (CATs) remain available to the campus student community for educational continuity; however, all personal author identifiers are permanently detached and anonymized so that the files are completely disassociated from your identity.
+      </p>
+    </div>
+
+    <!-- Section 2: Security & Sensitive Permissions -->
+    <div class="section-title">2. Security & Hardware Permissions</div>
+
+    <div class="faq-card">
+      <div class="category-tag">Permissions Transparency</div>
+      <h3>Why does MConnect request Camera and Microphone permissions?</h3>
+      <p>
+        Camera and Microphone access are utilized solely for optional real-time communication features:
+      </p>
+      <ul>
+        <li><strong>Camera (<code>CAMERA</code>):</strong> Used for optional real-time video calls with verified landlords or classmates, and for capturing user profile avatars or revision document photos.</li>
+        <li><strong>Microphone (<code>RECORD_AUDIO</code>):</strong> Used for optional real-time voice calling and sending voice notes.</li>
+      </ul>
+      <p>
+        <strong>Important Guarantee:</strong> All voice and video calls are streamed live via encrypted WebRTC connections (LiveKit) and are <strong>NEVER recorded, listened to, or stored on our servers</strong>.
+      </p>
+    </div>
+
+    <div class="faq-card">
+      <div class="category-tag">Data Protection</div>
+      <h3>How is user data encrypted and protected?</h3>
+      <p>
+        We employ industry-standard security protocols to safeguard all student and landlord information:
+      </p>
+      <ul>
+        <li><strong>Encryption in Transit:</strong> 100% of network traffic between the mobile application and backend servers is encrypted using modern TLS 1.3 / HTTPS.</li>
+        <li><strong>Secure Authentication:</strong> Passwords are cryptographically salted and hashed using bcrypt. Stateless JSON Web Tokens (JWT) are securely handled.</li>
+        <li><strong>Zero Data Sale:</strong> We strictly do NOT sell, rent, or monetize your personal information with data brokers or advertising networks.</li>
+      </ul>
+    </div>
+
+    <!-- Section 3: Campus Features & Academic Resources -->
+    <div class="section-title">3. Academic Resources & Campus Features</div>
+
+    <div class="faq-card">
+      <div class="category-tag">Study Resources</div>
+      <h3>How do I access and download academic past papers and CAT notes?</h3>
+      <p>
+        Navigate to the <strong>Academics</strong> tab or select the Quick Access cards (Notes PDF, Past Papers, CAT Papers) on the Home Screen. You can search by course code (e.g., COM 310, STA 210, BBM 101) to read documents instantly in the built-in PDF viewer or tap <strong>Download</strong> for offline study.
+      </p>
+    </div>
+
+    <div class="faq-card">
+      <div class="category-tag">Rental Marketplace</div>
+      <h3>How do students connect with verified hostel landlords?</h3>
+      <p>
+        Browse available rental rooms and hostels under the <strong>Rentals</strong> tab to review pricing, distance from campus, amenities, and photos. You can initiate a booking request or reach landlords directly through phone or in-app messaging.
+      </p>
+    </div>
+
+    <!-- Contact Box -->
+    <div class="contact-box">
+      <h4>Need Additional Support or Privacy Assistance?</h4>
+      <p>Our administrative team is available to assist you with any questions or account requests:</p>
+      <p><a href="mailto:amanikbt1@gmail.com">amanikbt1@gmail.com</a></p>
+      <p style="font-size: 13px; color: #64748b; margin-top: 6px;">MConnect Platform Administration · Moi University Campus</p>
+    </div>
+
+    <div class="footer">
+      &copy; 2026 MConnect. All rights reserved. · Package: com.amanikbt1.moiconnect
+    </div>
+  </div>
+</body>
+</html>
