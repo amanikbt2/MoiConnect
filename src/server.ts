@@ -108,10 +108,6 @@ app.get(['/faq', '/faq/', '/support', '/support/'], (_req, res) => {
   res.sendFile(path.join(__dirname, '../public/faq.html'));
 });
 
-// Official Delete Data Route (Google Play Store data deletion URL)
-app.get(['/delete-data', '/delete-data/'], (_req, res) => {
-  res.sendFile(path.join(__dirname, '../public/delete-data/index.html'));
-});
 
 app.get(['/admin/preview', '/preview'], renderSmartPreviewPage);
 app.get(['/smart-pdf-preview', '/admin/smart-pdf-preview'], renderSmartPdfPreviewPage);
