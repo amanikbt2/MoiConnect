@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Delete My Data - MConnect</title>
+  <style>
+    :root {
+      --primary: #15803d;
+      --primary-dark: #166534;
+      --primary-light: #dcfce7;
+      --primary-border: #bbf7d0;
+      --text-main: #0f172a;
+      --text-muted: #475569;
+      --bg-page: #f8fafc;
+      --bg-card: #ffffff;
+      --border: #e2e8f0;
+      --code-bg: #f1f5f9;
+      --red-light: #fef2f2;
+      --red-border: #fecaca;
+      --red-text: #991b1b;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: var(--bg-page);
+      color: var(--text-main);
+      line-height: 1.65;
+      padding: 24px 16px;
+    }
+    .container {
+      max-width: 860px;
+      margin: 0 auto;
+      background: var(--bg-card);
+      border-radius: 18px;
+      padding: 40px;
+      box-shadow: 0 4px 24px rgba(15, 23, 42, 0.06);
+      border: 1px solid var(--border);
+    }
+    .header {
+      text-align: center;
+      padding-bottom: 28px;
+      border-bottom: 2px solid #f1f5f9;
+      margin-bottom: 28px;
+    }
+    .badge {
+      display: inline-block;
+      background-color: var(--primary-light);
+      color: var(--primary);
+      font-weight: 800;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      padding: 6px 16px;
+      border-radius: 20px;
+      margin-bottom: 12px;
+    }
+    h1 {
+      font-size: 32px;
+      font-weight: 800;
+      color: var(--text-main);
+      margin-bottom: 8px;
+      letter-spacing: -0.5px;
+    }
+    .meta-bar {
+      font-size: 13px;
+      color: var(--text-muted);
+      display: flex;
+      justify-content: center;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin-top: 6px;
+    }
+    .meta-bar span { font-weight: 600; color: var(--text-main); }
+    .deletion-banner {
+      background: #f0fdf4;
+      border: 2px solid var(--primary-border);
+      border-radius: 14px;
+      padding: 20px 24px;
+      margin-bottom: 28px;
+    }
+    .deletion-banner h2 {
+      font-size: 17px;
+      color: var(--primary);
+      margin-bottom: 8px;
+      font-weight: 800;
+    }
+    .deletion-banner p {
+      font-size: 14px;
+      color: #166534;
+      margin-bottom: 0;
+    }
+    .alert-banner {
+      background: var(--red-light);
+      border: 2px solid var(--red-border);
+      border-radius: 14px;
+      padding: 18px 22px;
+      margin-bottom: 24px;
+    }
+    .alert-banner h2 {
+      font-size: 16px;
+      color: var(--red-text);
+      margin-bottom: 6px;
+      font-weight: 800;
+    }
+    .alert-banner p {
+      font-size: 14px;
+      color: #7f1d1d;
+      margin-bottom: 0;
+    }
+    .section-title {
+      font-size: 19px;
+      font-weight: 800;
+      color: var(--text-main);
+      margin-top: 32px;
+      margin-bottom: 16px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid var(--border);
+    }
+    .faq-card {
+      background: #ffffff;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 22px;
+      margin-bottom: 16px;
+      transition: all 0.2s ease;
+    }
+    .faq-card:hover {
+      border-color: #cbd5e1;
+      box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04);
+    }
+    .category-tag {
+      font-size: 11px;
+      font-weight: 800;
+      color: var(--primary);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 6px;
+    }
+    h3 {
+      font-size: 17px;
+      font-weight: 800;
+      color: var(--text-main);
+      margin-bottom: 10px;
+    }
+    p {
+      font-size: 14px;
+      color: var(--text-muted);
+      margin-bottom: 10px;
+    }
+    ul, ol {
+      margin-left: 22px;
+      margin-bottom: 12px;
+    }
+    li {
+      font-size: 14px;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+    li strong {
+      color: var(--text-main);
+    }
+    code {
+      background: var(--code-bg);
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-weight: 700;
+      color: var(--text-main);
+      font-size: 13px;
+    }
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 12px;
+      margin-bottom: 12px;
+      font-size: 13px;
+    }
+    .data-table thead tr {
+      background: #f1f5f9;
+    }
+    .data-table th {
+      text-align: left;
+      padding: 10px 14px;
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+    }
+    .data-table td {
+      padding: 10px 14px;
+      border-bottom: 1px solid #f1f5f9;
+      color: var(--text-muted);
+      vertical-align: top;
+    }
+    .data-table td:first-child {
+      font-weight: 700;
+      color: var(--text-main);
+    }
+    .pill {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 2px 10px;
+      border-radius: 20px;
+    }
+    .pill-del {
+      background: #fef2f2;
+      color: #991b1b;
+    }
+    .pill-keep {
+      background: #f0fdf4;
+      color: #166534;
+    }
+    .steps-card {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 22px;
+      margin-bottom: 16px;
+    }
+    .step-row {
+      display: flex;
+      gap: 14px;
+      align-items: flex-start;
+      margin-bottom: 14px;
+    }
+    .step-row:last-child { margin-bottom: 0; }
+    .step-num {
+      flex-shrink: 0;
+      width: 28px;
+      height: 28px;
+      background: var(--primary);
+      color: #fff;
+      border-radius: 50%;
+      font-size: 13px;
+      font-weight: 800;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .step-body {
+      flex: 1;
+    }
+    .step-body strong {
+      display: block;
+      font-size: 14px;
+      color: var(--text-main);
+      margin-bottom: 2px;
+    }
+    .step-body span {
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+    .contact-box {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 24px;
+      margin-top: 32px;
+    }
+    .contact-box h4 {
+      font-size: 16px;
+      color: var(--text-main);
+      margin-bottom: 6px;
+    }
+    .contact-box a {
+      font-size: 17px;
+      font-weight: 800;
+      color: var(--primary);
+      text-decoration: none;
+    }
+    .footer {
+      text-align: center;
+      margin-top: 40px;
+      padding-top: 20px;
+      border-top: 1px solid var(--border);
+      font-size: 13px;
+      color: #94a3b8;
+    }
+    @media (max-width: 640px) {
+      .container { padding: 22px 18px; }
+      h1 { font-size: 24px; }
+      .data-table th, .data-table td { padding: 8px 10px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <span class="badge">MConnect · Official Data Rights Page</span>
+      <h1>Delete or Manage My Data</h1>
+      <div class="meta-bar">
+        <div>Application: <span>MConnect</span></div>
+        <div>Package: <span>com.amanikbt1.moiconnect</span></div>
+        <div>Support: <span>amanikbt1@gmail.com</span></div>
+      </div>
+    </div>
+
+    <!-- Primary Banner -->
+    <div class="deletion-banner">
+      <h2>🗂️ You Control Your Data</h2>
+      <p>
+        MConnect allows you to delete specific data — such as downloaded files, saved bookmarks, property listings, profile details, or uploaded documents — <strong>without closing your account</strong>. You can also request full account deletion at any time. All requests are honoured within <strong>5 business days</strong>.
+      </p>
+    </div>
+
+    <!-- Full Account Deletion Notice -->
+    <div class="alert-banner">
+      <h2>🗑️ Want to Delete Your Entire Account Instead?</h2>
+      <p>
+        To permanently close your MConnect account and erase <em>all</em> associated data, visit our <a href="/faq" style="color: #991b1b; font-weight: 800;">Account Deletion FAQ page</a> or use the in-app option: <strong>Profile → ⋮ → Delete account</strong>.
+      </p>
+    </div>
+
+    <!-- Section 1: In-App Self-Service -->
+    <div class="section-title">1. Delete Specific Data Yourself — In-App (Instant)</div>
+
+    <div class="faq-card">
+      <div class="category-tag">Self-Service · No Email Required</div>
+      <h3>What can I delete directly inside the MConnect app?</h3>
+      <p>The following data types can be removed immediately without contacting us:</p>
+      <div class="steps-card">
+        <div class="step-row">
+          <div class="step-num">1</div>
+          <div class="step-body">
+            <strong>Downloaded Academic Files</strong>
+            <span>Go to the <strong>Downloads</strong> tab → tap the options menu (⋮) on any file → select <strong>"Delete"</strong>. The file is immediately removed from your device storage.</span>
+          </div>
+        </div>
+        <div class="step-row">
+          <div class="step-num">2</div>
+          <div class="step-body">
+            <strong>Saved Bookmarks &amp; Favourites</strong>
+            <span>Tap the bookmark or heart icon on any saved paper, hostel, or resource to immediately un-save and remove it from your favourites list.</span>
+          </div>
+        </div>
+        <div class="step-row">
+          <div class="step-num">3</div>
+          <div class="step-body">
+            <strong>Property Listings (Landlords)</strong>
+            <span>Open the <strong>Listings Management</strong> screen → select a listing → tap <strong>"Delete Listing"</strong>. All photos and pricing details associated with that listing are permanently removed.</span>
+          </div>
+        </div>
+        <div class="step-row">
+          <div class="step-num">4</div>
+          <div class="step-body">
+            <strong>Profile Personal Information</strong>
+            <span>Go to the <strong>Profile</strong> tab → tap <strong>"Edit Profile"</strong> to update or clear your display name, phone number, and academic year at any time.</span>
+          </div>
+        </div>
+        <div class="step-row">
+          <div class="step-num">5</div>
+          <div class="step-body">
+            <strong>Profile Avatar Photo</strong>
+            <span>Go to the <strong>Profile</strong> tab → tap your profile picture → select <strong>"Remove Photo"</strong>. The image is permanently deleted from our cloud storage (Cloudinary).</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Section 2: Email Request -->
+    <div class="section-title">2. Request Deletion of Specific Data via Email</div>
+
+    <div class="faq-card">
+      <div class="category-tag">Email Request · Processed Within 5 Business Days</div>
+      <h3>How do I request removal of specific data that I cannot delete myself?</h3>
+      <p>For data types not covered by in-app self-service (e.g., an uploaded academic document, a specific message thread, or a booking record), send an email request to:</p>
+      <p><code><a href="mailto:amanikbt1@gmail.com">amanikbt1@gmail.com</a></code></p>
+      <p>Use the subject line: <code>"Data Deletion Request"</code></p>
+      <p>Your email must include the following so we can verify your identity and locate the data:</p>
+      <ol>
+        <li><strong>Your registered email address</strong> on MConnect (the account owner email).</li>
+        <li><strong>Description of the specific data</strong> you want deleted (e.g., "Delete my academic paper titled X uploaded on [date]", "Delete my booking inquiry sent to hostel Y").</li>
+        <li><strong>Data type</strong> from the table below (e.g., "Uploaded document", "Booking record").</li>
+      </ol>
+      <p>We will confirm receipt within 2 business days and complete the deletion within <strong>5 business days</strong> of verification.</p>
+    </div>
+
+    <!-- Section 3: Data Types Table -->
+    <div class="section-title">3. Data Types — What Gets Deleted vs. Retained</div>
+
+    <div class="faq-card">
+      <div class="category-tag">Transparency · Data Retention Policy</div>
+      <h3>Complete breakdown of MConnect data types and deletion outcomes</h3>
+      <p>The table below applies to partial data deletion requests (without account closure). For full account deletion, see our <a href="/faq" style="color: var(--primary); font-weight: 700;">FAQ page</a>.</p>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Data Type</th>
+            <th>How to Delete</th>
+            <th>Outcome</th>
+            <th>Retention After Deletion</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Downloaded Files (Academic PDFs)</td>
+            <td>In-App: Downloads tab → Delete</td>
+            <td><span class="pill pill-del">Deleted</span></td>
+            <td>None — removed from device immediately</td>
+          </tr>
+          <tr>
+            <td>Saved Bookmarks / Favourites</td>
+            <td>In-App: Tap bookmark icon to un-save</td>
+            <td><span class="pill pill-del">Deleted</span></td>
+            <td>None — removed immediately</td>
+          </tr>
+          <tr>
+            <td>Hostel / Property Listing (Landlord)</td>
+            <td>In-App: Listings Management → Delete Listing</td>
+            <td><span class="pill pill-del">Deleted</span></td>
+            <td>None — listing and photos permanently erased</td>
+          </tr>
+          <tr>
+            <td>Profile Avatar Photo</td>
+            <td>In-App: Profile → Remove Photo</td>
+            <td><span class="pill pill-del">Deleted</span></td>
+            <td>None — removed from cloud storage (Cloudinary)</td>
+          </tr>
+          <tr>
+            <td>Profile Info (Name, Phone, Year)</td>
+            <td>In-App: Profile → Edit Profile</td>
+            <td><span class="pill pill-del">Deleted / Updated</span></td>
+            <td>Replaced with your new input or cleared</td>
+          </tr>
+          <tr>
+            <td>Uploaded Academic Document / Paper</td>
+            <td>Email: <a href="mailto:amanikbt1@gmail.com">amanikbt1@gmail.com</a></td>
+            <td><span class="pill pill-del">Deleted</span></td>
+            <td>Permanently removed from servers within 5 business days</td>
+          </tr>
+          <tr>
+            <td>Specific Booking Inquiry / Record</td>
+            <td>Email: <a href="mailto:amanikbt1@gmail.com">amanikbt1@gmail.com</a></td>
+            <td><span class="pill pill-del">Deleted</span></td>
+            <td>Permanently removed from database within 5 business days</td>
+          </tr>
+          <tr>
+            <td>Private Messages (1-on-1)</td>
+            <td>Email: <a href="mailto:amanikbt1@gmail.com">amanikbt1@gmail.com</a></td>
+            <td><span class="pill pill-del">Deleted</span></td>
+            <td>Permanently removed from database within 5 business days</td>
+          </tr>
+          <tr>
+            <td>Community Discussion Posts</td>
+            <td>Email: <a href="mailto:amanikbt1@gmail.com">amanikbt1@gmail.com</a></td>
+            <td><span class="pill pill-keep">Anonymised</span></td>
+            <td>Content may be retained for community continuity; all personal author identifiers permanently removed</td>
+          </tr>
+          <tr>
+            <td>Submitted Academic Papers (public)</td>
+            <td>Email: <a href="mailto:amanikbt1@gmail.com">amanikbt1@gmail.com</a></td>
+            <td><span class="pill pill-keep">Anonymised</span></td>
+            <td>Educational content retained for campus community; all author identity data permanently detached</td>
+          </tr>
+          <tr>
+            <td>Push Notification Token</td>
+            <td>Disable notifications in device settings or email us</td>
+            <td><span class="pill pill-del">Deleted</span></td>
+            <td>Removed from database; no further notifications sent</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Section 4: Response Timeline -->
+    <div class="section-title">4. Response Timeline &amp; Confirmation</div>
+
+    <div class="faq-card">
+      <div class="category-tag">Service Commitment</div>
+      <h3>How long does a data deletion request take?</h3>
+      <ul>
+        <li><strong>In-App Self-Service:</strong> Instant — data is removed immediately upon your action within the app.</li>
+        <li><strong>Email Requests — Acknowledgement:</strong> We will confirm receipt of your request within <strong>2 business days</strong>.</li>
+        <li><strong>Email Requests — Execution:</strong> Your specified data will be permanently deleted within <strong>5 business days</strong> of identity verification.</li>
+        <li><strong>Confirmation:</strong> We will send a deletion confirmation email once the requested data has been permanently erased from our systems.</li>
+      </ul>
+      <p style="margin-top: 10px;">
+        <strong>Note on Backups:</strong> Deleted data is purged from live production databases immediately. It may persist in encrypted backup snapshots for up to <strong>30 days</strong> before those backups are automatically rotated and permanently overwritten. No deleted data is ever restored from backup without explicit user consent.
+      </p>
+    </div>
+
+    <!-- Section 5: Security -->
+    <div class="section-title">5. How We Protect Your Data</div>
+
+    <div class="faq-card">
+      <div class="category-tag">Data Security</div>
+      <h3>What security measures does MConnect use to protect my data?</h3>
+      <ul>
+        <li><strong>Encryption in Transit:</strong> All data transmitted between the MConnect app and our servers is encrypted using TLS 1.3 / HTTPS. No data travels in plaintext.</li>
+        <li><strong>Encrypted Password Storage:</strong> Passwords are never stored in plain text; they are cryptographically hashed using bcrypt with a unique salt.</li>
+        <li><strong>Secure Authentication:</strong> Session tokens (JSON Web Tokens) are signed, time-limited, and invalidated upon account deletion or logout.</li>
+        <li><strong>Zero Data Sale Policy:</strong> MConnect does <strong>not</strong> sell, rent, share, or monetize any personal user data with third-party advertisers, data brokers, or marketing platforms.</li>
+        <li><strong>Minimal Data Collection:</strong> Only data strictly necessary to operate campus services (academics, rentals, communication) is collected and stored.</li>
+      </ul>
+    </div>
+
+    <!-- Contact Box -->
+    <div class="contact-box">
+      <h4>Submit a Data Deletion Request</h4>
+      <p>Email our privacy team with subject <code>"Data Deletion Request"</code>:</p>
+      <p><a href="mailto:amanikbt1@gmail.com">amanikbt1@gmail.com</a></p>
+      <p style="font-size: 13px; color: #64748b; margin-top: 6px;">MConnect Platform Administration · Moi University Campus · Response within 5 business days</p>
+    </div>
+
+    <div class="footer">
+      &copy; 2026 MConnect. All rights reserved. · Package: com.amanikbt1.moiconnect<br>
+      This page satisfies Google Play Store data deletion disclosure requirements per the Play Developer Policy.
+    </div>
+  </div>
+</body>
+</html>
