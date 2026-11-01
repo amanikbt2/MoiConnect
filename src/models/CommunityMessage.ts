@@ -25,6 +25,7 @@ export interface ICommunityMessage extends Document {
   senderFaculty: string;
   senderCourse?: string;
   senderYear?: string;
+  senderUniversity?: string;
   senderPhone?: string;
   senderAvatarUrl?: string;
   senderBadge?: 'blue' | 'red' | 'green';
@@ -56,6 +57,7 @@ const communityMessageSchema = new Schema<ICommunityMessage>(
     senderFaculty: { type: String, default: 'Moi Student' },
     senderCourse: { type: String, trim: true },
     senderYear: { type: String, trim: true },
+    senderUniversity: { type: String, trim: true },
     senderPhone: { type: String, trim: true },
     senderAvatarUrl: { type: String, trim: true },
     senderBadge: { type: String, enum: ['blue', 'red', 'green'] },

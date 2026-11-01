@@ -77,10 +77,11 @@ export const getCommunityMessages = async (req: Request, res: Response): Promise
 
     const senderIds = Array.from(new Set(messages.map((message: any) => String(message.senderId || '')).filter(Boolean)));
     const badgeUsers = senderIds.length > 0
-      ? await User.find({ _id: { $in: senderIds } }).select('_id badge avatarUrl').lean()
+      ? await User.find({ _id: { $in: senderIds } }).select('_id badge avatarUrl university').lean()
       : [];
     const badgeByUserId = new Map(badgeUsers.map((user: any) => [String(user._id), user.badge]));
     const avatarByUserId = new Map(badgeUsers.map((user: any) => [String(user._id), user.avatarUrl]));
+    const universityByUserId = new Map(badgeUsers.map((user: any) => [String(user._id), user.university]));
     const requesterId = userId ? String(userId) : '';
     const responseMessages = messages.map((message: any) => {
       const isPrivate = Boolean(message.isPrivate);
@@ -97,6 +98,7 @@ export const getCommunityMessages = async (req: Request, res: Response): Promise
         reactions: redactPrivateText ? {} : message.reactions,
         readBy: redactPrivateText ? [] : message.readBy,
         privateNotice: redactPrivateText,
+        senderUniversity: message.senderUniversity || universityByUserId.get(String(message.senderId || '')) || undefined,
         senderBadge: badgeByUserId.get(String(message.senderId || '')) || undefined,
         senderAvatarUrl: getPublicAvatarUrl(avatarByUserId.get(String(message.senderId || '')) || message.senderAvatarUrl)
       };
@@ -166,6 +168,7 @@ export const postPrivateCommunityMessage = async (req: Request, res: Response): 
       senderFaculty: 'Moi Student',
       senderCourse: sender.course,
       senderYear: sender.yearOfStudy,
+      senderUniversity: sender.university,
       senderAvatarUrl: getPublicAvatarUrl(sender.avatarUrl),
       senderBadge: sender.badge,
       avatarBg: '#15803d',
@@ -235,7 +238,7 @@ export const postCommunityMessage = async (req: Request, res: Response): Promise
       res.status(403).json({ success: false, error: 'Community chat disabled by administrator' });
       return;
     }
-    const { clientMsgId, text, fileAttachment, stickerId, replyTo, senderName, senderEmail, senderFaculty, senderCourse, senderYear, senderPhone, senderAvatarUrl, senderBadge, avatarBg, senderId, mentions } = req.body;
+    const { clientMsgId, text, fileAttachment, stickerId, replyTo, senderName, senderEmail, senderFaculty, senderCourse, senderYear, senderUniversity, senderPhone, senderAvatarUrl, senderBadge, avatarBg, senderId, mentions } = req.body;
     const user = (req as any).user;
     const forumPolicy = await getForumAccessPolicy();
     if (!isForumParticipationAllowed(user?.email, forumPolicy)) {
@@ -274,6 +277,7 @@ export const postCommunityMessage = async (req: Request, res: Response): Promise
         senderFaculty: senderFaculty || 'Moi Student',
         senderCourse: senderCourse || (user?.course && user.course.toLowerCase() !== 'unset' ? user.course : undefined),
         senderYear: senderYear || (user?.yearOfStudy && user.yearOfStudy.toLowerCase() !== 'unset' ? user.yearOfStudy : undefined),
+        senderUniversity: user?.university || senderUniversity || undefined,
         senderPhone,
         senderAvatarUrl: getPublicAvatarUrl(user?.avatarUrl) || getPublicAvatarUrl(senderAvatarUrl),
         senderBadge: user?.badge || senderBadge,
