@@ -4633,14 +4633,36 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         return;
       }
 
+      const selectedCount = document.querySelectorAll('.material-select:checked').length;
+      container.innerHTML = '<div class="materials-toolbar">' +
+        '<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; width:100%; margin-bottom:12px;">' +
+        '<input id="materials-search" type="text" autocomplete="off" placeholder="Search by MTID, unit code, title, school, or keyword..." style="flex:1; min-width:240px; padding:10px 12px; border:1px solid #cbd5e1; border-radius:10px; font-size:13px;">' +
+        '<select id="materials-type-filter" onchange="updateMaterialsManagementResults()" style="min-width:170px; padding:10px 12px; border:1px solid #cbd5e1; border-radius:10px; font-size:13px; font-weight:700; color:#334155;">' +
+        '<option value="all">All materials</option>' +
+        '<option value="past_paper">Past papers</option>' +
+        '<option value="cat">CATs</option>' +
+        '<option value="notes">Notes PDF</option>' +
+        '</select></div>' +
+        '<label style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:800; color:#334155;"><input id="materials-select-all" type="checkbox" class="material-check" onchange="toggleAllMaterials(this.checked)"> Select all <span id="materials-visible-count" style="font-weight:600; color:#64748b;"></span></label>' +
+        '<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;"><span id="materials-selected-count" style="font-size:12px; color:#64748b;">' + selectedCount + ' selected</span><button onclick="setSelectedMaterialsVisibility(false)" class="btn btn-view">Show selected</button><button onclick="setSelectedMaterialsVisibility(true)" class="btn btn-view">Hide selected</button><button onclick="deleteSelectedMaterials()" class="btn btn-reject">Delete selected</button></div>' +
+        '</div><div id="materials-results"></div>';
       const searchInput = document.getElementById('materials-search');
       const typeFilter = document.getElementById('materials-type-filter');
-      const searchValue = searchInput ? String(searchInput.value || '').trim().toLowerCase() : '';
-      const selectedType = typeFilter ? String(typeFilter.value || 'all') : 'all';
+      if (searchInput) searchInput.addEventListener('input', updateMaterialsManagementResults);
+      if (typeFilter) typeFilter.value = 'all';
+      updateMaterialsManagementResults();
+    }
+
+    function updateMaterialsManagementResults() {
+      const results = document.getElementById('materials-results');
+      if (!results) return;
+      const rawSearchValue = String(document.getElementById('materials-search')?.value || '');
+      const searchQuery = rawSearchValue.trim().toLowerCase();
+      const selectedType = String(document.getElementById('materials-type-filter')?.value || 'all');
       const filteredMaterials = materialsManagementData.filter(function(material) {
         const searchable = [material.title, material.unitCode, material.courseCode, material.unitName, material.school, material.department, material.mtid, material.status, material.type, material.fileType]
           .filter(Boolean).join(' ').toLowerCase();
-        const matchesSearch = !searchValue || searchable.includes(searchValue);
+        const matchesSearch = !searchQuery || searchable.includes(searchQuery);
         const materialType = String(material.type || '').toLowerCase();
         const matchesType = selectedType === 'all'
           || (selectedType === 'past_paper' && (materialType === 'past_paper' || materialType === 'solution'))
@@ -4648,20 +4670,16 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
           || (selectedType === 'notes' && ['notes', 'lecture_notes', 'revision'].indexOf(materialType) !== -1);
         return matchesSearch && matchesType;
       });
-
+      const visibleCount = document.getElementById('materials-visible-count');
+      if (visibleCount) visibleCount.textContent = '(' + filteredMaterials.length + ' shown of ' + materialsManagementData.length + ')';
       const selectedCount = document.querySelectorAll('.material-select:checked').length;
-      container.innerHTML = '<div class="materials-toolbar">' +
-        '<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; width:100%; margin-bottom:12px;">' +
-        '<input id="materials-search" value="' + escapeMaterialHtml(searchValue) + '" oninput="filterMaterialsManagement()" placeholder="Search by MTID, unit code, title, school, or keyword..." style="flex:1; min-width:240px; padding:10px 12px; border:1px solid #cbd5e1; border-radius:10px; font-size:13px;">' +
-        '<select id="materials-type-filter" onchange="filterMaterialsManagement()" style="min-width:170px; padding:10px 12px; border:1px solid #cbd5e1; border-radius:10px; font-size:13px; font-weight:700; color:#334155;">' +
-        '<option value="all"' + (selectedType === 'all' ? ' selected' : '') + '>All materials</option>' +
-        '<option value="past_paper"' + (selectedType === 'past_paper' ? ' selected' : '') + '>Past papers</option>' +
-        '<option value="cat"' + (selectedType === 'cat' ? ' selected' : '') + '>CATs</option>' +
-        '<option value="notes"' + (selectedType === 'notes' ? ' selected' : '') + '>Notes PDF</option>' +
-        '</select></div>' +
-        '<label style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:800; color:#334155;"><input id="materials-select-all" type="checkbox" class="material-check" onchange="toggleAllMaterials(this.checked)"> Select all <span style="font-weight:600; color:#64748b;">(' + filteredMaterials.length + ' shown of ' + materialsManagementData.length + ')</span></label>' +
-        '<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;"><span id="materials-selected-count" style="font-size:12px; color:#64748b;">' + selectedCount + ' selected</span><button onclick="setSelectedMaterialsVisibility(false)" class="btn btn-view">Show selected</button><button onclick="setSelectedMaterialsVisibility(true)" class="btn btn-view">Hide selected</button><button onclick="deleteSelectedMaterials()" class="btn btn-reject">Delete selected</button></div>' +
-        '</div>' + (filteredMaterials.length ? '<div class="materials-grid">' + filteredMaterials.map(function(material) {
+      const countLabel = document.getElementById('materials-selected-count');
+      if (countLabel) countLabel.textContent = selectedCount + ' selected';
+      const selectAll = document.getElementById('materials-select-all');
+      if (selectAll) selectAll.checked = filteredMaterials.length > 0 && filteredMaterials.every(function(material) {
+        return !!document.querySelector('.material-select[data-id="' + material._id + '"]:checked');
+      });
+      results.innerHTML = filteredMaterials.length ? '<div class="materials-grid">' + filteredMaterials.map(function(material) {
           const hidden = material.isHidden === true;
           const type = escapeMaterialHtml((material.fileType || material.type || 'file').toUpperCase());
           const title = escapeMaterialHtml(material.title || 'Untitled material');
@@ -4679,22 +4697,11 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
             '<div class="material-body"><div class="material-title">' + title + '</div><div class="material-meta"><strong>' + unit + '</strong> &middot; ' + school + '<br>' + type + ' &middot; ' + status + (material.mtid ? ' &middot; ' + escapeMaterialHtml(material.mtid) : '') + '</div><span class="material-status ' + (hidden ? 'hidden-status' : '') + '">' + (hidden ? 'Hidden from students' : 'Visible to students') + '</span></div>' +
             '<div class="material-actions"><button data-material-id="' + id + '" data-hidden="' + (!hidden) + '" onclick="toggleMaterialVisibility(this.dataset.materialId, this.dataset.hidden === &quot;true&quot;)" class="btn btn-view">' + (hidden ? 'Show' : 'Hide') + '</button><button data-edit-id="' + id + '" onclick="openSmartEditModal(this.dataset.editId)" class="btn btn-view" style="color: #d97706; border-color: #fcd34d;">✏️ Edit</button><button data-delete-id="' + id + '" onclick="deleteMaterials([this.dataset.deleteId])" class="btn btn-reject">Delete</button></div>' +
           '</article>';
-        }).join('') + '</div>' : '<div class="fetch-start-card" style="padding:32px;"><h3 style="font-size:16px; color:#0f172a; margin-bottom:6px;">No matching materials</h3><p style="font-size:13px; color:#64748b;">Try another keyword or material type.</p></div>');
+      }).join('') + '</div>' : '<div class="fetch-start-card" style="padding:32px;"><h3 style="font-size:16px; color:#0f172a; margin-bottom:6px;">No matching materials</h3><p style="font-size:13px; color:#64748b;">Try another keyword or material type.</p></div>';
     }
 
     function filterMaterialsManagement() {
-      const currentInput = document.getElementById('materials-search');
-      const cursorPosition = currentInput && typeof currentInput.selectionStart === 'number'
-        ? currentInput.selectionStart
-        : null;
-      renderMaterialsManagement();
-      const refreshedInput = document.getElementById('materials-search');
-      if (refreshedInput) {
-        refreshedInput.focus();
-        if (cursorPosition !== null && typeof refreshedInput.setSelectionRange === 'function') {
-          refreshedInput.setSelectionRange(cursorPosition, cursorPosition);
-        }
-      }
+      updateMaterialsManagementResults();
     }
 
     function updateMaterialsSelection() {
