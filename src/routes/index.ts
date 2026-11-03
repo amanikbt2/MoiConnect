@@ -33,10 +33,13 @@ import * as communityController from '../controllers/communityController';
 import * as liveController from '../controllers/liveController';
 import * as admin2Controller from '../controllers/admin2Controller';
 import * as searchReportController from '../controllers/searchReportController';
+import * as referralController from '../controllers/referralController';
 import { handleB2CResult } from '../services/mpesaB2CService';
 import { tempUpload } from '../middleware/upload';
 
 const router = Router();
+
+router.get('/referrals/me', authenticate, referralController.getMyReferralSummary);
 
 // Safaricom B2C callbacks. These endpoints must be publicly reachable by Daraja.
 router.post('/payments/mpesa/b2c/result', async (req, res) => {

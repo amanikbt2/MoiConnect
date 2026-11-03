@@ -8,6 +8,7 @@ import { AuthenticatedRequest } from '../middleware/auth';
 import { RegisterInput, LoginInput, RequestLandlordInput } from '@moi/shared';
 import { uploadTempFileToCloudinary } from '../services/tempFileService';
 import { purgeUserAccountAndData } from '../services/accountPurgeService';
+import { attachReferralToNewUser } from '../services/referralService';
 
 const generateTokens = (userId: string) => {
   // Never-expiring tokens: persist indefinitely until explicit user logout
@@ -41,7 +42,7 @@ const applyAssistantAccountDefaults = (user: any, assistantAccount: { name: stri
 
 export const register = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
-    const { name, email, password, phone }: RegisterInput = req.body;
+    const { name, email, password, phone, referralCode }: RegisterInput = req.body;
 
     if (Object.prototype.hasOwnProperty.call(COMMUNITY_ASSISTANT_ACCOUNTS, email.toLowerCase().trim())) {
       res.status(403).json({ success: false, error: 'This system account cannot be created through public registration.' });
@@ -72,6 +73,13 @@ export const register = async (req: AuthenticatedRequest, res: Response): Promis
       accountStatus: 'active'
     });
 
+    let referralApplied = false;
+    try {
+      referralApplied = await attachReferralToNewUser(newUser, referralCode);
+    } catch (referralError) {
+      console.error('[Referrals] Could not credit registration referral:', referralError);
+    }
+
     const tokens = generateTokens(newUser._id.toString());
     newUser.refreshTokens.push(tokens.refreshToken);
     await newUser.save();
@@ -81,7 +89,8 @@ export const register = async (req: AuthenticatedRequest, res: Response): Promis
       message: 'Registration successful',
       data: {
         user: newUser,
-        tokens
+        tokens,
+        referralApplied
       }
     });
   } catch (error: any) {
@@ -401,7 +410,7 @@ export const uploadProfileAvatar = async (req: AuthenticatedRequest, res: Respon
 
 export const googleAuth = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
-    let { email, name, avatarUrl, idToken, accessToken } = req.body;
+    let { email, name, avatarUrl, idToken, accessToken, referralCode } = req.body;
 
     // Verify Access Token or ID Token directly with Google if provided
     if (accessToken && !email) {
@@ -443,6 +452,7 @@ export const googleAuth = async (req: AuthenticatedRequest, res: Response): Prom
     const targetName = name || 'Google Student';
 
     let user = await User.findOne({ email: targetEmail });
+    let referralApplied = false;
 
     if (!user) {
       // Auto-register Google user if account does not exist
@@ -464,6 +474,11 @@ export const googleAuth = async (req: AuthenticatedRequest, res: Response): Prom
         landlordStatus: 'none',
         accountStatus: 'active'
       });
+      try {
+        referralApplied = await attachReferralToNewUser(user, referralCode);
+      } catch (referralError) {
+        console.error('[Referrals] Could not credit Google registration referral:', referralError);
+      }
     }
 
     if (user.accountStatus === 'suspended') {
@@ -483,7 +498,8 @@ export const googleAuth = async (req: AuthenticatedRequest, res: Response): Prom
       message: 'Google login successful',
       data: {
         user,
-        tokens
+        tokens,
+        referralApplied
       }
     });
   } catch (error: any) {

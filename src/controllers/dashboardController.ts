@@ -3459,7 +3459,15 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
                       </div>
                     </div>
                     <select class="form-control pop-action-target" style="width: 100%; margin-top: 8px; font-weight: 700;">
-                      <option value="/community">🌐 Community Chat</option>
+                      <option value="/community">🌐 Forum Chat</option>
+                      <option value="/profile">👤 Profile</option>
+                      <option value="/profile?openEdit=1">✏️ Edit Profile</option>
+                      <option value="/popup/student-portal">🎓 Student Portal</option>
+                      <option value="/popup/learning-portal">📖 Learning Portal (University / MUSOMI)</option>
+                      <option value="/downloads">⬇️ Downloads</option>
+                      <option value="/popup/rewards">🌟 Student Rewards</option>
+                      <option value="/popup/notifications">🔔 Bell Notifications</option>
+                      <option value="/popup/forum-live">🔴 Forum Go Live</option>
                       <option value="/academics">📚 Notes / PDF Section</option>
                       <option value="/past-papers">📄 Past Papers</option>
                       <option value="/cat-papers">📝 CAT Papers</option>
@@ -5610,7 +5618,11 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
           '<label><input type="radio" class="pop-action-kind" value="external" onchange="togglePopupActionTarget(this)" /> External</label>' +
         '</div></div>' +
         '<select class="form-control pop-action-target" style="width: 100%; margin-top: 8px; font-weight: 700;">' +
-          '<option value="/community">🌐 Community Chat</option><option value="/academics">📚 Notes / PDF Section</option>' +
+          '<option value="/community">🌐 Forum Chat</option><option value="/profile">👤 Profile</option>' +
+          '<option value="/profile?openEdit=1">✏️ Edit Profile</option><option value="/popup/student-portal">🎓 Student Portal</option>' +
+          '<option value="/popup/learning-portal">📖 Learning Portal (University / MUSOMI)</option><option value="/downloads">⬇️ Downloads</option>' +
+          '<option value="/popup/rewards">🌟 Student Rewards</option><option value="/popup/notifications">🔔 Bell Notifications</option>' +
+          '<option value="/popup/forum-live">🔴 Forum Go Live</option><option value="/academics">📚 Notes / PDF Section</option>' +
           '<option value="/past-papers">📄 Past Papers</option><option value="/cat-papers">📝 CAT Papers</option>' +
           '<option value="/rentals">🏠 Rental Hostels</option><option value="/contribute">📤 Contribute Materials</option>' +
           '<option value="/(auth)/login">🔐 Sign In</option></select>' +
@@ -5646,7 +5658,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       const subtitle = document.getElementById('pop-normal-subtitle').value;
       const body = document.getElementById('pop-normal-body').value;
       const imageFile = document.getElementById('pop-normal-image').files[0];
-      let imageUrl = '';
+      let imageUrl = reusedPopupImageUrl;
       const actions = collectPopupActions();
       if (!actions.length) {
         showToast('Add at least one action with button text and a destination.', true);
@@ -5708,6 +5720,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         if (json.success) {
           showToast('✨ Normal Popup Created: ' + (json.data?.popupId || ''));
           document.getElementById('popup-normal-form').reset();
+          reusedPopupImageUrl = '';
           loadPopupHistory();
         } else {
           showToast(json.error || 'Failed to create popup.', true);
@@ -5779,7 +5792,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       const btn = document.getElementById('btn-submit-pop-interactive');
       btn.disabled = true;
       try {
-        let imageUrl = '';
+        let imageUrl = reusedPopupImageUrl;
         const imageFile = document.getElementById('pop-interactive-image').files[0];
         if (imageFile) {
           const form = new FormData(); form.append('file', imageFile);
@@ -5793,6 +5806,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         if (!json.success) throw new Error(json.error || 'Could not create popup.');
         showToast('Interactive popup created: ' + (json.data?.popupId || ''));
         document.getElementById('popup-interactive-form').reset();
+        reusedPopupImageUrl = '';
         document.getElementById('interactive-inputs').innerHTML = '';
         addInteractiveInput();
         loadPopupHistory();
@@ -5892,6 +5906,92 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       }
     }
 
+    let popupHistoryItemsById = Object.create(null);
+    let reusedPopupImageUrl = '';
+
+    function reusePopup(id) {
+      const item = popupHistoryItemsById[id];
+      if (!item) { showToast('Could not load this popup for reuse. Refresh the history and try again.', true); return; }
+
+      const type = ['normal', 'interactive', 'update'].includes(item.type) ? item.type : 'normal';
+      setPopupType(type);
+      reusedPopupImageUrl = item.imageUrl || '';
+
+      if (type === 'normal') {
+        const form = document.getElementById('popup-normal-form');
+        form.reset();
+        document.getElementById('pop-normal-title').value = item.title || '';
+        document.getElementById('pop-normal-subtitle').value = item.subtitle || '';
+        document.getElementById('pop-normal-body').value = item.body || '';
+        document.getElementById('pop-normal-audience').value = item.targetAudience || 'all';
+        document.getElementById('pop-normal-emails').value = (item.targetEmails || []).join(', ');
+        document.getElementById('pop-normal-cancel').checked = item.hasCancelButton !== false;
+        togglePopAudienceBox();
+
+        const actionContainer = document.getElementById('pop-normal-actions');
+        actionContainer.innerHTML = '';
+        const actions = Array.isArray(item.actions) && item.actions.length
+          ? item.actions
+          : [{ label: item.actionButtonText || 'Explore', target: item.actionTarget || '/community', type: 'in_app' }];
+        actions.forEach(function(action, index) {
+          if (index > 0) addPopupAction();
+          const row = actionContainer.querySelectorAll('.popup-action-row')[index];
+          row.querySelector('.pop-action-label').value = action.label || '';
+          const kind = action.type === 'external' ? 'external' : 'in_app';
+          row.querySelector('.pop-action-kind[value="' + kind + '"]').checked = true;
+          if (kind === 'external') row.querySelector('.pop-action-external').value = action.target || '';
+          else {
+            const targetSelect = row.querySelector('.pop-action-target');
+            if (!Array.from(targetSelect.options).some(function(option) { return option.value === action.target; })) {
+              targetSelect.add(new Option(action.target || '/community', action.target || '/community'));
+            }
+            targetSelect.value = action.target || '/community';
+          }
+          togglePopupActionTarget(row.querySelector('.pop-action-kind:checked'));
+        });
+        refreshPopupActionRows();
+        document.getElementById('pop-normal-image').value = '';
+      } else if (type === 'interactive') {
+        const form = document.getElementById('popup-interactive-form');
+        form.reset();
+        document.getElementById('pop-interactive-title').value = item.title || '';
+        document.getElementById('pop-interactive-subtitle').value = item.subtitle || '';
+        document.getElementById('pop-interactive-body').value = item.body || '';
+        document.getElementById('pop-interactive-audience').value = item.targetAudience || 'all';
+        document.getElementById('pop-interactive-emails').value = (item.targetEmails || []).join(', ');
+        document.getElementById('pop-interactive-emails').style.display = item.targetAudience === 'emails' ? 'block' : 'none';
+        document.getElementById('pop-interactive-cancel').checked = item.hasCancelButton !== false;
+        const inputsContainer = document.getElementById('interactive-inputs');
+        inputsContainer.innerHTML = '';
+        (item.inputs || []).forEach(function(input) {
+          addInteractiveInput();
+          const row = inputsContainer.lastElementChild;
+          row.querySelector('.interactive-label').value = input.label || '';
+          const typeSelect = row.querySelector('.interactive-type');
+          const inputType = ['text', 'radio', 'checkbox', 'toggle'].includes(input.type) ? input.type : 'text';
+          if (inputType === 'toggle' && !Array.from(typeSelect.options).some(function(option) { return option.value === 'toggle'; })) {
+            typeSelect.add(new Option('Toggle', 'toggle'));
+          }
+          typeSelect.value = inputType;
+          typeSelect.dispatchEvent(new Event('change'));
+          row.querySelector('.interactive-required').checked = Boolean(input.required);
+          if (inputType === 'radio') row.querySelector('.interactive-options').value = (input.options || []).join(', ');
+        });
+        if (!inputsContainer.children.length) addInteractiveInput();
+        document.getElementById('pop-interactive-image').value = '';
+      } else {
+        document.getElementById('popup-update-form').reset();
+        document.getElementById('pop-update-minver').value = item.minAppVersion || '';
+        document.getElementById('pop-update-title').value = item.title || '';
+        document.getElementById('pop-update-sub').value = item.subtitle || '';
+        document.getElementById('pop-update-url').value = item.playStoreUrl || '';
+        document.getElementById('pop-update-force').checked = Boolean(item.isForceUpdate);
+      }
+
+      document.getElementById('popup-' + (type === 'normal' ? 'normal' : type === 'interactive' ? 'interactive' : 'update') + '-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      showToast('Popup loaded into the ' + type + ' form. Review it, then broadcast when ready.');
+    }
+
     async function loadPopupHistory() {
       const container = document.getElementById('popups-history-container');
       if (!container) return;
@@ -5900,6 +6000,9 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         const res = await fetch('/api/v1/notify/popups');
         const json = await res.json();
         if (!json.success || !json.data) return;
+
+        popupHistoryItemsById = Object.create(null);
+        json.data.forEach(function(item) { popupHistoryItemsById[item._id] = item; });
 
         if (json.data.length === 0) {
           container.innerHTML = '<div style="text-align: center; padding: 24px; color: #94a3b8; font-size: 13px;">No active popups created yet.</div>';
@@ -5923,7 +6026,8 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
                 escapePopupHistoryHtml(item.title) +
               '</span>' +
               '<span style="display:flex;align-items:center;gap:6px;">' +
-                (item.type === 'interactive' ? '<button type="button" data-popup-id="' + item._id + '" onclick="viewPopupResponses(this.dataset.popupId)" class="btn" style="background: #dcfce7; color: #15803d; padding: 3px 8px; font-size: 10px; font-weight: 800; border: 1px solid #86efac; border-radius: 6px;">View responses</button>' : '') +
+                '<button type="button" data-id="' + escapePopupHistoryHtml(item._id) + '" onclick="reusePopup(this.dataset.id)" class="btn" style="background: #dbeafe; color: #1d4ed8; padding: 3px 8px; font-size: 10px; font-weight: 800; border: 1px solid #93c5fd; border-radius: 6px; cursor: pointer;">↻ Reuse</button>' +
+                (item.type === 'interactive' ? '<button type="button" data-popup-id="' + escapePopupHistoryHtml(item._id) + '" onclick="viewPopupResponses(this.dataset.popupId)" class="btn" style="background: #dcfce7; color: #15803d; padding: 3px 8px; font-size: 10px; font-weight: 800; border: 1px solid #86efac; border-radius: 6px;">View responses</button>' : '') +
                 '<button type="button" data-id="' + item._id + '" onclick="handleDeletePopup(this.dataset.id)" class="btn" style="background: #fee2e2; color: #dc2626; padding: 3px 8px; font-size: 10px; font-weight: 800; border: 1px solid #fca5a5; border-radius: 6px; cursor: pointer;">🗑️ Delete</button>' +
               '</span>' +
             '</div>' +

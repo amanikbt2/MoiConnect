@@ -16,6 +16,7 @@ import {
   renderSmartPreviewPage,
   renderSmartPdfPreviewPage
 } from './controllers/dashboardController';
+import { renderReferralLandingPage } from './controllers/referralController';
 
 const app = express();
 const server = http.createServer(app);
@@ -83,6 +84,10 @@ const limiter = rateLimit({
   message: { success: false, error: 'Too many requests, please try again later.' }
 });
 app.use('/api', limiter);
+
+// Short invite URLs preserve Google Play install attribution and show the code
+// for people signing up from another platform.
+app.get('/r/:code', renderReferralLandingPage);
 
 // Root Web Admin Dashboard
 app.get('/', renderAdminDashboard);

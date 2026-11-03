@@ -5,6 +5,7 @@ import { getAppSettingValue } from '../models/AppSetting';
 import { attemptB2CPayout, createOriginatorConversationId } from './mpesaB2CService';
 
 export const PAPER_APPROVAL_POINTS = 1;
+export const REFERRAL_REWARD_POINTS = 3;
 export const REWARD_MILESTONES = [
   { points: 6, amount: 5 },
   { points: 8, amount: 1 },
@@ -81,4 +82,18 @@ export const awardPaperApprovalPoints = async (paper: any): Promise<number> => {
   paper.pointsAwarded = pointsToAward;
   void queueEligibleMilestonePayouts(contributor, Number(contributor.points || 0));
   return pointsToAward;
+};
+
+export const awardReferralSignupPoints = async (referrerId: string, referredUserId: string): Promise<boolean> => {
+  const referrer = await User.findOneAndUpdate(
+    { _id: referrerId, creditedReferralIds: { $ne: referredUserId } },
+    {
+      $addToSet: { creditedReferralIds: referredUserId },
+      $inc: { points: REFERRAL_REWARD_POINTS }
+    },
+    { new: true }
+  );
+  if (!referrer) return false;
+  void queueEligibleMilestonePayouts(referrer, Number(referrer.points || 0));
+  return true;
 };

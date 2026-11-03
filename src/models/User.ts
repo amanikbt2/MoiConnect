@@ -1,5 +1,6 @@
 import mongoose, { Schema, Document } from 'mongoose';
 import { UserRole, LandlordStatus, AccountStatus } from '@moi/shared';
+import { createReferralCode } from '../utils/referralCode';
 
 export interface IUserDocument extends Document {
   name: string;
@@ -16,6 +17,9 @@ export interface IUserDocument extends Document {
   landlordStatus: LandlordStatus;
   accountStatus: AccountStatus;
   points: number;
+  referralCode?: string;
+  referredBy?: mongoose.Types.ObjectId;
+  creditedReferralIds: mongoose.Types.ObjectId[];
   badge?: 'blue' | 'red' | 'green';
   paymentBlacklisted: boolean;
   canGoLive: boolean;
@@ -66,6 +70,9 @@ const userSchema = new Schema<IUserDocument>(
       default: 5,
       min: 0
     },
+    referralCode: { type: String, uppercase: true, trim: true, unique: true, sparse: true, index: true },
+    referredBy: { type: Schema.Types.ObjectId, ref: 'User', index: true },
+    creditedReferralIds: [{ type: Schema.Types.ObjectId, ref: 'User' }],
     badge: {
       type: String,
       enum: ['blue', 'red', 'green']
@@ -91,10 +98,26 @@ const userSchema = new Schema<IUserDocument>(
   { timestamps: true }
 );
 
+userSchema.pre('validate', async function () {
+  if (this.referralCode) return;
+
+  const UserModel = this.constructor as mongoose.Model<IUserDocument>;
+  for (let attempt = 0; attempt < 25; attempt += 1) {
+    const candidate = createReferralCode();
+    if (!(await UserModel.exists({ referralCode: candidate }))) {
+      this.referralCode = candidate;
+      return;
+    }
+  }
+  throw new Error('Could not generate a unique referral code. Please retry.');
+});
+
 userSchema.set('toJSON', {
   transform: (_doc, ret: any) => {
     delete ret.passwordHash;
     delete ret.refreshTokens;
+    delete ret.referredBy;
+    delete ret.creditedReferralIds;
     return ret;
   }
 });
