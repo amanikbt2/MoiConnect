@@ -234,61 +234,117 @@ export const getDashboardMetrics = async (req: Request, res: Response): Promise<
     const rawTimeframe = String(req.query.timeframe || 'daily').toLowerCase();
     const timeframe = ['daily', 'weekly', 'monthly', '6months', 'yearly'].includes(rawTimeframe) ? rawTimeframe : 'daily';
 
+    // ── Calendar-aligned windows (Kenya = UTC+3) ──────────────────────────────
+    // All boundaries are computed in local (Kenya) time then stored as UTC Dates.
     const now = new Date();
+    const TZ_OFFSET_MS = 3 * 60 * 60 * 1000; // UTC+3
+
+    /** Return a UTC Date whose local (UTC+3) clock reads yyyy-mm-dd 00:00:00 */
+    const localMidnight = (y: number, m: number, d: number): Date =>
+      new Date(Date.UTC(y, m, d) - TZ_OFFSET_MS);
+
+    /** Return a UTC Date whose local (UTC+3) clock reads yyyy-mm-dd 23:59:59.999 */
+    const localEndOfDay = (y: number, m: number, d: number): Date =>
+      new Date(Date.UTC(y, m, d + 1) - TZ_OFFSET_MS - 1);
+
+    // Shift now to local time for calendar arithmetic
+    const localNow = new Date(now.getTime() + TZ_OFFSET_MS);
+    const ly = localNow.getUTCFullYear();
+    const lm = localNow.getUTCMonth();   // 0-based
+    const ld = localNow.getUTCDate();
+
     let startDate: Date;
+    let endDate: Date;
     let previousStartDate: Date;
+    let previousEndDate: Date;
     let timeframeLabel: string;
     const intervals: { label: string; start: Date; end: Date }[] = [];
 
-    if (timeframe === 'weekly') {
-      startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-      previousStartDate = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
-      timeframeLabel = 'Weekly (Past 7 Days)';
-      for (let i = 6; i >= 0; i--) {
-        const dStart = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
-        dStart.setHours(0, 0, 0, 0);
-        const dEnd = new Date(dStart.getTime() + 24 * 60 * 60 * 1000 - 1);
-        const dayLabel = dStart.toLocaleDateString('en-US', { weekday: 'short', month: 'numeric', day: 'numeric' });
-        intervals.push({ label: dayLabel, start: dStart, end: dEnd });
-      }
-    } else if (timeframe === 'monthly') {
-      startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-      previousStartDate = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
-      timeframeLabel = 'Monthly (Past 30 Days)';
-      for (let i = 3; i >= 0; i--) {
-        const wStart = new Date(now.getTime() - (i + 1) * 7.5 * 24 * 60 * 60 * 1000);
-        const wEnd = new Date(now.getTime() - i * 7.5 * 24 * 60 * 60 * 1000);
-        intervals.push({ label: 'Week ' + (4 - i), start: wStart, end: wEnd });
-      }
-    } else if (timeframe === '6months') {
-      startDate = new Date(now.getTime() - 180 * 24 * 60 * 60 * 1000);
-      previousStartDate = new Date(now.getTime() - 360 * 24 * 60 * 60 * 1000);
-      timeframeLabel = 'Past 6 Months';
-      for (let i = 5; i >= 0; i--) {
-        const mStart = new Date(now.getTime() - (i + 1) * 30 * 24 * 60 * 60 * 1000);
-        const mEnd = new Date(now.getTime() - i * 30 * 24 * 60 * 60 * 1000);
-        intervals.push({ label: mStart.toLocaleDateString('en-US', { month: 'short' }), start: mStart, end: mEnd });
-      }
-    } else if (timeframe === 'yearly') {
-      startDate = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
-      previousStartDate = new Date(now.getTime() - 730 * 24 * 60 * 60 * 1000);
-      timeframeLabel = 'Yearly (Past 365 Days)';
-      for (let i = 11; i >= 0; i--) {
-        const yStart = new Date(now.getTime() - (i + 1) * 30.5 * 24 * 60 * 60 * 1000);
-        const yEnd = new Date(now.getTime() - i * 30.5 * 24 * 60 * 60 * 1000);
-        intervals.push({ label: yStart.toLocaleDateString('en-US', { month: 'short' }), start: yStart, end: yEnd });
-      }
-    } else {
-      // daily
-      const todayStart = new Date(now);
-      todayStart.setHours(0, 0, 0, 0);
-      startDate = todayStart;
-      previousStartDate = new Date(todayStart.getTime() - 24 * 60 * 60 * 1000);
-      timeframeLabel = 'Daily (Today)';
+    if (timeframe === 'daily') {
+      // Today: 00:00 → 23:59:59.999 local
+      startDate = localMidnight(ly, lm, ld);
+      endDate   = localEndOfDay(ly, lm, ld);
+      // Previous period = yesterday
+      previousStartDate = localMidnight(ly, lm, ld - 1);
+      previousEndDate   = localEndOfDay(ly, lm, ld - 1);
+      timeframeLabel = 'Today (' + localNow.toLocaleDateString('en-KE', { timeZone: 'Africa/Nairobi', weekday: 'long', month: 'long', day: 'numeric' }) + ')';
+      // 6 × 4-hour blocks
       for (let h = 0; h < 24; h += 4) {
-        const iStart = new Date(todayStart.getTime() + h * 60 * 60 * 1000);
-        const iEnd = new Date(todayStart.getTime() + (h + 4) * 60 * 60 * 1000 - 1);
-        intervals.push({ label: String(h).padStart(2, '0') + ':00 - ' + String(h + 4).padStart(2, '0') + ':00', start: iStart, end: iEnd });
+        const iStart = new Date(startDate.getTime() + h * 3600_000);
+        const iEnd   = new Date(startDate.getTime() + (h + 4) * 3600_000 - 1);
+        const label  = String(h).padStart(2, '0') + ':00–' + String(h + 4).padStart(2, '0') + ':00';
+        intervals.push({ label, start: iStart, end: iEnd });
+      }
+
+    } else if (timeframe === 'weekly') {
+      // Mon 00:00 → Sun 23:59:59.999 of the CURRENT ISO week
+      const dow = localNow.getUTCDay(); // 0=Sun..6=Sat
+      const daysFromMon = dow === 0 ? 6 : dow - 1;
+      startDate = localMidnight(ly, lm, ld - daysFromMon);           // Monday
+      endDate   = localEndOfDay(ly, lm, ld - daysFromMon + 6);       // Sunday
+      // Previous period = last week (Mon–Sun)
+      previousStartDate = localMidnight(ly, lm, ld - daysFromMon - 7);
+      previousEndDate   = localEndOfDay(ly, lm, ld - daysFromMon - 1);
+      timeframeLabel = 'This Week (Mon–Sun)';
+      const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+      for (let i = 0; i < 7; i++) {
+        const dStart = new Date(startDate.getTime() + i * 86_400_000);
+        const dEnd   = new Date(startDate.getTime() + (i + 1) * 86_400_000 - 1);
+        intervals.push({ label: dayNames[i], start: dStart, end: dEnd });
+      }
+
+    } else if (timeframe === 'monthly') {
+      // 1st → last day of the CURRENT month
+      startDate = localMidnight(ly, lm, 1);
+      endDate   = localEndOfDay(ly, lm + 1, 0); // day 0 of next month = last day of this month
+      // Previous period = last month
+      previousStartDate = localMidnight(ly, lm - 1, 1);
+      previousEndDate   = localEndOfDay(ly, lm, 0);
+      const monthName = localNow.toLocaleDateString('en-KE', { timeZone: 'Africa/Nairobi', month: 'long', year: 'numeric' });
+      timeframeLabel = monthName;
+      // Intervals: each calendar week (Mon–Sun) that falls within the month
+      let cursor = new Date(startDate);
+      while (cursor < endDate) {
+        const wStart = new Date(cursor);
+        const wEnd   = new Date(Math.min(cursor.getTime() + 7 * 86_400_000 - 1, endDate.getTime()));
+        // Label: "1–7", "8–14" etc. (local day numbers)
+        const wStartLocal = new Date(wStart.getTime() + TZ_OFFSET_MS);
+        const wEndLocal   = new Date(wEnd.getTime() + TZ_OFFSET_MS);
+        const label = wStartLocal.getUTCDate() + '–' + wEndLocal.getUTCDate();
+        intervals.push({ label, start: wStart, end: wEnd });
+        cursor = new Date(cursor.getTime() + 7 * 86_400_000);
+      }
+
+    } else if (timeframe === '6months') {
+      // Current calendar half-year: Jan–Jun or Jul–Dec
+      const halfStart = lm < 6 ? 0 : 6; // 0=Jan, 6=Jul
+      startDate = localMidnight(ly, halfStart, 1);
+      endDate   = localEndOfDay(ly, halfStart + 6, 0); // last day of 6th month
+      previousStartDate = localMidnight(ly, halfStart - 6, 1);
+      previousEndDate   = localEndOfDay(ly, halfStart, 0);
+      timeframeLabel = lm < 6 ? `Jan–Jun ${ly}` : `Jul–Dec ${ly}`;
+      // Intervals: 6 individual months
+      for (let i = 0; i < 6; i++) {
+        const mStart = localMidnight(ly, halfStart + i, 1);
+        const mEnd   = localEndOfDay(ly, halfStart + i + 1, 0);
+        const label  = new Date(mStart.getTime() + TZ_OFFSET_MS)
+          .toLocaleDateString('en-KE', { timeZone: 'Africa/Nairobi', month: 'short' });
+        intervals.push({ label, start: mStart, end: mEnd });
+      }
+
+    } else {
+      // yearly — Jan 1 → Dec 31 of the CURRENT year
+      startDate = localMidnight(ly, 0, 1);   // Jan 1
+      endDate   = localEndOfDay(ly, 11, 31); // Dec 31
+      previousStartDate = localMidnight(ly - 1, 0, 1);
+      previousEndDate   = localEndOfDay(ly - 1, 11, 31);
+      timeframeLabel = `Year ${ly}`;
+      // Intervals: 12 months
+      const monthShort = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      for (let i = 0; i < 12; i++) {
+        const mStart = localMidnight(ly, i, 1);
+        const mEnd   = localEndOfDay(ly, i + 1, 0);
+        intervals.push({ label: monthShort[i], start: mStart, end: mEnd });
       }
     }
 
@@ -299,44 +355,44 @@ export const getDashboardMetrics = async (req: Request, res: Response): Promise<
 
     // 1. Online / Active users in timeframe
     const activeQuery: any[] = [
-      { lastOnlineAt: { $gte: startDate } },
-      { createdAt: { $gte: startDate } }
+      { lastOnlineAt: { $gte: startDate, $lte: endDate } },
+      { createdAt: { $gte: startDate, $lte: endDate } }
     ];
     if (onlineObjectIds.length > 0) {
       activeQuery.push({ _id: { $in: onlineObjectIds } });
     }
     const activeUsersCount = await User.countDocuments({ $or: activeQuery });
 
-    // 2. New users in timeframe
-    const newUsersCount = await User.countDocuments({ createdAt: { $gte: startDate } });
-    const prevNewUsersCount = await User.countDocuments({ createdAt: { $gte: previousStartDate, $lt: startDate } });
+    // 2. New users in timeframe (calendar window)
+    const newUsersCount = await User.countDocuments({ createdAt: { $gte: startDate, $lte: endDate } });
+    const prevNewUsersCount = await User.countDocuments({ createdAt: { $gte: previousStartDate, $lte: previousEndDate } });
     const growthPercent = prevNewUsersCount > 0
       ? Math.round(((newUsersCount - prevNewUsersCount) / prevNewUsersCount) * 100)
       : (newUsersCount > 0 ? 100 : 0);
 
-    const studentsCount = await User.countDocuments({ createdAt: { $gte: startDate }, roles: 'student' });
-    const landlordsCount = await User.countDocuments({ createdAt: { $gte: startDate }, roles: 'landlord' });
-    const adminsCount = await User.countDocuments({ createdAt: { $gte: startDate }, roles: 'admin' });
+    const studentsCount  = await User.countDocuments({ createdAt: { $gte: startDate, $lte: endDate }, roles: 'student' });
+    const landlordsCount = await User.countDocuments({ createdAt: { $gte: startDate, $lte: endDate }, roles: 'landlord' });
+    const adminsCount    = await User.countDocuments({ createdAt: { $gte: startDate, $lte: endDate }, roles: 'admin' });
 
     // 3. Approved papers in timeframe
     const approvedPapersCount = await Paper.countDocuments({
       status: 'approved',
       $or: [
-        { reviewedAt: { $gte: startDate } },
-        { updatedAt: { $gte: startDate } },
-        { createdAt: { $gte: startDate } }
+        { reviewedAt: { $gte: startDate, $lte: endDate } },
+        { updatedAt:  { $gte: startDate, $lte: endDate } },
+        { createdAt:  { $gte: startDate, $lte: endDate } }
       ]
     });
     const pendingPapersCount = await Paper.countDocuments({
       status: 'pending',
-      createdAt: { $gte: startDate }
+      createdAt: { $gte: startDate, $lte: endDate }
     });
     const totalSubmittedPapers = await Paper.countDocuments({
-      createdAt: { $gte: startDate }
+      createdAt: { $gte: startDate, $lte: endDate }
     });
 
     // 4. Community activity
-    const messagesCount = await CommunityMessage.countDocuments({ createdAt: { $gte: startDate } });
+    const messagesCount = await CommunityMessage.countDocuments({ createdAt: { $gte: startDate, $lte: endDate } });
 
     // 5. Timeline intervals breakdown
     const timeline = await Promise.all(
@@ -354,7 +410,7 @@ export const getDashboardMetrics = async (req: Request, res: Response): Promise<
           { lastOnlineAt: { $gte: interval.start, $lte: interval.end } },
           { createdAt: { $gte: interval.start, $lte: interval.end } }
         ];
-        if (now >= interval.start && now <= interval.end && onlineObjectIds.length > 0) {
+        if (new Date() >= interval.start && new Date() <= interval.end && onlineObjectIds.length > 0) {
           intervalActiveConditions.push({ _id: { $in: onlineObjectIds } });
         }
         const activeUsers = await User.countDocuments({ $or: intervalActiveConditions });
@@ -369,7 +425,7 @@ export const getDashboardMetrics = async (req: Request, res: Response): Promise<
 
     // 6. Top active departments in this timeframe
     const topDepartments = await Paper.aggregate([
-      { $match: { createdAt: { $gte: startDate } } },
+      { $match: { createdAt: { $gte: startDate, $lte: endDate } } },
       { $group: { _id: '$department', count: { $sum: 1 } } },
       { $sort: { count: -1 } },
       { $limit: 5 }
@@ -382,7 +438,7 @@ export const getDashboardMetrics = async (req: Request, res: Response): Promise<
         timeframeLabel,
         period: {
           start: startDate.toISOString(),
-          end: now.toISOString()
+          end: endDate.toISOString()
         },
         summary: {
           onlineUsers: {
