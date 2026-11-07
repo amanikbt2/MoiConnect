@@ -311,6 +311,86 @@ const getGeminiModels = (): string[] => {
   const configured = process.env.GEMINI_MODEL?.trim();
   return configured && configured.toLowerCase() !== 'auto' ? [configured] : MODEL_CANDIDATES;
 };
+export const getAiPlaygroundOptions = (): { apis: { apiIndex: number; apiLabel: string }[]; models: string[] } => ({
+  apis: getGeminiKeys().map((_key, apiIndex) => ({ apiIndex, apiLabel: getApiLabel(apiIndex) })),
+  models: getGeminiModels()
+});
+
+const buildSystemInstructionText = (promptSettings: AiPromptSettings): string => {
+  const parts: string[] = [];
+  if (promptSettings.context?.trim()) parts.push(`Primary context:\n${promptSettings.context.trim()}`);
+  if (promptSettings.persona?.trim()) parts.push(`Persona and tone:\n${promptSettings.persona.trim()}`);
+  if (promptSettings.responseRules?.trim()) parts.push(`Response rules:\n${promptSettings.responseRules.trim()}`);
+  if (promptSettings.safetyRules?.trim()) parts.push(`Safety and privacy rules:\n${promptSettings.safetyRules.trim()}`);
+  return parts.join('\n\n');
+};
+
+export const testAiPlayground = async (input: { apiIndex?: number; customApiKey?: string; model: string; message: string }): Promise<{ text: string; model: string; apiLabel: string; durationMs: number }> => {
+  const message = input.message.trim();
+  const model = input.model.trim();
+  if (!message || message.length > 4000) throw new Error('Enter a message of 1 to 4,000 characters.');
+  if (!model || model.length > 100 || !/^[a-zA-Z0-9._-]+$/.test(model)) throw new Error('Enter a valid Gemini model name.');
+
+  const customApiKey = input.customApiKey?.trim();
+  const configuredKeys = getGeminiKeys();
+  let apiKey = '';
+  let apiLabel = 'Custom API';
+  if (customApiKey) {
+    if (customApiKey.length > 500) throw new Error('The API key is too long.');
+    apiKey = customApiKey;
+  } else {
+    if (!Number.isInteger(input.apiIndex) || input.apiIndex! < 0 || input.apiIndex! >= configuredKeys.length) {
+      throw new Error('Select a configured API from the server pool.');
+    }
+    apiKey = configuredKeys[input.apiIndex!];
+    apiLabel = getApiLabel(input.apiIndex!);
+  }
+
+  const promptSettings = await getAiPromptSettings('ai');
+  const systemInstructionText = buildSystemInstructionText(promptSettings);
+  const requestBody: any = {
+    contents: [{ role: 'user', parts: [{ text: `Student name: Admin\nStudent message: ${message}` }] }],
+    generationConfig: { temperature: 0.4, maxOutputTokens: 8192 }
+  };
+  if (systemInstructionText) requestBody.systemInstruction = { parts: [{ text: systemInstructionText }] };
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const startedAt = Date.now();
+  try {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
+      body: JSON.stringify(requestBody)
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      const providerMessage = String(payload?.error?.message || response.statusText || 'Provider request failed.')
+        .replaceAll(apiKey, '[redacted API key]')
+        .slice(0, 500);
+      const error: any = new Error(providerMessage);
+      error.providerStatus = response.status;
+      throw error;
+    }
+    const text = extractGeminiText(payload);
+    if (!text) {
+      const error: any = new Error('The provider returned no text.');
+      error.providerStatus = response.status;
+      throw error;
+    }
+    return { text, model, apiLabel, durationMs: Date.now() - startedAt };
+  } catch (error: any) {
+    if (error?.name === 'AbortError') {
+      const timeoutError: any = new Error('The API request timed out.');
+      timeoutError.providerStatus = 408;
+      throw timeoutError;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+};
 const extractGeminiText = (payload: any): string => {
   const parts = payload?.candidates?.[0]?.content?.parts;
   return Array.isArray(parts) ? parts.map((part: any) => typeof part?.text === 'string' ? part.text : '').join('').trim() : '';
@@ -377,20 +457,7 @@ const askGemini = async (apiKey: string, apiLabel: string, model: string, messag
   signal.addEventListener('abort', abort, { once: true });
   const timeout = setTimeout(abort, REQUEST_TIMEOUT_MS);
   try {
-    const parts: string[] = [];
-    if (promptSettings.context?.trim()) {
-      parts.push(`Primary context:\n${promptSettings.context.trim()}`);
-    }
-    if (promptSettings.persona?.trim()) {
-      parts.push(`Persona and tone:\n${promptSettings.persona.trim()}`);
-    }
-    if (promptSettings.responseRules?.trim()) {
-      parts.push(`Response rules:\n${promptSettings.responseRules.trim()}`);
-    }
-    if (promptSettings.safetyRules?.trim()) {
-      parts.push(`Safety and privacy rules:\n${promptSettings.safetyRules.trim()}`);
-    }
-    const systemInstructionText = parts.join('\n\n');
+    const systemInstructionText = buildSystemInstructionText(promptSettings);
 
     const requestBody: any = {
       contents: [{ role: 'user', parts: [{ text: messageText }] }],

@@ -1,4 +1,4 @@
-import { Request, Response } from 'express';
+import { NextFunction, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { Admin2Credential, ADMIN2_ROLES, Admin2Role } from '../models/Admin2Credential';
@@ -99,5 +99,33 @@ export const validateAdmin2Session = async (req: Request, res: Response): Promis
       return;
     }
     res.status(500).json({ success: false, error: error.message || 'Could not verify Admin2 session.' });
+  }
+};
+
+export const requireAdmin2Session = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  const authorization = req.header('Authorization') || '';
+  const token = authorization.startsWith('Bearer ') ? authorization.slice(7) : '';
+  if (!token) {
+    res.status(401).json({ success: false, error: 'Admin2 session is missing.' });
+    return;
+  }
+  try {
+    const claims = jwt.verify(token, config.jwtAccessSecret, { ignoreExpiration: true }) as jwt.JwtPayload;
+    if (claims.admin2 !== true || typeof claims.credentialId !== 'string') {
+      res.status(401).json({ success: false, error: 'Admin2 session is invalid.' });
+      return;
+    }
+    const credential = await Admin2Credential.findOne({ _id: claims.credentialId, active: true }).select('_id').lean();
+    if (!credential) {
+      res.status(401).json({ success: false, error: 'These Admin2 credentials have been removed or disabled.' });
+      return;
+    }
+    next();
+  } catch (error: any) {
+    if (error instanceof jwt.JsonWebTokenError || error instanceof jwt.TokenExpiredError) {
+      res.status(401).json({ success: false, error: 'Admin2 session is invalid.' });
+      return;
+    }
+    res.status(500).json({ success: false, error: error.message || 'Could not verify the Admin2 session.' });
   }
 };
