@@ -4103,6 +4103,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
           </div>
           <div class="btn-group">
             <button onclick="toggleAiContextEditor()" class="btn btn-view">AI Context</button>
+            <button onclick="toggleAiPlayground()" class="btn btn-view">API Playground</button>
             <button onclick="loadAiOverages()" class="btn btn-view">Refresh AI Status</button>
             <button onclick="clearAiOverages()" class="btn btn-reject">Clear Overages Data</button>
           </div>
@@ -4137,6 +4138,41 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
           <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:8px;">
             <span id="ai-context-status" style="font-size:11px;color:#64748b;"></span>
             <button onclick="saveAiContext()" class="btn btn-approve">Save AI Instructions</button>
+          </div>
+        </div>
+        <div id="ai-playground-panel" class="hidden" style="background:#f8fafc;border:1px solid #cbd5e1;border-radius:12px;padding:16px;margin-bottom:18px;">
+          <div style="margin-bottom:12px;">
+            <div style="font-size:15px;font-weight:800;color:#0f172a;">Private API Playground</div>
+            <div style="font-size:12px;color:#64748b;margin-top:4px;">Tests use the saved Campus AI context and send your message as Admin. They never create a chat message or affect pool telemetry.</div>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;align-items:end;">
+            <label style="font-size:12px;font-weight:800;color:#334155;">API source
+              <select id="ai-playground-source" onchange="updateAiPlaygroundSource()" style="display:block;width:100%;margin-top:5px;padding:10px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;font-size:13px;">
+                <option value="pool">Configured API pool</option>
+                <option value="custom">Custom Gemini API key</option>
+              </select>
+            </label>
+            <label id="ai-playground-pool-field" style="font-size:12px;font-weight:800;color:#334155;">Configured API
+              <select id="ai-playground-api" style="display:block;width:100%;margin-top:5px;padding:10px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;font-size:13px;"></select>
+            </label>
+            <label id="ai-playground-key-field" class="hidden" style="font-size:12px;font-weight:800;color:#334155;">Custom Gemini API key
+              <input id="ai-playground-key" type="password" autocomplete="off" spellcheck="false" placeholder="Used for this request only" style="display:block;width:100%;box-sizing:border-box;margin-top:5px;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font:inherit;font-size:13px;">
+            </label>
+            <label style="font-size:12px;font-weight:800;color:#334155;">Gemini model
+              <input id="ai-playground-model" list="ai-playground-model-options" value="gemini-2.5-flash" autocomplete="off" style="display:block;width:100%;box-sizing:border-box;margin-top:5px;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font:inherit;font-size:13px;">
+              <datalist id="ai-playground-model-options"></datalist>
+            </label>
+          </div>
+          <label style="display:block;font-size:12px;font-weight:800;color:#334155;margin-top:12px;">Message from Admin
+            <textarea id="ai-playground-message" rows="4" maxlength="4000" placeholder="Write a test message for the AI" style="display:block;width:100%;box-sizing:border-box;resize:vertical;margin-top:5px;border:1px solid #cbd5e1;border-radius:8px;padding:10px;font:inherit;font-size:13px;color:#1e293b;background:#fff;">Hi, can you introduce yourself?</textarea>
+          </label>
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px;">
+            <button id="ai-playground-send" onclick="runAiPlaygroundTest()" class="btn btn-approve">Send test message</button>
+            <span id="ai-playground-status" role="status" aria-live="polite" style="font-size:12px;color:#64748b;"></span>
+          </div>
+          <div id="ai-playground-result" class="hidden" style="margin-top:12px;border:1px solid #bbf7d0;background:#f0fdf4;border-radius:9px;padding:12px;">
+            <div id="ai-playground-result-meta" style="font-size:12px;font-weight:800;color:#166534;margin-bottom:6px;"></div>
+            <div id="ai-playground-result-text" style="font-size:13px;line-height:1.6;color:#0f172a;white-space:pre-wrap;overflow-wrap:anywhere;"></div>
           </div>
         </div>
         <div style="display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px;margin:-6px 0 16px;">
@@ -5753,6 +5789,101 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       const opening = editor.classList.contains('hidden');
       editor.classList.toggle('hidden');
       if (opening) setAiContextAssistant(aiContextAssistant);
+    }
+
+    let aiPlaygroundOptionsLoaded = false;
+    function toggleAiPlayground() {
+      const panel = document.getElementById('ai-playground-panel');
+      if (!panel) return;
+      const opening = panel.classList.contains('hidden');
+      panel.classList.toggle('hidden');
+      if (opening) loadAiPlaygroundOptions();
+    }
+
+    function updateAiPlaygroundSource() {
+      const source = document.getElementById('ai-playground-source');
+      const isCustom = source && source.value === 'custom';
+      const poolField = document.getElementById('ai-playground-pool-field');
+      const keyField = document.getElementById('ai-playground-key-field');
+      if (poolField) poolField.classList.toggle('hidden', !!isCustom);
+      if (keyField) keyField.classList.toggle('hidden', !isCustom);
+    }
+
+    async function loadAiPlaygroundOptions() {
+      const status = document.getElementById('ai-playground-status');
+      const apiSelect = document.getElementById('ai-playground-api');
+      const modelList = document.getElementById('ai-playground-model-options');
+      if (!apiSelect || !modelList) return;
+      if (status) { status.style.color = '#64748b'; status.innerText = 'Loading configured APIs...'; }
+      try {
+        const response = await fetch('/api/v1/dashboard/ai-playground/options', { headers: await adminSettingsAuthHeaders() });
+        const json = await response.json();
+        if (!response.ok || !json.success) throw new Error(json.error || 'Could not load API options.');
+        apiSelect.replaceChildren();
+        (json.data?.apis || []).forEach(function(api) {
+          const option = document.createElement('option');
+          option.value = String(api.apiIndex);
+          option.textContent = api.apiLabel;
+          apiSelect.appendChild(option);
+        });
+        modelList.replaceChildren();
+        (json.data?.models || []).forEach(function(model) {
+          const option = document.createElement('option');
+          option.value = String(model);
+          modelList.appendChild(option);
+        });
+        if (json.data?.models?.length) document.getElementById('ai-playground-model').value = json.data.models[0];
+        aiPlaygroundOptionsLoaded = true;
+        if (status) status.innerText = (json.data?.apis || []).length ? 'Choose an API and send a private test request.' : 'No configured Gemini API keys found. Use a custom Gemini key to test.';
+      } catch (error) {
+        if (status) { status.style.color = '#b91c1c'; status.innerText = error.message || 'Could not load configured APIs.'; }
+      }
+    }
+
+    async function runAiPlaygroundTest() {
+      const status = document.getElementById('ai-playground-status');
+      const resultPanel = document.getElementById('ai-playground-result');
+      const resultMeta = document.getElementById('ai-playground-result-meta');
+      const resultText = document.getElementById('ai-playground-result-text');
+      const sendButton = document.getElementById('ai-playground-send');
+      const source = document.getElementById('ai-playground-source');
+      const customApiKey = document.getElementById('ai-playground-key').value.trim();
+      const message = document.getElementById('ai-playground-message').value.trim();
+      const model = document.getElementById('ai-playground-model').value.trim();
+      const isCustom = source.value === 'custom';
+      if (!message) { status.style.color = '#b91c1c'; status.innerText = 'Enter a message to test.'; return; }
+      if (!model) { status.style.color = '#b91c1c'; status.innerText = 'Enter a Gemini model name.'; return; }
+      if (isCustom && !customApiKey) { status.style.color = '#b91c1c'; status.innerText = 'Paste a Gemini API key to test.'; return; }
+      if (!isCustom && !aiPlaygroundOptionsLoaded) await loadAiPlaygroundOptions();
+
+      if (sendButton) { sendButton.disabled = true; sendButton.textContent = 'Sending...'; }
+      if (resultPanel) resultPanel.classList.add('hidden');
+      if (status) { status.style.color = '#64748b'; status.innerText = 'Sending a request directly to Gemini...'; }
+      try {
+        const response = await fetch('/api/v1/dashboard/ai-playground/test', {
+          method: 'POST',
+          headers: await adminSettingsAuthHeaders(),
+          body: JSON.stringify({
+            apiIndex: isCustom ? undefined : Number(document.getElementById('ai-playground-api').value),
+            customApiKey: isCustom ? customApiKey : undefined,
+            model,
+            message
+          })
+        });
+        const json = await response.json();
+        if (!response.ok || !json.success) {
+          const providerStatus = json.data?.providerStatus ? ' (provider status ' + json.data.providerStatus + ')' : '';
+          throw new Error((json.error || 'The API request failed.') + providerStatus);
+        }
+        if (resultMeta) resultMeta.textContent = json.data.apiLabel + ' · ' + json.data.model + ' · ' + json.data.durationMs + ' ms';
+        if (resultText) resultText.textContent = json.data.text;
+        if (resultPanel) resultPanel.classList.remove('hidden');
+        if (status) { status.style.color = '#166534'; status.innerText = 'API responded successfully.'; }
+      } catch (error) {
+        if (status) { status.style.color = '#b91c1c'; status.innerText = error.message || 'The API request failed.'; }
+      } finally {
+        if (sendButton) { sendButton.disabled = false; sendButton.textContent = 'Send test message'; }
+      }
     }
 
     async function loadAiContext() {
