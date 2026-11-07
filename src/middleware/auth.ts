@@ -35,6 +35,7 @@ export const authenticate = async (
     }
 
     req.user = user;
+    void User.updateOne({ _id: user._id }, { $set: { lastOnlineAt: new Date() } }).exec().catch(() => {});
     next();
   } catch (error) {
     res.status(401).json({ success: false, error: 'Invalid or expired token.' });
@@ -55,6 +56,7 @@ export const optionalAuthenticate = async (
         const user = await User.findById(decoded.userId);
         if (user && user.accountStatus !== 'suspended') {
           req.user = user;
+    void User.updateOne({ _id: user._id }, { $set: { lastOnlineAt: new Date() } }).exec().catch(() => {});
         }
       } catch (e) {
         // ignore invalid token for optional auth

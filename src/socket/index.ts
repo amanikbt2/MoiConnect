@@ -154,6 +154,10 @@ export const setupSocketIO = (io: SocketIOServer): void => {
       connectedAt: new Date()
     });
 
+    if (userId) {
+      void User.findByIdAndUpdate(userId, { $set: { lastOnlineAt: new Date() } }).exec().catch(() => {});
+    }
+
     console.log(`[Socket Connected]: ${isGuest ? 'Guest (Unknown)' : `User ${userId}`} (Active: ${activeSockets.size})`);
 
     const broadcastOnlineCount = () => {

@@ -73,6 +73,7 @@ router.post('/dashboard/restore', tempUpload.single('backup'), dashboardControll
 // Web Dashboard API Routes
 router.post('/search-reports', optionalAuthenticate, searchReportController.createSearchReport);
 router.get('/dashboard/overview', dashboardController.getDashboardOverview);
+router.get('/dashboard/metrics', dashboardController.getDashboardMetrics);
 router.get('/dashboard/search-reports', searchReportController.getSearchReports);
 router.delete('/dashboard/search-reports/:id', searchReportController.deleteSearchReport);
 router.delete('/dashboard/search-reports', searchReportController.deleteAllSearchReports);

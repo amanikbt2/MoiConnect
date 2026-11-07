@@ -228,6 +228,197 @@ export const getDashboardOverview = async (_req: Request, res: Response): Promis
   }
 };
 
+// 1a. JSON API: Get detailed platform metrics by timeframe (daily, weekly, monthly, 6months, yearly)
+export const getDashboardMetrics = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const rawTimeframe = String(req.query.timeframe || 'daily').toLowerCase();
+    const timeframe = ['daily', 'weekly', 'monthly', '6months', 'yearly'].includes(rawTimeframe) ? rawTimeframe : 'daily';
+
+    const now = new Date();
+    let startDate: Date;
+    let previousStartDate: Date;
+    let timeframeLabel: string;
+    const intervals: { label: string; start: Date; end: Date }[] = [];
+
+    if (timeframe === 'weekly') {
+      startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      previousStartDate = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
+      timeframeLabel = 'Weekly (Past 7 Days)';
+      for (let i = 6; i >= 0; i--) {
+        const dStart = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
+        dStart.setHours(0, 0, 0, 0);
+        const dEnd = new Date(dStart.getTime() + 24 * 60 * 60 * 1000 - 1);
+        const dayLabel = dStart.toLocaleDateString('en-US', { weekday: 'short', month: 'numeric', day: 'numeric' });
+        intervals.push({ label: dayLabel, start: dStart, end: dEnd });
+      }
+    } else if (timeframe === 'monthly') {
+      startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+      previousStartDate = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
+      timeframeLabel = 'Monthly (Past 30 Days)';
+      for (let i = 3; i >= 0; i--) {
+        const wStart = new Date(now.getTime() - (i + 1) * 7.5 * 24 * 60 * 60 * 1000);
+        const wEnd = new Date(now.getTime() - i * 7.5 * 24 * 60 * 60 * 1000);
+        intervals.push({ label: 'Week ' + (4 - i), start: wStart, end: wEnd });
+      }
+    } else if (timeframe === '6months') {
+      startDate = new Date(now.getTime() - 180 * 24 * 60 * 60 * 1000);
+      previousStartDate = new Date(now.getTime() - 360 * 24 * 60 * 60 * 1000);
+      timeframeLabel = 'Past 6 Months';
+      for (let i = 5; i >= 0; i--) {
+        const mStart = new Date(now.getTime() - (i + 1) * 30 * 24 * 60 * 60 * 1000);
+        const mEnd = new Date(now.getTime() - i * 30 * 24 * 60 * 60 * 1000);
+        intervals.push({ label: mStart.toLocaleDateString('en-US', { month: 'short' }), start: mStart, end: mEnd });
+      }
+    } else if (timeframe === 'yearly') {
+      startDate = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+      previousStartDate = new Date(now.getTime() - 730 * 24 * 60 * 60 * 1000);
+      timeframeLabel = 'Yearly (Past 365 Days)';
+      for (let i = 11; i >= 0; i--) {
+        const yStart = new Date(now.getTime() - (i + 1) * 30.5 * 24 * 60 * 60 * 1000);
+        const yEnd = new Date(now.getTime() - i * 30.5 * 24 * 60 * 60 * 1000);
+        intervals.push({ label: yStart.toLocaleDateString('en-US', { month: 'short' }), start: yStart, end: yEnd });
+      }
+    } else {
+      // daily
+      const todayStart = new Date(now);
+      todayStart.setHours(0, 0, 0, 0);
+      startDate = todayStart;
+      previousStartDate = new Date(todayStart.getTime() - 24 * 60 * 60 * 1000);
+      timeframeLabel = 'Daily (Today)';
+      for (let h = 0; h < 24; h += 4) {
+        const iStart = new Date(todayStart.getTime() + h * 60 * 60 * 1000);
+        const iEnd = new Date(todayStart.getTime() + (h + 4) * 60 * 60 * 1000 - 1);
+        intervals.push({ label: String(h).padStart(2, '0') + ':00 - ' + String(h + 4).padStart(2, '0') + ':00', start: iStart, end: iEnd });
+      }
+    }
+
+    const onlineStats = getOnlineStats();
+    const onlineObjectIds = (onlineStats.onlineUserIds || [])
+      .filter((id: string) => mongoose.Types.ObjectId.isValid(id))
+      .map((id: string) => new mongoose.Types.ObjectId(id));
+
+    // 1. Online / Active users in timeframe
+    const activeQuery: any[] = [
+      { lastOnlineAt: { $gte: startDate } },
+      { createdAt: { $gte: startDate } }
+    ];
+    if (onlineObjectIds.length > 0) {
+      activeQuery.push({ _id: { $in: onlineObjectIds } });
+    }
+    const activeUsersCount = await User.countDocuments({ $or: activeQuery });
+
+    // 2. New users in timeframe
+    const newUsersCount = await User.countDocuments({ createdAt: { $gte: startDate } });
+    const prevNewUsersCount = await User.countDocuments({ createdAt: { $gte: previousStartDate, $lt: startDate } });
+    const growthPercent = prevNewUsersCount > 0
+      ? Math.round(((newUsersCount - prevNewUsersCount) / prevNewUsersCount) * 100)
+      : (newUsersCount > 0 ? 100 : 0);
+
+    const studentsCount = await User.countDocuments({ createdAt: { $gte: startDate }, roles: 'student' });
+    const landlordsCount = await User.countDocuments({ createdAt: { $gte: startDate }, roles: 'landlord' });
+    const adminsCount = await User.countDocuments({ createdAt: { $gte: startDate }, roles: 'admin' });
+
+    // 3. Approved papers in timeframe
+    const approvedPapersCount = await Paper.countDocuments({
+      status: 'approved',
+      $or: [
+        { reviewedAt: { $gte: startDate } },
+        { updatedAt: { $gte: startDate } },
+        { createdAt: { $gte: startDate } }
+      ]
+    });
+    const pendingPapersCount = await Paper.countDocuments({
+      status: 'pending',
+      createdAt: { $gte: startDate }
+    });
+    const totalSubmittedPapers = await Paper.countDocuments({
+      createdAt: { $gte: startDate }
+    });
+
+    // 4. Community activity
+    const messagesCount = await CommunityMessage.countDocuments({ createdAt: { $gte: startDate } });
+
+    // 5. Timeline intervals breakdown
+    const timeline = await Promise.all(
+      intervals.map(async (interval) => {
+        const newUsers = await User.countDocuments({ createdAt: { $gte: interval.start, $lte: interval.end } });
+        const approvedPapers = await Paper.countDocuments({
+          status: 'approved',
+          $or: [
+            { reviewedAt: { $gte: interval.start, $lte: interval.end } },
+            { updatedAt: { $gte: interval.start, $lte: interval.end } },
+            { createdAt: { $gte: interval.start, $lte: interval.end } }
+          ]
+        });
+        const intervalActiveConditions: any[] = [
+          { lastOnlineAt: { $gte: interval.start, $lte: interval.end } },
+          { createdAt: { $gte: interval.start, $lte: interval.end } }
+        ];
+        if (now >= interval.start && now <= interval.end && onlineObjectIds.length > 0) {
+          intervalActiveConditions.push({ _id: { $in: onlineObjectIds } });
+        }
+        const activeUsers = await User.countDocuments({ $or: intervalActiveConditions });
+        return {
+          label: interval.label,
+          newUsers,
+          approvedPapers,
+          activeUsers
+        };
+      })
+    );
+
+    // 6. Top active departments in this timeframe
+    const topDepartments = await Paper.aggregate([
+      { $match: { createdAt: { $gte: startDate } } },
+      { $group: { _id: '$department', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+      { $limit: 5 }
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        timeframe,
+        timeframeLabel,
+        period: {
+          start: startDate.toISOString(),
+          end: now.toISOString()
+        },
+        summary: {
+          onlineUsers: {
+            currentLive: onlineStats.totalOnline,
+            authenticatedLive: onlineStats.authenticatedCount,
+            guestLive: onlineStats.guestCount,
+            activeInTimeframe: activeUsersCount,
+            description: timeframe === 'daily'
+              ? 'Users active today & live socket connections'
+              : 'Unique users active in ' + timeframeLabel.toLowerCase()
+          },
+          newUsers: {
+            count: newUsersCount,
+            growthPercent,
+            students: studentsCount,
+            landlords: landlordsCount,
+            admins: adminsCount
+          },
+          approvedPapers: {
+            count: approvedPapersCount,
+            pendingCount: pendingPapersCount,
+            totalSubmitted: totalSubmittedPapers
+          },
+          communityActivity: {
+            messagesCount
+          }
+        },
+        timeline,
+        topDepartments: topDepartments.map((d: any) => ({ department: d._id || 'General', count: d.count }))
+      }
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to fetch metrics data' });
+  }
+};
+
 // 1b. JSON API: Get & Update App Settings
 export const getAppSettings = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -3203,7 +3394,26 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         </div>
       </div>
 
-      <!-- Users Table -->
+      <!-- Sub-Tab Switcher for Stats & Registered Users -->
+      <div style="display: flex; gap: 12px; margin: 24px 0 20px 0; border-bottom: 2px solid #e2e8f0; padding-bottom: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap;">
+        <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+          <button id="sub-btn-stats-users" type="button" onclick="switchStatsSubTab('users')" class="btn" style="background: #15803d; color: #ffffff; font-weight: 800; border-radius: 10px; padding: 10px 18px; font-size: 13px; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; transition: all 0.2s; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+            Registered Users Directory
+          </button>
+          <button id="sub-btn-stats-metrics" type="button" onclick="switchStatsSubTab('metrics')" class="btn" style="background: #f1f5f9; color: #475569; font-weight: 800; border-radius: 10px; padding: 10px 18px; font-size: 13px; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; transition: all 0.2s;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>
+            Metrics & Analytics
+          </button>
+        </div>
+        <div id="stats-sub-hint" style="font-size: 12px; color: #64748b; font-weight: 600;">
+          Directory of registered student, landlord & admin accounts
+        </div>
+      </div>
+
+      <!-- SUB-TAB 1: USERS DIRECTORY -->
+      <div id="stats-sub-users">
+        <!-- Users Table -->
       <div class="card">
         <div class="card-header">
           <div>
@@ -3214,7 +3424,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
             <p class="card-sub">Students, Landlords, and Admin accounts</p>
           </div>
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
-            <button id="download-user-emails-btn" type="button" onclick="downloadUserEmailsCsv()" class="btn btn-view" style="font-size:11px;white-space:nowrap;">✉ Download Emails CSV</button>
+            <button id="download-user-emails-btn" type="button" onclick="downloadUserEmailsCsv()" class="btn btn-view" style="font-size:11px;white-space:nowrap;display:inline-flex;align-items:center;gap:6px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg><span>Download Emails CSV</span></button>
             <div class="search-input-wrapper">
               <svg class="search-input-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
               <input
@@ -3248,7 +3458,139 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
             <tbody id="users-table-body">
               <tr><td colspan="10" style="text-align: center; padding: 32px; color: #94a3b8;">Loading user database...</td></tr>
             </tbody>
-          </table>
+                    </table>
+        </div>
+      </div>
+      </div> <!-- /#stats-sub-users -->
+
+      <!-- SUB-TAB 2: METRICS & ANALYTICS -->
+      <div id="stats-sub-metrics" class="hidden">
+        <div class="card" style="margin-bottom: 24px;">
+          <div class="card-header" style="flex-wrap: wrap; gap: 16px;">
+            <div>
+              <h2 class="card-title" style="display: flex; align-items: center; gap: 8px;">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#15803d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>
+                Platform Performance & Growth Metrics
+              </h2>
+              <p class="card-sub">Select your desired timeframe to inspect active user engagement, new student registrations, and approved past papers.</p>
+            </div>
+            
+            <!-- Timeframe Filter Toolbar -->
+            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+              <div class="timeframe-pill-group" style="display: flex; background: #f1f5f9; padding: 4px; border-radius: 10px; gap: 4px; border: 1px solid #e2e8f0;">
+                <button type="button" class="btn-timeframe" onclick="selectMetricsTimeframe('daily')" data-timeframe="daily" style="border: none; border-radius: 8px; padding: 7px 13px; font-size: 12px; font-weight: 700; cursor: pointer; transition: all 0.2s; background: #15803d; color: #ffffff; display: inline-flex; align-items: center; gap: 6px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg><span>Daily</span></button>
+                <button type="button" class="btn-timeframe" onclick="selectMetricsTimeframe('weekly')" data-timeframe="weekly" style="border: none; border-radius: 8px; padding: 7px 13px; font-size: 12px; font-weight: 700; cursor: pointer; transition: all 0.2s; background: transparent; color: #475569; display: inline-flex; align-items: center; gap: 6px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg><span>Weekly</span></button>
+                <button type="button" class="btn-timeframe" onclick="selectMetricsTimeframe('monthly')" data-timeframe="monthly" style="border: none; border-radius: 8px; padding: 7px 13px; font-size: 12px; font-weight: 700; cursor: pointer; transition: all 0.2s; background: transparent; color: #475569; display: inline-flex; align-items: center; gap: 6px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M8 14h.01"/><path d="M12 14h.01"/><path d="M16 14h.01"/></svg><span>Monthly</span></button>
+                <button type="button" class="btn-timeframe" onclick="selectMetricsTimeframe('6months')" data-timeframe="6months" style="border: none; border-radius: 8px; padding: 7px 13px; font-size: 12px; font-weight: 700; cursor: pointer; transition: all 0.2s; background: transparent; color: #475569; display: inline-flex; align-items: center; gap: 6px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="14" x2="16" y2="14"/></svg><span>6 Months</span></button>
+                <button type="button" class="btn-timeframe" onclick="selectMetricsTimeframe('yearly')" data-timeframe="yearly" style="border: none; border-radius: 8px; padding: 7px 13px; font-size: 12px; font-weight: 700; cursor: pointer; transition: all 0.2s; background: transparent; color: #475569; display: inline-flex; align-items: center; gap: 6px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg><span>Yearly</span></button>
+              </div>
+              <button type="button" onclick="loadDashboardMetrics(currentMetricsTimeframe)" class="btn btn-view" style="font-size: 12px; font-weight: 700; padding: 8px 14px; white-space: nowrap; display: inline-flex; align-items: center; gap: 6px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg><span>Refresh</span></button>
+            </div>
+          </div>
+
+          <!-- Timeframe Sub-header banner -->
+          <div style="background: #f8fafc; border-bottom: 1px solid #e2e8f0; padding: 10px 24px; font-size: 12px; color: #64748b; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+            <div>
+              Active Timeframe: <strong id="metrics-period-label" style="color: #0f172a; font-weight: 800;">Daily (Today)</strong>
+              <span id="metrics-period-range" style="margin-left: 8px; color: #94a3b8; font-family: monospace; font-size: 11px;"></span>
+            </div>
+            <div id="metrics-live-pulse" style="display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; color: #166534; background: #dcfce7; padding: 3px 10px; border-radius: 20px; border: 1px solid #bbf7d0;">
+              <span style="width: 7px; height: 7px; background-color: #22c55e; border-radius: 50%; display: inline-block;"></span>
+              <span id="metrics-live-text">Real-time Telemetry Synced</span>
+            </div>
+          </div>
+
+          <!-- 4 Core Metric Spotlight Cards -->
+          <div style="padding: 24px; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 18px;">
+            <!-- Card 1: Online & Active Users -->
+            <div class="stat-card" style="border-left: 4px solid #16a34a; background: #ffffff;">
+              <div class="stat-label" style="display: flex; align-items: center; justify-content: space-between;">
+                <span id="metric-card-online-title">Online & Active Users</span>
+                <span style="background: #dcfce7; color: #15803d; font-size: 10px; font-weight: 800; padding: 2px 7px; border-radius: 6px; border: 1px solid #bbf7d0;">PRESENCE</span>
+              </div>
+              <div id="metric-online-count" class="stat-val" style="color: #166534; font-size: 32px; margin: 8px 0 4px 0;">--</div>
+              <div id="metric-online-sub" class="stat-sub" style="font-size: 12px; color: #475569;">Active users in timeframe</div>
+            </div>
+
+            <!-- Card 2: New Registered Users -->
+            <div class="stat-card" style="border-left: 4px solid #2563eb; background: #ffffff;">
+              <div class="stat-label" style="display: flex; align-items: center; justify-content: space-between;">
+                <span>New Registered Users</span>
+                <span style="background: #dbeafe; color: #1d4ed8; font-size: 10px; font-weight: 800; padding: 2px 7px; border-radius: 6px; border: 1px solid #bfdbfe;">SIGNUPS</span>
+              </div>
+              <div id="metric-new-users-count" class="stat-val" style="color: #2563eb; font-size: 32px; margin: 8px 0 4px 0;">--</div>
+              <div id="metric-new-users-sub" class="stat-sub" style="font-size: 12px; color: #475569;">Registered accounts in period</div>
+            </div>
+
+            <!-- Card 3: Approved Papers -->
+            <div class="stat-card" style="border-left: 4px solid #7c3aed; background: #ffffff;">
+              <div class="stat-label" style="display: flex; align-items: center; justify-content: space-between;">
+                <span>Approved Past Papers</span>
+                <span style="background: #ede9fe; color: #6d28d9; font-size: 10px; font-weight: 800; padding: 2px 7px; border-radius: 6px; border: 1px solid #ddd6fe;">ACADEMICS</span>
+              </div>
+              <div id="metric-approved-papers-count" class="stat-val" style="color: #7c3aed; font-size: 32px; margin: 8px 0 4px 0;">--</div>
+              <div id="metric-approved-papers-sub" class="stat-sub" style="font-size: 12px; color: #475569;">Verified revision resources</div>
+            </div>
+
+            <!-- Card 4: Community Engagement -->
+            <div class="stat-card" style="border-left: 4px solid #d97706; background: #ffffff;">
+              <div class="stat-label" style="display: flex; align-items: center; justify-content: space-between;">
+                <span>Community Messages</span>
+                <span style="background: #fef3c7; color: #b45309; font-size: 10px; font-weight: 800; padding: 2px 7px; border-radius: 6px; border: 1px solid #fde68a;">FORUM</span>
+              </div>
+              <div id="metric-community-count" class="stat-val" style="color: #d97706; font-size: 32px; margin: 8px 0 4px 0;">--</div>
+              <div id="metric-community-sub" class="stat-sub" style="font-size: 12px; color: #475569;">Uni Forum messages posted</div>
+            </div>
+          </div>
+
+          <!-- Visual Activity & Growth Distribution Chart -->
+          <div style="padding: 0 24px 24px 24px;">
+            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px 22px;">
+              <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; flex-wrap: wrap; gap: 10px;">
+                <div style="font-size: 13px; font-weight: 800; color: #0f172a; display: flex; align-items: center; gap: 8px;">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#15803d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+                  Distribution Breakdown for <span id="metrics-chart-subhead" style="color: #15803d;">Daily (Today)</span>
+                </div>
+                <div style="display: flex; gap: 14px; font-size: 11px; font-weight: 700; flex-wrap: wrap;">
+                  <span style="display: inline-flex; align-items: center; gap: 5px; color: #166534;"><span style="width: 10px; height: 10px; background: #16a34a; border-radius: 2px;"></span> Online/Active Users</span>
+                  <span style="display: inline-flex; align-items: center; gap: 5px; color: #1d4ed8;"><span style="width: 10px; height: 10px; background: #2563eb; border-radius: 2px;"></span> New Signups</span>
+                  <span style="display: inline-flex; align-items: center; gap: 5px; color: #6d28d9;"><span style="width: 10px; height: 10px; background: #7c3aed; border-radius: 2px;"></span> Approved Papers</span>
+                </div>
+              </div>
+
+              <!-- Bar container -->
+              <div id="metrics-chart-bars" style="display: flex; align-items: flex-end; gap: 12px; min-height: 160px; padding: 20px 10px 10px 10px; border-bottom: 2px solid #cbd5e1; overflow-x: auto;">
+                <div style="width: 100%; text-align: center; color: #94a3b8; font-size: 12px; padding: 40px 0;">Loading metric visualization...</div>
+              </div>
+              <div id="metrics-chart-labels" style="display: flex; justify-content: space-between; font-size: 11px; color: #64748b; font-weight: 600; margin-top: 8px; overflow-x: auto;">
+              </div>
+            </div>
+          </div>
+
+          <!-- Bottom Summary Insights: Top Active Departments & Role Distribution -->
+          <div style="padding: 0 24px 24px 24px; display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px;">
+            <!-- Insight 1: User Roles Breakdown -->
+            <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 18px 20px;">
+              <h3 style="font-size: 13px; font-weight: 800; color: #0f172a; margin-bottom: 12px; display: flex; align-items: center; gap: 6px;">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+                Signups by Account Role
+              </h3>
+              <div id="metric-role-breakdown" style="display: flex; flex-direction: column; gap: 10px;">
+                <!-- Dynamically filled -->
+              </div>
+            </div>
+
+            <!-- Insight 2: Top Active Academic Departments -->
+            <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 18px 20px;">
+              <h3 style="font-size: 13px; font-weight: 800; color: #0f172a; margin-bottom: 12px; display: flex; align-items: center; gap: 6px;">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+                Active Departments in Timeframe
+              </h3>
+              <div id="metric-dept-breakdown" style="display: flex; flex-wrap: wrap; gap: 8px;">
+                <!-- Dynamically filled -->
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </section>
@@ -4347,7 +4689,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         <!-- Bottom Action Bar with Red Remove User Button -->
         <div style="margin-top:20px;padding-top:16px;border-top:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
           <button type="button" id="btn-remove-user" onclick="confirmDeleteUser()" style="background:#dc2626;color:#ffffff;font-weight:800;font-size:13px;padding:10px 18px;border-radius:10px;border:none;cursor:pointer;display:inline-flex;align-items:center;gap:8px;box-shadow:0 2px 6px rgba(220,38,38,0.25);transition:all 0.15s ease;">
-            <span>🗑</span> <span id="btn-remove-user-text">Remove User</span>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg> <span id="btn-remove-user-text">Remove User</span>
           </button>
           <button type="button" onclick="closeUserInfo()" style="background:#f1f5f9;color:#475569;font-weight:700;font-size:13px;padding:10px 18px;border-radius:10px;border:none;cursor:pointer;">
             Close
@@ -4360,7 +4702,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
     <div id="delete-user-confirm-modal" class="modal-backdrop hidden" style="z-index: 10050;" onclick="if(event.target === this) closeDeleteUserConfirm()">
       <div class="modal-content" style="max-width: 480px; text-align: center; border-top: 4px solid #dc2626; padding: 26px 24px;">
         <div style="width: 56px; height: 56px; border-radius: 50%; background: #fee2e2; color: #dc2626; display: flex; align-items: center; justify-content: center; font-size: 26px; margin: 0 auto 16px;">
-          ⚠️
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
         </div>
         <h3 style="font-size: 20px; font-weight: 900; color: #0f172a; margin: 0 0 8px;">Permanently Delete Account?</h3>
         <p id="delete-user-confirm-msg" style="font-size: 13px; color: #475569; line-height: 1.5; margin: 0 0 20px;">
@@ -4371,7 +4713,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
             Cancel
           </button>
           <button type="button" id="btn-confirm-delete-user" onclick="executeDeleteUser()" style="flex: 1; padding: 11px 18px; border-radius: 10px; border: none; background: #dc2626; color: #ffffff; font-weight: 800; font-size: 13px; cursor: pointer; box-shadow: 0 2px 6px rgba(220,38,38,0.3); display: flex; align-items: center; justify-content: center; gap: 6px;">
-            <span>🗑</span> <span id="btn-confirm-delete-text">Delete Account</span>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg> <span id="btn-confirm-delete-text">Delete Account</span>
           </button>
         </div>
       </div>
@@ -5509,6 +5851,223 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         loadAiOverages();
       } catch (error) {
         showToast('Failed to clear AI overages: ' + error.message, true);
+      }
+    }
+
+        let currentMetricsTimeframe = 'daily';
+
+    function switchStatsSubTab(sub) {
+      const usersBtn = document.getElementById('sub-btn-stats-users');
+      const metricsBtn = document.getElementById('sub-btn-stats-metrics');
+      const usersDiv = document.getElementById('stats-sub-users');
+      const metricsDiv = document.getElementById('stats-sub-metrics');
+      const hint = document.getElementById('stats-sub-hint');
+
+      if (sub === 'metrics') {
+        if (usersBtn) {
+          usersBtn.style.background = '#f1f5f9';
+          usersBtn.style.color = '#475569';
+          usersBtn.style.boxShadow = 'none';
+        }
+        if (metricsBtn) {
+          metricsBtn.style.background = '#15803d';
+          metricsBtn.style.color = '#ffffff';
+          metricsBtn.style.boxShadow = '0 1px 3px rgba(0,0,0,0.1)';
+        }
+        if (usersDiv) usersDiv.classList.add('hidden');
+        if (metricsDiv) metricsDiv.classList.remove('hidden');
+        if (hint) hint.innerText = 'Dynamic platform telemetry across selected time periods';
+        loadDashboardMetrics(currentMetricsTimeframe);
+      } else {
+        if (metricsBtn) {
+          metricsBtn.style.background = '#f1f5f9';
+          metricsBtn.style.color = '#475569';
+          metricsBtn.style.boxShadow = 'none';
+        }
+        if (usersBtn) {
+          usersBtn.style.background = '#15803d';
+          usersBtn.style.color = '#ffffff';
+          usersBtn.style.boxShadow = '0 1px 3px rgba(0,0,0,0.1)';
+        }
+        if (metricsDiv) metricsDiv.classList.add('hidden');
+        if (usersDiv) usersDiv.classList.remove('hidden');
+        if (hint) hint.innerText = 'Directory of registered student, landlord & admin accounts';
+      }
+    }
+
+    function selectMetricsTimeframe(timeframe) {
+      currentMetricsTimeframe = timeframe;
+      document.querySelectorAll('.btn-timeframe').forEach(function(btn) {
+        if (btn.getAttribute('data-timeframe') === timeframe) {
+          btn.style.background = '#15803d';
+          btn.style.color = '#ffffff';
+        } else {
+          btn.style.background = 'transparent';
+          btn.style.color = '#475569';
+        }
+      });
+      loadDashboardMetrics(timeframe);
+    }
+
+    async function loadDashboardMetrics(timeframe) {
+      timeframe = timeframe || currentMetricsTimeframe || 'daily';
+      const livePulseText = document.getElementById('metrics-live-text');
+      if (livePulseText) livePulseText.innerText = 'Syncing ' + timeframe + ' metrics...';
+
+      try {
+        const res = await fetch('/api/v1/dashboard/metrics?timeframe=' + encodeURIComponent(timeframe));
+        const json = await res.json();
+        if (!json.success || !json.data) throw new Error(json.error || 'Failed to fetch metrics data');
+        renderMetrics(json.data);
+        if (livePulseText) livePulseText.innerText = 'Live Platform Telemetry Synced';
+      } catch (err) {
+        console.error('Metrics loading error:', err);
+        if (livePulseText) livePulseText.innerText = 'Sync error: ' + err.message;
+      }
+    }
+
+    function renderMetrics(data) {
+      if (!data) return;
+      const s = data.summary;
+      const tf = data.timeframe;
+
+      // Titles & Badges
+      const periodLabel = document.getElementById('metrics-period-label');
+      if (periodLabel) periodLabel.innerText = data.timeframeLabel || tf;
+
+      const chartSubhead = document.getElementById('metrics-chart-subhead');
+      if (chartSubhead) chartSubhead.innerText = data.timeframeLabel || tf;
+
+      const rangeElem = document.getElementById('metrics-period-range');
+      if (rangeElem && data.period) {
+        const sDate = new Date(data.period.start).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        const eDate = new Date(data.period.end).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        rangeElem.innerText = '(' + sDate + ' → ' + eDate + ')';
+      }
+
+      // Card 1: Online & Active Users
+      const onlineCardTitle = document.getElementById('metric-card-online-title');
+      if (onlineCardTitle) {
+        onlineCardTitle.innerText = tf === 'daily' ? 'Active Users (Today)' : tf === 'weekly' ? 'Active Users (This Week)' : tf === 'monthly' ? 'Active Users (This Month)' : tf === '6months' ? 'Active Users (6 Months)' : 'Active Users (This Year)';
+      }
+      const onlineCountElem = document.getElementById('metric-online-count');
+      if (onlineCountElem) onlineCountElem.innerText = s.onlineUsers.activeInTimeframe;
+
+      const onlineSubElem = document.getElementById('metric-online-sub');
+      if (onlineSubElem) {
+        onlineSubElem.innerHTML = '<strong>' + s.onlineUsers.currentLive + ' Live Sockets</strong> (' + s.onlineUsers.authenticatedLive + ' Logged In • ' + s.onlineUsers.guestLive + ' Guests)';
+      }
+
+      // Card 2: New Users
+      const newUsersCountElem = document.getElementById('metric-new-users-count');
+      if (newUsersCountElem) newUsersCountElem.innerText = s.newUsers.count;
+
+      const newUsersSubElem = document.getElementById('metric-new-users-sub');
+      if (newUsersSubElem) {
+        if (s.newUsers.count === 0) {
+          newUsersSubElem.innerHTML = '<span style="color: #64748b;">0 new accounts registered in this period</span>';
+        } else {
+          const growthBadge = s.newUsers.growthPercent >= 0 ? '+' + s.newUsers.growthPercent + '% growth' : s.newUsers.growthPercent + '% growth';
+          newUsersSubElem.innerHTML = '<strong style="color: #2563eb;">' + growthBadge + '</strong> vs prev period • ' + s.newUsers.students + ' Students, ' + s.newUsers.landlords + ' Landlords';
+        }
+      }
+
+      // Card 3: Approved Papers
+      const approvedCountElem = document.getElementById('metric-approved-papers-count');
+      if (approvedCountElem) approvedCountElem.innerText = s.approvedPapers.count;
+
+      const approvedSubElem = document.getElementById('metric-approved-papers-sub');
+      if (approvedSubElem) {
+        approvedSubElem.innerHTML = '<strong>' + s.approvedPapers.totalSubmitted + ' Submitted</strong> (' + s.approvedPapers.pendingCount + ' Pending Admin Review)';
+      }
+
+      // Card 4: Community Messages
+      const commCountElem = document.getElementById('metric-community-count');
+      if (commCountElem) commCountElem.innerText = s.communityActivity.messagesCount;
+
+      // Roles breakdown panel
+      const roleBreakdownElem = document.getElementById('metric-role-breakdown');
+      if (roleBreakdownElem) {
+        const total = (s.newUsers.students + s.newUsers.landlords + s.newUsers.admins);
+        if (total === 0) {
+          roleBreakdownElem.innerHTML = '<div style="color: #94a3b8; font-size: 12px; padding: 12px 0; text-align: center;">No new user signups registered in this timeframe.</div>';
+        } else {
+          const studentPct = Math.round((s.newUsers.students / total) * 100);
+          const landlordPct = Math.round((s.newUsers.landlords / total) * 100);
+          const adminPct = Math.round((s.newUsers.admins / total) * 100);
+
+          roleBreakdownElem.innerHTML = 
+            '<div>' +
+              '<div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px;">' +
+                '<span><strong>Students</strong> (' + s.newUsers.students + ')</span>' +
+                '<span style="color:#2563eb; font-weight:700;">' + studentPct + '%</span>' +
+              '</div>' +
+              '<div style="background:#e2e8f0; height:8px; border-radius:6px; overflow:hidden;"><div style="background:#2563eb; width:' + studentPct + '%; height:100%;"></div></div>' +
+            '</div>' +
+            '<div>' +
+              '<div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px;">' +
+                '<span><strong>Landlords</strong> (' + s.newUsers.landlords + ')</span>' +
+                '<span style="color:#d97706; font-weight:700;">' + landlordPct + '%</span>' +
+              '</div>' +
+              '<div style="background:#e2e8f0; height:8px; border-radius:6px; overflow:hidden;"><div style="background:#d97706; width:' + landlordPct + '%; height:100%;"></div></div>' +
+            '</div>' +
+            '<div>' +
+              '<div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px;">' +
+                '<span><strong>Admins & Staff</strong> (' + s.newUsers.admins + ')</span>' +
+                '<span style="color:#15803d; font-weight:700;">' + adminPct + '%</span>' +
+              '</div>' +
+              '<div style="background:#e2e8f0; height:8px; border-radius:6px; overflow:hidden;"><div style="background:#15803d; width:' + adminPct + '%; height:100%;"></div></div>' +
+            '</div>';
+        }
+      }
+
+      // Top Departments breakdown panel
+      const deptBreakdownElem = document.getElementById('metric-dept-breakdown');
+      if (deptBreakdownElem) {
+        if (!data.topDepartments || data.topDepartments.length === 0) {
+          deptBreakdownElem.innerHTML = '<span style="color: #94a3b8; font-size: 12px;">No department papers submitted in this timeframe.</span>';
+        } else {
+          deptBreakdownElem.innerHTML = data.topDepartments.map(function(d) {
+            return '<div style="background:#f1f5f9; border:1px solid #e2e8f0; border-radius:8px; padding:6px 12px; font-size:12px; display:inline-flex; align-items:center; gap:6px;">' +
+              '<span style="font-weight:700; color:#1e293b;">' + d.department + '</span>' +
+              '<span style="background:#7c3aed; color:#ffffff; font-size:10px; font-weight:800; padding:2px 6px; border-radius:10px;">' + d.count + ' papers</span>' +
+            '</div>';
+          }).join('');
+        }
+      }
+
+      // Chart Bars Rendering
+      const chartBarsElem = document.getElementById('metrics-chart-bars');
+      const chartLabelsElem = document.getElementById('metrics-chart-labels');
+      if (chartBarsElem && chartLabelsElem && data.timeline) {
+        const timeline = data.timeline;
+        let maxVal = 1;
+        timeline.forEach(function(item) {
+          const itemMax = Math.max(item.newUsers || 0, item.approvedPapers || 0, item.activeUsers || 0);
+          if (itemMax > maxVal) maxVal = itemMax;
+        });
+
+        chartBarsElem.innerHTML = timeline.map(function(item) {
+          const activeVal = item.activeUsers || 0;
+          const usersVal = item.newUsers || 0;
+          const papersVal = item.approvedPapers || 0;
+
+          const activeHeight = activeVal > 0 ? Math.max(4, Math.round((activeVal / maxVal) * 110)) : 0;
+          const usersHeight = usersVal > 0 ? Math.max(4, Math.round((usersVal / maxVal) * 110)) : 0;
+          const papersHeight = papersVal > 0 ? Math.max(4, Math.round((papersVal / maxVal) * 110)) : 0;
+
+          return '<div style="flex: 1; min-width: 44px; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; position: relative;" title="' + item.label + ' &#10;• Online/Active: ' + activeVal + ' &#10;• Signups: ' + usersVal + ' &#10;• Approved Papers: ' + papersVal + '">' +
+            '<div style="display: flex; gap: 3px; align-items: flex-end; width: 100%; justify-content: center; height: 110px;">' +
+              '<div style="width: 28%; max-width: 14px; background: #16a34a; border-radius: 3px 3px 0 0; height: ' + activeHeight + 'px; transition: height 0.4s ease;" title="Active Users: ' + activeVal + '"></div>' +
+              '<div style="width: 28%; max-width: 14px; background: #2563eb; border-radius: 3px 3px 0 0; height: ' + usersHeight + 'px; transition: height 0.4s ease;" title="New Users: ' + usersVal + '"></div>' +
+              '<div style="width: 28%; max-width: 14px; background: #7c3aed; border-radius: 3px 3px 0 0; height: ' + papersHeight + 'px; transition: height 0.4s ease;" title="Approved Papers: ' + papersVal + '"></div>' +
+            '</div>' +
+          '</div>';
+        }).join('');
+
+        chartLabelsElem.innerHTML = timeline.map(function(item) {
+          return '<div style="flex: 1; min-width: 44px; text-align: center; font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 2px;">' + item.label + '</div>';
+        }).join('');
       }
     }
 
@@ -7661,9 +8220,9 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
     async function downloadUserEmailsCsv() {
       const button = document.getElementById('download-user-emails-btn');
       if (!button) return;
-      const originalText = button.innerText;
+      const originalHtml = button.innerHTML;
       button.disabled = true;
-      button.innerText = '⏳ Preparing CSV...';
+      button.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> <span>Preparing CSV...</span>';
       try {
         const response = await fetch('/api/v1/dashboard/user-emails.csv');
         if (!response.ok) {
@@ -7684,7 +8243,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         showToast('Email CSV download failed: ' + error.message, true);
       } finally {
         button.disabled = false;
-        button.innerText = originalText;
+        button.innerHTML = originalHtml;
       }
     }
 
