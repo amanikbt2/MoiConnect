@@ -5891,7 +5891,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         if (resultAttempts) {
           resultAttempts.textContent = attempts.map(function(attempt) {
             return attempt.apiLabel + ' · ' + attempt.model + ' · ' + (attempt.success ? 'Success' : 'Failed' + (attempt.status ? ' (' + attempt.status + ')' : '')) + (attempt.error ? ' — ' + attempt.error : '');
-          }).join('\n');
+          }).join('\\n');
           resultAttempts.classList.toggle('hidden', attempts.length === 0);
           resultPanel.style.borderColor = json.data.fallback ? '#fecaca' : '#bbf7d0';
           resultPanel.style.background = json.data.fallback ? '#fef2f2' : '#f0fdf4';
