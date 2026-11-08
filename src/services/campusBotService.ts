@@ -450,7 +450,10 @@ const getConversationPrompt = async (message: any, assistant: Assistant): Promis
   return promptLines.join('\n');
 };
 
-const askGemini = async (apiKey: string, apiLabel: string, model: string, messageText: string, assistant: Assistant, promptSettings: AiPromptSettings, signal: AbortSignal): Promise<{ text: string; isNetworkError?: boolean; retryable: boolean }> => {
+type AiPlaygroundAttempt = { apiLabel: string; model: string; status?: number; success: boolean; error?: string };
+type AiGenerationTrace = { attempts: AiPlaygroundAttempt[]; error?: string };
+
+const askGemini = async (apiKey: string, apiLabel: string, model: string, messageText: string, assistant: Assistant, promptSettings: AiPromptSettings, signal: AbortSignal): Promise<{ text: string; isNetworkError?: boolean; retryable: boolean; providerStatus?: number; errorMessage?: string }> => {
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
   const controller = new AbortController();
   const abort = () => controller.abort();
@@ -482,30 +485,34 @@ const askGemini = async (apiKey: string, apiLabel: string, model: string, messag
       updateAiUsage(apiLabel, 'failure');
       addAiLog({ level: response.status === 429 ? 'warn' : 'error', assistant: assistant.name, apiLabel, model, status: response.status, message: response.status === 429 ? 'Quota or rate limit reached.' : 'Gemini request failed.' });
       console.warn(`[${assistant.name}] Gemini attempt failed: api=${apiLabel}, model=${model}, status=${response.status}`);
-      return { text: '', isNetworkError: false, retryable: true };
+      const errorMessage = String(payload?.error?.message || response.statusText || 'Gemini request failed.')
+        .replaceAll(apiKey, '[redacted API key]')
+        .slice(0, 500);
+      return { text: '', isNetworkError: false, retryable: true, providerStatus: response.status, errorMessage };
     }
     const text = extractGeminiText(payload);
     updateAiUsage(apiLabel, text ? 'success' : 'failure');
     if (!text) addAiLog({ level: 'warn', assistant: assistant.name, apiLabel, model, message: 'Gemini returned no text.' });
-    return { text, isNetworkError: false, retryable: false };
+    return { text, isNetworkError: false, retryable: false, errorMessage: text ? undefined : 'Gemini returned no text.' };
   } catch (error: any) {
     if (!signal.aborted) {
       updateAiUsage(apiLabel, 'failure');
       addAiLog({ level: 'error', assistant: assistant.name, apiLabel, model, message: error?.name === 'AbortError' ? 'Request timed out.' : `Network or request error: ${String(error?.message || error).slice(0, 220)}` });
       console.warn(`[${assistant.name}] Gemini attempt unavailable: api=${apiLabel}, model=${model}`);
     }
-    return { text: '', isNetworkError: true, retryable: true };
+    return { text: '', isNetworkError: true, retryable: true, errorMessage: (error?.name === 'AbortError' ? 'Request timed out.' : String(error?.message || error)).replaceAll(apiKey, '[redacted API key]').slice(0, 300) };
   } finally {
     clearTimeout(timeout);
     signal.removeEventListener('abort', abort);
   }
 };
 
-const generateReply = async (messageText: string, assistant: Assistant, signal: AbortSignal): Promise<string | null> => {
+const generateReply = async (messageText: string, assistant: Assistant, signal: AbortSignal, trace?: AiGenerationTrace): Promise<string | null> => {
   const keys = getGeminiKeys();
   if (!keys.length) {
     addAiLog({ level: 'error', assistant: assistant.name, message: 'No Gemini API keys are configured.' });
     console.warn(`[${assistant.name}] No Gemini API keys are configured.`);
+    if (trace) trace.error = 'No Gemini API keys are configured.';
     return CAMPUS_BOT_FALLBACK;
   }
   const models = getGeminiModels();
@@ -527,6 +534,7 @@ const generateReply = async (messageText: string, assistant: Assistant, signal: 
       const model = models[modelIndex];
       totalAttempts += 1;
       const result = await askGemini(apiKey, apiLabel, model, messageText, assistant, promptSettings, signal);
+      trace?.attempts.push({ apiLabel, model, status: result.providerStatus, success: Boolean(result.text), error: result.errorMessage });
       if (signal.aborted) return null;
       if (result.text) {
         keySucceeded = true;
@@ -553,11 +561,33 @@ const generateReply = async (messageText: string, assistant: Assistant, signal: 
 
   if (totalAttempts > 0 && networkErrorCount === totalAttempts) {
     addAiLog({ level: 'error', assistant: assistant.name, message: 'Network / internet connection error. Returning internet offline fallback.' });
+    if (trace) trace.error = 'All pool attempts failed because of network errors.';
     return INTERNET_ERROR_FALLBACK;
   }
 
   addAiLog({ level: 'error', assistant: assistant.name, message: `All ${keys.length} API(s) and ${models.length} model(s) failed. Returning AI pool quota fallback.` });
+  if (trace) trace.error = `All ${keys.length} configured API(s) and ${models.length} model(s) failed.`;
   return CAMPUS_BOT_FALLBACK;
+};
+
+export const testAiPlaygroundForumFlow = async (messageText: string): Promise<{ text: string; apiLabel: string; model: string; durationMs: number; attempts: AiPlaygroundAttempt[]; fallback: boolean; error?: string }> => {
+  const message = messageText.trim();
+  if (!message || message.length > 4000) throw new Error('Enter a message of 1 to 4,000 characters.');
+  const assistant = assistants.ai;
+  const prompt = await getConversationPrompt({ senderName: 'Admin', text: message }, assistant);
+  const trace: AiGenerationTrace = { attempts: [] };
+  const startedAt = Date.now();
+  const text = await generateReply(prompt, assistant, new AbortController().signal, trace);
+  const successfulAttempt = [...trace.attempts].reverse().find((attempt) => attempt.success);
+  return {
+    text: text || '',
+    apiLabel: successfulAttempt?.apiLabel || 'Normal forum chat pool',
+    model: successfulAttempt?.model || 'Automatic rotation',
+    durationMs: Date.now() - startedAt,
+    attempts: trace.attempts,
+    fallback: !successfulAttempt,
+    error: trace.error
+  };
 };
 
 type ConversationHooks = {

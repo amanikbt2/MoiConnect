@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { getAiPlaygroundOptions, testAiPlayground } from '../services/campusBotService';
+import { getAiPlaygroundOptions, testAiPlayground, testAiPlaygroundForumFlow } from '../services/campusBotService';
 
 export const getOptions = (_req: Request, res: Response): void => {
   res.json({ success: true, data: getAiPlaygroundOptions() });
@@ -12,6 +12,11 @@ export const testRequest = async (req: Request, res: Response): Promise<void> =>
     const model = typeof body.model === 'string' ? body.model : '';
     const customApiKey = typeof body.customApiKey === 'string' ? body.customApiKey : undefined;
     const apiIndex = Number.isInteger(body.apiIndex) ? body.apiIndex : undefined;
+    if (body.mode === 'forum') {
+      const data = await testAiPlaygroundForumFlow(message);
+      res.json({ success: true, data });
+      return;
+    }
     const data = await testAiPlayground({ apiIndex, customApiKey, model, message });
     res.json({ success: true, data });
   } catch (error: any) {

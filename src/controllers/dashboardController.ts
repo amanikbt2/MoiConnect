@@ -4143,13 +4143,14 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         <div id="ai-playground-panel" class="hidden" style="background:#f8fafc;border:1px solid #cbd5e1;border-radius:12px;padding:16px;margin-bottom:18px;">
           <div style="margin-bottom:12px;">
             <div style="font-size:15px;font-weight:800;color:#0f172a;">Private API Playground</div>
-            <div style="font-size:12px;color:#64748b;margin-top:4px;">Tests use the saved Campus AI context and send your message as Admin. They never create a chat message or affect pool telemetry.</div>
+            <div style="font-size:12px;color:#64748b;margin-top:4px;">Tests use the saved Campus AI context and send your message as Admin. They never create a chat message. Normal forum mode retries across the real key/model pool, so each attempt counts against provider quotas and telemetry.</div>
           </div>
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;align-items:end;">
             <label style="font-size:12px;font-weight:800;color:#334155;">API source
               <select id="ai-playground-source" onchange="updateAiPlaygroundSource()" style="display:block;width:100%;margin-top:5px;padding:10px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;font-size:13px;">
                 <option value="pool">Configured API pool</option>
                 <option value="custom">Custom Gemini API key</option>
+                <option value="forum">Normal forum chat (automatic rotation)</option>
               </select>
             </label>
             <label id="ai-playground-pool-field" style="font-size:12px;font-weight:800;color:#334155;">Configured API
@@ -4158,7 +4159,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
             <label id="ai-playground-key-field" class="hidden" style="font-size:12px;font-weight:800;color:#334155;">Custom Gemini API key
               <input id="ai-playground-key" type="password" autocomplete="off" spellcheck="false" placeholder="Used for this request only" style="display:block;width:100%;box-sizing:border-box;margin-top:5px;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font:inherit;font-size:13px;">
             </label>
-            <label style="font-size:12px;font-weight:800;color:#334155;">Gemini model
+            <label id="ai-playground-model-field" style="font-size:12px;font-weight:800;color:#334155;">Gemini model
               <input id="ai-playground-model" list="ai-playground-model-options" value="gemini-2.5-flash" autocomplete="off" style="display:block;width:100%;box-sizing:border-box;margin-top:5px;padding:10px;border:1px solid #cbd5e1;border-radius:8px;font:inherit;font-size:13px;">
               <datalist id="ai-playground-model-options"></datalist>
             </label>
@@ -4173,6 +4174,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
           <div id="ai-playground-result" class="hidden" style="margin-top:12px;border:1px solid #bbf7d0;background:#f0fdf4;border-radius:9px;padding:12px;">
             <div id="ai-playground-result-meta" style="font-size:12px;font-weight:800;color:#166534;margin-bottom:6px;"></div>
             <div id="ai-playground-result-text" style="font-size:13px;line-height:1.6;color:#0f172a;white-space:pre-wrap;overflow-wrap:anywhere;"></div>
+            <pre id="ai-playground-result-attempts" class="hidden" style="margin:10px 0 0;padding-top:8px;border-top:1px solid #e2e8f0;white-space:pre-wrap;overflow-wrap:anywhere;font:11px/1.5 monospace;color:#475569;"></pre>
           </div>
         </div>
         <div style="display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px;margin:-6px 0 16px;">
@@ -5802,11 +5804,15 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
 
     function updateAiPlaygroundSource() {
       const source = document.getElementById('ai-playground-source');
-      const isCustom = source && source.value === 'custom';
+      const mode = source ? source.value : 'pool';
+      const isCustom = mode === 'custom';
+      const isForum = mode === 'forum';
       const poolField = document.getElementById('ai-playground-pool-field');
       const keyField = document.getElementById('ai-playground-key-field');
-      if (poolField) poolField.classList.toggle('hidden', !!isCustom);
+      const modelField = document.getElementById('ai-playground-model-field');
+      if (poolField) poolField.classList.toggle('hidden', isCustom || isForum);
       if (keyField) keyField.classList.toggle('hidden', !isCustom);
+      if (modelField) modelField.classList.toggle('hidden', isForum);
     }
 
     async function loadAiPlaygroundOptions() {
@@ -5845,16 +5851,19 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       const resultPanel = document.getElementById('ai-playground-result');
       const resultMeta = document.getElementById('ai-playground-result-meta');
       const resultText = document.getElementById('ai-playground-result-text');
+      const resultAttempts = document.getElementById('ai-playground-result-attempts');
       const sendButton = document.getElementById('ai-playground-send');
       const source = document.getElementById('ai-playground-source');
       const customApiKey = document.getElementById('ai-playground-key').value.trim();
       const message = document.getElementById('ai-playground-message').value.trim();
       const model = document.getElementById('ai-playground-model').value.trim();
-      const isCustom = source.value === 'custom';
+      const mode = source.value;
+      const isCustom = mode === 'custom';
+      const isForum = mode === 'forum';
       if (!message) { status.style.color = '#b91c1c'; status.innerText = 'Enter a message to test.'; return; }
-      if (!model) { status.style.color = '#b91c1c'; status.innerText = 'Enter a Gemini model name.'; return; }
+      if (!isForum && !model) { status.style.color = '#b91c1c'; status.innerText = 'Enter a Gemini model name.'; return; }
       if (isCustom && !customApiKey) { status.style.color = '#b91c1c'; status.innerText = 'Paste a Gemini API key to test.'; return; }
-      if (!isCustom && !aiPlaygroundOptionsLoaded) await loadAiPlaygroundOptions();
+      if (mode === 'pool' && !aiPlaygroundOptionsLoaded) await loadAiPlaygroundOptions();
 
       if (sendButton) { sendButton.disabled = true; sendButton.textContent = 'Sending...'; }
       if (resultPanel) resultPanel.classList.add('hidden');
@@ -5864,9 +5873,10 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
           method: 'POST',
           headers: await adminSettingsAuthHeaders(),
           body: JSON.stringify({
-            apiIndex: isCustom ? undefined : Number(document.getElementById('ai-playground-api').value),
+            mode: isForum ? 'forum' : 'single',
+            apiIndex: mode === 'pool' ? Number(document.getElementById('ai-playground-api').value) : undefined,
             customApiKey: isCustom ? customApiKey : undefined,
-            model,
+            model: isForum ? undefined : model,
             message
           })
         });
@@ -5875,10 +5885,23 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
           const providerStatus = json.data?.providerStatus ? ' (provider status ' + json.data.providerStatus + ')' : '';
           throw new Error((json.error || 'The API request failed.') + providerStatus);
         }
-        if (resultMeta) resultMeta.textContent = json.data.apiLabel + ' · ' + json.data.model + ' · ' + json.data.durationMs + ' ms';
+        const attempts = Array.isArray(json.data.attempts) ? json.data.attempts : [];
+        if (resultMeta) resultMeta.textContent = json.data.apiLabel + ' · ' + json.data.model + ' · ' + json.data.durationMs + ' ms' + (isForum ? ' · ' + attempts.length + ' attempt(s)' : '');
         if (resultText) resultText.textContent = json.data.text;
+        if (resultAttempts) {
+          resultAttempts.textContent = attempts.map(function(attempt) {
+            return attempt.apiLabel + ' · ' + attempt.model + ' · ' + (attempt.success ? 'Success' : 'Failed' + (attempt.status ? ' (' + attempt.status + ')' : '')) + (attempt.error ? ' — ' + attempt.error : '');
+          }).join('\n');
+          resultAttempts.classList.toggle('hidden', attempts.length === 0);
+          resultPanel.style.borderColor = json.data.fallback ? '#fecaca' : '#bbf7d0';
+          resultPanel.style.background = json.data.fallback ? '#fef2f2' : '#f0fdf4';
+          resultMeta.style.color = json.data.fallback ? '#b91c1c' : '#166534';
+        }
         if (resultPanel) resultPanel.classList.remove('hidden');
-        if (status) { status.style.color = '#166534'; status.innerText = 'API responded successfully.'; }
+        if (status) {
+          status.style.color = json.data.fallback ? '#b91c1c' : '#166534';
+          status.innerText = json.data.fallback ? (json.data.error || 'Forum pool fallback returned after all attempts.') : 'API responded successfully.';
+        }
       } catch (error) {
         if (status) { status.style.color = '#b91c1c'; status.innerText = error.message || 'The API request failed.'; }
       } finally {
