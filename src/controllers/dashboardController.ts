@@ -136,6 +136,52 @@ export const updateAiContextSettings = async (req: Request, res: Response): Prom
   }
 };
 
+const getPresenceOrderedDashboardUsers = async (onlineUserIds: string[], limit: number, select: string) => {
+  const onlineObjectIds = onlineUserIds
+    .filter((id) => mongoose.Types.ObjectId.isValid(id))
+    .map((id) => new mongoose.Types.ObjectId(id));
+
+  const onlineUsers = onlineObjectIds.length > 0
+    ? await User.find({ _id: { $in: onlineObjectIds } })
+      .select(select)
+      .sort({ lastOnlineAt: -1, createdAt: -1 })
+      .limit(limit)
+    : [];
+  const remainingLimit = Math.max(0, limit - onlineUsers.length);
+  const offlineUsers = remainingLimit > 0
+    ? await User.find(onlineObjectIds.length > 0 ? { _id: { $nin: onlineObjectIds } } : {})
+      .select(select)
+      .sort({ lastOnlineAt: -1, createdAt: -1 })
+      .limit(remainingLimit)
+    : [];
+
+  return [...onlineUsers, ...offlineUsers];
+};
+
+// Lightweight presence refresh for the registered-users directory.
+export const getDashboardUserPresence = async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const onlineStats = getOnlineStats();
+    const users = await getPresenceOrderedDashboardUsers(onlineStats.onlineUserIds, 50, '-passwordHash -refreshTokens');
+    const userIds = users.map((user: any) => user._id);
+    const rewardedTotals = await RewardPayout.aggregate([
+      { $match: { userId: { $in: userIds }, status: 'success' } },
+      { $group: { _id: '$userId', total: { $sum: '$amount' } } }
+    ]);
+    const rewardedByUser = new Map(rewardedTotals.map((item) => [String(item._id), Number(item.total || 0)]));
+    res.json({
+      success: true,
+      onlineUserIds: onlineStats.onlineUserIds,
+      users: users.map((user: any) => ({
+        ...user.toObject(),
+        rewardedAmount: rewardedByUser.get(String(user._id)) || 0
+      }))
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to refresh user presence.' });
+  }
+};
+
 // 1. JSON API: Get full dashboard data
 export const getDashboardOverview = async (_req: Request, res: Response): Promise<void> => {
   try {
@@ -163,10 +209,7 @@ export const getDashboardOverview = async (_req: Request, res: Response): Promis
       .sort({ createdAt: -1 })
       .limit(30);
 
-    const userList = await User.find()
-      .select('-passwordHash -refreshTokens')
-      .sort({ createdAt: -1 })
-      .limit(50);
+    const userList = await getPresenceOrderedDashboardUsers(onlineStats.onlineUserIds, 50, '-passwordHash -refreshTokens');
 
     const userIds = userList.map((user) => user._id);
     const rewardedTotals = await RewardPayout.aggregate([
@@ -2767,6 +2810,12 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
     .btn-refresh { background-color: #047857; color: #ffffff; font-size: 12px; font-weight: 700; padding: 8px 16px; border-radius: 8px; border: none; cursor: pointer; transition: all 0.2s; display: inline-flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
     .btn-refresh:hover { background-color: #059669; }
     @keyframes spin { 100% { transform: rotate(360deg); } }
+    @keyframes user-presence-swap { from { opacity: .5; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+    .user-presence-reordered { animation: user-presence-swap .38s ease-out; }
+    .users-live-pill { display: inline-flex; align-items: center; gap: 7px; border: 1px solid #bbf7d0; border-radius: 999px; background: #f0fdf4; color: #166534; padding: 6px 10px; font-size: 11px; font-weight: 800; white-space: nowrap; }
+    .users-live-dot { width: 7px; height: 7px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 0 3px rgba(34,197,94,.14); animation: users-live-pulse 1.8s ease-in-out infinite; }
+    @keyframes users-live-pulse { 50% { box-shadow: 0 0 0 5px rgba(34,197,94,0); } }
+    @media (prefers-reduced-motion: reduce) { .user-presence-reordered, .users-live-dot { animation: none !important; } }
 
     /* Main Container */
     main { max-width: 1200px; width: 100%; margin: 0 auto; padding: 24px 16px; flex: 1; }
@@ -3480,6 +3529,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
             <p class="card-sub">Students, Landlords, and Admin accounts</p>
           </div>
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
+            <span id="users-presence-status" class="users-live-pill" aria-live="polite"><span class="users-live-dot"></span><span>Live sorting · updates every 10 sec</span></span>
             <button id="download-user-emails-btn" type="button" onclick="downloadUserEmailsCsv()" class="btn btn-view" style="font-size:11px;white-space:nowrap;display:inline-flex;align-items:center;gap:6px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg><span>Download Emails CSV</span></button>
             <div class="search-input-wrapper">
               <svg class="search-input-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
@@ -8368,6 +8418,21 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       }
     }
 
+    let userPresenceRefreshInFlight = false;
+    let lastUserPresenceSignature = '';
+
+    function sortUsersByPresence(users) {
+      const onlineIds = new Set((globalData?.stats?.onlineUserIds || []).map(String));
+      return (users || []).slice().sort(function(a, b) {
+        const aOnline = onlineIds.has(String(a._id));
+        const bOnline = onlineIds.has(String(b._id));
+        if (aOnline !== bOnline) return aOnline ? -1 : 1;
+        const aTime = new Date(a.lastOnlineAt || a.createdAt || 0).getTime() || 0;
+        const bTime = new Date(b.lastOnlineAt || b.createdAt || 0).getTime() || 0;
+        return bTime - aTime;
+      });
+    }
+
     function renderUsers(users) {
       const tbody = document.getElementById('users-table-body');
       if (!users || users.length === 0) {
@@ -8375,10 +8440,13 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         return;
       }
 
-      const onlineIds = globalData?.stats?.onlineUserIds || [];
+      const onlineIds = new Set((globalData?.stats?.onlineUserIds || []).map(String));
+      const previousOrder = Array.from(tbody.querySelectorAll('tr[data-user-id]')).map(function(row) { return row.dataset.userId; });
+      const sortedUsers = sortUsersByPresence(users);
+      const nextOrder = sortedUsers.map(function(user) { return String(user._id); });
 
-      tbody.innerHTML = users.map(function(u) {
-        const isOnline = onlineIds.includes(u._id);
+      tbody.innerHTML = sortedUsers.map(function(u) {
+        const isOnline = onlineIds.has(String(u._id));
         const initial = (u.name || 'U')[0].toUpperCase();
         const roles = (u.roles || ['student']).join(', ');
         const lastOnline = isOnline ? 'Online now' : formatAdminUserDate(u.lastOnlineAt || u.createdAt);
@@ -8395,7 +8463,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
           ? '<span title="' + u.badge + ' badge" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:' + badgeColors[u.badge] + ';color:#fff;border:2px solid #fff;box-shadow:0 0 0 1px ' + badgeColors[u.badge] + ';font-size:12px;font-weight:900;">✓</span>'
           : '<span style="color:#94a3b8;font-size:11px;">None</span>';
 
-        return '<tr>' +
+        return '<tr data-user-id="' + escapeMaterialHtml(u._id) + '">' +
           '<td style="font-weight: 700; color: #0f172a; display: flex; align-items: center; gap: 8px;">' +
             '<div style="position: relative; width: 28px; height: 28px; border-radius: 50%; background: #15803d; color: #ffffff; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 800;">' +
               initial +
@@ -8422,6 +8490,36 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
           '</td>' +
         '</tr>';
       }).join('');
+      if (previousOrder.length && previousOrder.join('|') !== nextOrder.join('|')) {
+        Array.from(tbody.querySelectorAll('tr[data-user-id]')).forEach(function(row, index) {
+          if (previousOrder.indexOf(row.dataset.userId) !== index) row.classList.add('user-presence-reordered');
+        });
+      }
+      lastUserPresenceSignature = nextOrder.join('|') + '::' + Array.from(onlineIds).sort().join('|');
+    }
+
+    async function refreshRegisteredUserPresence() {
+      if (userPresenceRefreshInFlight || !globalData) return;
+      userPresenceRefreshInFlight = true;
+      try {
+        const response = await fetch('/api/v1/dashboard/user-presence', { cache: 'no-store' });
+        const data = await response.json();
+        if (!response.ok || !data.success) return;
+        globalData.stats = { ...(globalData.stats || {}), onlineUserIds: data.onlineUserIds || [] };
+        globalData.users = data.users || globalData.users || [];
+        const query = (document.getElementById('user-search')?.value || '').toLowerCase();
+        const filtered = globalData.users.filter(function(user) {
+          return !query || (user.name || '').toLowerCase().includes(query) || (user.email || '').toLowerCase().includes(query);
+        });
+        const signature = sortUsersByPresence(filtered).map(function(user) { return String(user._id); }).join('|') + '::' + (data.onlineUserIds || []).map(String).sort().join('|');
+        if (signature !== lastUserPresenceSignature) renderUsers(filtered);
+        const status = document.getElementById('users-presence-status');
+        if (status) status.lastElementChild.textContent = 'Live sorting · updated ' + new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+      } catch (error) {
+        console.warn('Could not refresh registered-user presence:', error);
+      } finally {
+        userPresenceRefreshInFlight = false;
+      }
     }
 
     function filterUsers() {
@@ -8905,6 +9003,13 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
     checkAdminAuth();
 
     loadDashboardData();
+    window.setInterval(function() {
+      const statsTab = document.getElementById('tab-content-stats');
+      const usersTab = document.getElementById('stats-sub-users');
+      if (document.visibilityState === 'visible' && statsTab && !statsTab.classList.contains('hidden') && usersTab && !usersTab.classList.contains('hidden')) {
+        refreshRegisteredUserPresence();
+      }
+    }, 10000);
     loadPushHistory();
         loadRegisteredPushDevices();
   </script>
