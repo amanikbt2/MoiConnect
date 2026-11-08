@@ -4143,9 +4143,15 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         <div id="ai-playground-panel" class="hidden" style="background:#f8fafc;border:1px solid #cbd5e1;border-radius:12px;padding:16px;margin-bottom:18px;">
           <div style="margin-bottom:12px;">
             <div style="font-size:15px;font-weight:800;color:#0f172a;">Private API Playground</div>
-            <div style="font-size:12px;color:#64748b;margin-top:4px;">Tests use the saved Campus AI context and send your message as Admin. They never create a chat message. Normal forum mode retries across the real key/model pool, so each attempt counts against provider quotas and telemetry.</div>
+            <div style="font-size:12px;color:#64748b;margin-top:4px;">Tests use the selected assistant's saved instructions and send your message as Admin. They never create a chat message. Normal forum mode retries across the real key/model pool, so each attempt counts against provider quotas and telemetry.</div>
           </div>
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;align-items:end;">
+            <label style="font-size:12px;font-weight:800;color:#334155;">Assistant
+              <select id="ai-playground-assistant" style="display:block;width:100%;margin-top:5px;padding:10px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;font-size:13px;">
+                <option value="ai">Campus AI (@ai)</option>
+                <option value="bot">Campus Bot (@bot)</option>
+              </select>
+            </label>
             <label style="font-size:12px;font-weight:800;color:#334155;">API source
               <select id="ai-playground-source" onchange="updateAiPlaygroundSource()" style="display:block;width:100%;margin-top:5px;padding:10px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;font-size:13px;">
                 <option value="pool">Configured API pool</option>
@@ -5857,6 +5863,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       const customApiKey = document.getElementById('ai-playground-key').value.trim();
       const message = document.getElementById('ai-playground-message').value.trim();
       const model = document.getElementById('ai-playground-model').value.trim();
+      const assistant = document.getElementById('ai-playground-assistant').value;
       const mode = source.value;
       const isCustom = mode === 'custom';
       const isForum = mode === 'forum';
@@ -5877,7 +5884,8 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
             apiIndex: mode === 'pool' ? Number(document.getElementById('ai-playground-api').value) : undefined,
             customApiKey: isCustom ? customApiKey : undefined,
             model: isForum ? undefined : model,
-            message
+            message,
+            assistant
           })
         });
         const json = await response.json();
@@ -5886,7 +5894,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
           throw new Error((json.error || 'The API request failed.') + providerStatus);
         }
         const attempts = Array.isArray(json.data.attempts) ? json.data.attempts : [];
-        if (resultMeta) resultMeta.textContent = json.data.apiLabel + ' · ' + json.data.model + ' · ' + json.data.durationMs + ' ms' + (isForum ? ' · ' + attempts.length + ' attempt(s)' : '');
+        if (resultMeta) resultMeta.textContent = json.data.assistant + ' · ' + json.data.apiLabel + ' · ' + json.data.model + ' · ' + json.data.durationMs + ' ms' + (isForum ? ' · ' + attempts.length + ' attempt(s)' : '');
         if (resultText) resultText.textContent = json.data.text;
         if (resultAttempts) {
           resultAttempts.textContent = attempts.map(function(attempt) {

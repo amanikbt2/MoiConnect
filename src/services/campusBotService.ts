@@ -325,7 +325,7 @@ const buildSystemInstructionText = (promptSettings: AiPromptSettings): string =>
   return parts.join('\n\n');
 };
 
-export const testAiPlayground = async (input: { apiIndex?: number; customApiKey?: string; model: string; message: string }): Promise<{ text: string; model: string; apiLabel: string; durationMs: number }> => {
+export const testAiPlayground = async (input: { apiIndex?: number; customApiKey?: string; model: string; message: string; assistantKind?: AssistantKind }): Promise<{ text: string; model: string; apiLabel: string; assistant: string; durationMs: number }> => {
   const message = input.message.trim();
   const model = input.model.trim();
   if (!message || message.length > 4000) throw new Error('Enter a message of 1 to 4,000 characters.');
@@ -346,7 +346,9 @@ export const testAiPlayground = async (input: { apiIndex?: number; customApiKey?
     apiLabel = getApiLabel(input.apiIndex!);
   }
 
-  const promptSettings = await getAiPromptSettings('ai');
+  const assistantKind = input.assistantKind === 'bot' ? 'bot' : 'ai';
+  const assistantName = assistantKind === 'bot' ? 'Campus Bot' : 'Campus AI';
+  const promptSettings = await getAiPromptSettings(assistantKind);
   const systemInstructionText = buildSystemInstructionText(promptSettings);
   const requestBody: any = {
     contents: [{ role: 'user', parts: [{ text: `Student name: Admin\nStudent message: ${message}` }] }],
@@ -379,7 +381,7 @@ export const testAiPlayground = async (input: { apiIndex?: number; customApiKey?
       error.providerStatus = response.status;
       throw error;
     }
-    return { text, model, apiLabel, durationMs: Date.now() - startedAt };
+    return { text, model, apiLabel, assistant: assistantName, durationMs: Date.now() - startedAt };
   } catch (error: any) {
     if (error?.name === 'AbortError') {
       const timeoutError: any = new Error('The API request timed out.');
@@ -570,10 +572,10 @@ const generateReply = async (messageText: string, assistant: Assistant, signal: 
   return CAMPUS_BOT_FALLBACK;
 };
 
-export const testAiPlaygroundForumFlow = async (messageText: string): Promise<{ text: string; apiLabel: string; model: string; durationMs: number; attempts: AiPlaygroundAttempt[]; fallback: boolean; error?: string }> => {
+export const testAiPlaygroundForumFlow = async (messageText: string, assistantKind: AssistantKind = 'ai'): Promise<{ text: string; apiLabel: string; model: string; assistant: string; durationMs: number; attempts: AiPlaygroundAttempt[]; fallback: boolean; error?: string }> => {
   const message = messageText.trim();
   if (!message || message.length > 4000) throw new Error('Enter a message of 1 to 4,000 characters.');
-  const assistant = assistants.ai;
+  const assistant = assistants[assistantKind === 'bot' ? 'bot' : 'ai'];
   const prompt = await getConversationPrompt({ senderName: 'Admin', text: message }, assistant);
   const trace: AiGenerationTrace = { attempts: [] };
   const startedAt = Date.now();
@@ -583,6 +585,7 @@ export const testAiPlaygroundForumFlow = async (messageText: string): Promise<{ 
     text: text || '',
     apiLabel: successfulAttempt?.apiLabel || 'Normal forum chat pool',
     model: successfulAttempt?.model || 'Automatic rotation',
+    assistant: assistant.name,
     durationMs: Date.now() - startedAt,
     attempts: trace.attempts,
     fallback: !successfulAttempt,
