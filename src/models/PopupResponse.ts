@@ -7,6 +7,8 @@ export interface IPopupResponse extends Document {
   email?: string;
   name?: string;
   responses: Record<string, string | boolean>;
+  isRead?: boolean;
+  readAt?: Date | null;
   createdAt: Date;
 }
 
@@ -17,7 +19,9 @@ const PopupResponseSchema = new Schema<IPopupResponse>(
     userId: { type: Schema.Types.ObjectId, ref: 'User' },
     email: { type: String, default: '' },
     name: { type: String, default: '' },
-    responses: { type: Schema.Types.Mixed, required: true }
+    responses: { type: Schema.Types.Mixed, required: true },
+    isRead: { type: Boolean, default: false },
+    readAt: { type: Date, default: null }
   },
   { timestamps: true }
 );

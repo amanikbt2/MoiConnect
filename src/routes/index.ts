@@ -148,6 +148,7 @@ router.post('/notify/check-popup', optionalAuthenticate, popupController.checkCl
 router.post('/notify/popups/:id/responses', optionalAuthenticate, popupController.submitPopupResponse);
 router.get('/notify/popups/:id/responses', popupController.getPopupResponses);
 
+router.post('/notify/popups/:id/responses/:responseId/read', popupController.setPopupResponseReadState);
 // Auth Routes
 router.post('/auth/register', validateBody(registerSchema), authController.register);
 router.post('/auth/login', validateBody(loginSchema), authController.login);

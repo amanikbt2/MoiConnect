@@ -302,7 +302,7 @@ export const submitPopupResponse = async (req: any, res: Response): Promise<void
       : { popupId: popup._id, email: String(req.body.email || '').trim().toLowerCase(), userId: { $exists: false } };
     await PopupResponse.findOneAndUpdate(
       existingQuery,
-      { popupId: popup._id, popupCode: popup.popupId, userId: user?._id, email: user?.email || req.body.email || '', name: user?.name || req.body.name || 'Guest', responses: cleanResponses },
+      { popupId: popup._id, popupCode: popup.popupId, userId: user?._id, email: user?.email || req.body.email || '', name: user?.name || req.body.name || 'Guest', responses: cleanResponses, isRead: false, readAt: null },
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
     res.json({ success: true, message: 'Response submitted successfully.' });
@@ -320,9 +320,45 @@ export const getPopupResponses = async (req: Request, res: Response): Promise<vo
       res.status(404).json({ success: false, error: 'Popup not found.' });
       return;
     }
-    const responses = await PopupResponse.find({ popupId: popup._id }).sort({ createdAt: -1 }).lean();
+    const responses = await PopupResponse.find({ popupId: popup._id }).sort({ isRead: 1, createdAt: -1 }).lean();
     res.json({ success: true, data: { popup, responses } });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message || 'Failed to load popup responses.' });
+  }
+};
+
+export const setPopupResponseReadState = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id, responseId } = req.params;
+    const isRead = req.body?.isRead;
+    if (typeof isRead !== 'boolean') {
+      res.status(400).json({ success: false, error: 'isRead must be true or false.' });
+      return;
+    }
+    if (!mongoose.isValidObjectId(responseId)) {
+      res.status(404).json({ success: false, error: 'Popup response not found.' });
+      return;
+    }
+
+    const popupLookup = mongoose.isValidObjectId(id) ? { $or: [{ _id: id }, { popupId: id }] } : { popupId: id };
+    const popup = await Popup.findOne(popupLookup).select('_id');
+    if (!popup) {
+      res.status(404).json({ success: false, error: 'Popup not found.' });
+      return;
+    }
+
+    const response = await PopupResponse.findOneAndUpdate(
+      { _id: responseId, popupId: popup._id },
+      { $set: { isRead, readAt: isRead ? new Date() : null } },
+      { new: true }
+    ).select('_id isRead readAt').lean();
+    if (!response) {
+      res.status(404).json({ success: false, error: 'Popup response not found.' });
+      return;
+    }
+
+    res.json({ success: true, data: { response } });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to update popup response.' });
   }
 };

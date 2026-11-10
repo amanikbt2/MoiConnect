@@ -6651,27 +6651,67 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         });
       }
       const questions = json.data.popup?.inputs || [];
-      const rows = (json.data.responses || []).map(function(item) {
-        const answers = questions.map(function(question) {
-          const value = (item.responses || {})[question.id];
-          const answer = value === undefined || value === null || value === '' ? 'No answer' : typeof value === 'boolean' ? (value ? 'Yes' : 'No') : String(value);
-          return '<div style="display:grid;grid-template-columns:minmax(120px, .8fr) minmax(0, 1.2fr);gap:12px;padding:10px 12px;border-radius:8px;background:#f8fafc;align-items:start;">' +
-            '<div style="font-size:12px;font-weight:700;color:#475569;line-height:1.5;">' + escapeResponseHtml(question.label || question.id) + '</div>' +
-            '<div style="font-size:13px;color:#0f172a;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere;">' + escapeResponseHtml(answer) + '</div></div>';
+      const responseItems = json.data.responses || [];
+      const pendingReadUpdates = new Set();
+      function renderPopupResponseRows() {
+        return responseItems.slice().sort(function(a, b) {
+          const readOrder = Number(Boolean(a.isRead)) - Number(Boolean(b.isRead));
+          return readOrder || new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
+        }).map(function(item) {
+          const answers = questions.map(function(question) {
+            const value = (item.responses || {})[question.id];
+            const answer = value === undefined || value === null || value === '' ? 'No answer' : typeof value === 'boolean' ? (value ? 'Yes' : 'No') : String(value);
+            return '<div style="display:grid;grid-template-columns:minmax(120px, .8fr) minmax(0, 1.2fr);gap:12px;padding:10px 12px;border-radius:8px;background:#f8fafc;align-items:start;">' +
+              '<div style="font-size:12px;font-weight:700;color:#475569;line-height:1.5;">' + escapeResponseHtml(question.label || question.id) + '</div>' +
+              '<div style="font-size:13px;color:#0f172a;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere;">' + escapeResponseHtml(answer) + '</div></div>';
+          }).join('');
+          const isRead = Boolean(item.isRead);
+          const submittedAt = item.createdAt ? new Date(item.createdAt).toLocaleString() : '';
+          const checkIcon = isRead
+            ? '<svg width="16" height="16" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8" fill="#16a34a"/><path d="m6 10 2.5 2.5L14 7" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+            : '<svg width="16" height="16" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8" fill="none" stroke="#94a3b8" stroke-width="1.5"/><path d="m6 10 2.5 2.5L14 7" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+          const readButton = '<button type="button" data-popup-response-id="' + escapeResponseHtml(item._id) + '" aria-label="' + (isRead ? 'Mark response unread' : 'Mark response read') + '" aria-pressed="' + isRead + '" title="' + (isRead ? 'Mark unread' : 'Mark as read') + '" ' + (pendingReadUpdates.has(String(item._id)) ? 'disabled ' : '') + 'style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:0;border:0;border-radius:50%;background:transparent;cursor:pointer;opacity:' + (pendingReadUpdates.has(String(item._id)) ? '.55' : '1') + ';">' + checkIcon + '</button>';
+          return '<article style="border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin:12px 0;background:#fff;">' +
+            '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:12px;">' +
+            '<div><strong style="display:block;font-size:14px;color:#0f172a;">' + escapeResponseHtml(item.name || 'Guest') + '</strong><span style="display:block;margin-top:3px;font-size:12px;color:#64748b;">' + escapeResponseHtml(item.email || 'No email') + '</span></div>' +
+            '<div style="display:flex;align-items:center;gap:8px;">' + readButton + (submittedAt ? '<time style="font-size:11px;color:#64748b;text-align:right;">' + escapeResponseHtml(submittedAt) + '</time>' : '') + '</div>' +
+            '</div><div style="display:grid;gap:7px;">' + (answers || '<div style="font-size:12px;color:#64748b;">No question details available for this response.</div>') + '</div></article>';
         }).join('');
-        const submittedAt = item.createdAt ? new Date(item.createdAt).toLocaleString() : '';
-        return '<article style="border:1px solid #e2e8f0;border-radius:12px;padding:14px;margin:12px 0;background:#fff;">' +
-          '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:12px;">' +
-          '<div><strong style="display:block;font-size:14px;color:#0f172a;">' + escapeResponseHtml(item.name || 'Guest') + '</strong><span style="display:block;margin-top:3px;font-size:12px;color:#64748b;">' + escapeResponseHtml(item.email || 'No email') + '</span></div>' +
-          (submittedAt ? '<time style="font-size:11px;color:#64748b;text-align:right;">' + escapeResponseHtml(submittedAt) + '</time>' : '') +
-          '</div><div style="display:grid;gap:7px;">' + (answers || '<div style="font-size:12px;color:#64748b;">No question details available for this response.</div>') + '</div></article>';
-      }).join('');
+      }
+      const emptyRows = '<div style="padding:28px 16px;color:#64748b;text-align:center;background:#fff;border:1px dashed #cbd5e1;border-radius:12px;">No responses yet.</div>';
       const overlay = document.createElement('div');
       overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;padding:20px;z-index:9999;';
-      overlay.innerHTML = '<div style="background:#f8fafc;border-radius:16px;width:min(760px,100%);max-height:85vh;overflow:auto;padding:20px;box-shadow:0 24px 60px rgba(15,23,42,.28);"><div style="position:sticky;top:-20px;z-index:1;display:flex;justify-content:space-between;align-items:center;gap:16px;background:#fff;border-bottom:1px solid #e2e8f0;margin:-20px -20px 12px;padding:16px 20px;border-radius:16px 16px 0 0;"><div><h3 style="margin:0;color:#0f172a;font-size:17px;">Popup responses</h3><p style="margin:4px 0 0;color:#64748b;font-size:12px;">' + escapeResponseHtml(json.data.popup?.title || '') + ' · ' + (json.data.responses || []).length + ' response' + ((json.data.responses || []).length === 1 ? '' : 's') + '</p></div><button id="close-popup-responses" style="border:0;background:#f1f5f9;color:#334155;border-radius:8px;padding:8px 12px;font-weight:700;cursor:pointer;">Close</button></div><div>' + (rows || '<div style="padding:28px 16px;color:#64748b;text-align:center;background:#fff;border:1px dashed #cbd5e1;border-radius:12px;">No responses yet.</div>') + '</div></div>';
+      overlay.innerHTML = '<div style="background:#f8fafc;border-radius:16px;width:min(760px,100%);max-height:85vh;overflow:auto;padding:20px;box-shadow:0 24px 60px rgba(15,23,42,.28);"><div style="position:sticky;top:-20px;z-index:1;display:flex;justify-content:space-between;align-items:center;gap:16px;background:#fff;border-bottom:1px solid #e2e8f0;margin:-20px -20px 12px;padding:16px 20px;border-radius:16px 16px 0 0;"><div><h3 style="margin:0;color:#0f172a;font-size:17px;">Popup responses</h3><p style="margin:4px 0 0;color:#64748b;font-size:12px;">' + escapeResponseHtml(json.data.popup?.title || '') + ' · ' + responseItems.length + ' response' + (responseItems.length === 1 ? '' : 's') + '</p></div><button id="close-popup-responses" style="border:0;background:#f1f5f9;color:#334155;border-radius:8px;padding:8px 12px;font-weight:700;cursor:pointer;">Close</button></div><div id="popup-response-list">' + (renderPopupResponseRows() || emptyRows) + '</div></div>';
       document.body.appendChild(overlay);
       overlay.querySelector('#close-popup-responses').onclick = function() { overlay.remove(); };
       overlay.onclick = function(event) { if (event.target === overlay) overlay.remove(); };
+      overlay.addEventListener('click', async function(event) {
+        const target = event.target instanceof Element ? event.target.closest('[data-popup-response-id]') : null;
+        if (!target) return;
+        const responseId = target.getAttribute('data-popup-response-id');
+        const item = responseItems.find(function(responseItem) { return String(responseItem._id) === responseId; });
+        if (!item || pendingReadUpdates.has(responseId)) return;
+        const nextReadState = !Boolean(item.isRead);
+        pendingReadUpdates.add(responseId);
+        const list = overlay.querySelector('#popup-response-list');
+        list.innerHTML = renderPopupResponseRows() || emptyRows;
+        try {
+          const updateResponse = await fetch('/api/v1/notify/popups/' + encodeURIComponent(id) + '/responses/' + encodeURIComponent(responseId) + '/read', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ isRead: nextReadState })
+          });
+          const updateJson = await updateResponse.json();
+          if (!updateResponse.ok || !updateJson.success) throw new Error(updateJson.error || 'Could not update response status.');
+          item.isRead = nextReadState;
+          item.readAt = updateJson.data?.response?.readAt || null;
+        } catch (error) {
+          showToast(error.message || 'Could not update response status.', true);
+        } finally {
+          pendingReadUpdates.delete(responseId);
+          if (overlay.isConnected) list.innerHTML = renderPopupResponseRows() || emptyRows;
+        }
+      });
     }
     async function handleCreateUpdatePopup(e) {
       e.preventDefault();
