@@ -79,7 +79,7 @@ const KEY_COOLDOWN_MS = 60_000;
 const MODEL_CANDIDATES = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
 type ResourceMarkerKind = 'P' | 'C' | 'N';
 type ResourceMatch = { text: string; attachment?: any };
-const RESOURCE_MARKER_REGEX = />>\s*\/\s*([PCN])\s*\/\s*([^\r\n<>]{2,120})/i;
+const RESOURCE_MARKER_REGEX = />>\s*\/\s*([PCN])\s*\/\s*(?:\{([^{}\r\n]{2,120})\}|([^\r\n<>]{2,120}))/i;
 const NO_EXACT_MATCH_REPLIES = [
   'Okay {name}, I couldn’t find an exact match for {query}, but this related material may still help.',
   'I couldn’t spot an exact {query} match, {name}. Here’s the closest useful material I found.',
@@ -493,10 +493,21 @@ const findMarkerMaterial = async (kind: ResourceMarkerKind, queryText: string, s
 
 const resolveResourceMarker = async (text: string, message: any): Promise<{ text: string; attachment?: any }> => {
   const marker = text.match(RESOURCE_MARKER_REGEX);
-  if (!marker) return { text: text.replace(/>>\s*\/\s*[PCN]\s*\/[^\r\n<>]*/gi, '').trim() };
+  if (!marker) return { text: text.replace(/>>\s*\/\s*[PCN]\s*\/(?:\{[^{}\r\n]*\}|[^\r\n<>]*)/gi, '').trim() };
   const kind = marker[1].toUpperCase() as ResourceMarkerKind;
-  const query = marker[2].trim().replace(/[.,;:!?]+$/, '').slice(0, 120);
-  const cleanText = text.replace(marker[0], '').replace(/\n{3,}/g, '\n\n').trim();
+  const query = (marker[2] || marker[3] || '').trim().replace(/^[{"'`]+|[}"'`]+$/g, '').replace(/[.,;:!?]+$/, '').slice(0, 120);
+  const markerStart = marker.index || 0;
+  const markerEnd = markerStart + marker[0].length;
+  const lineStart = text.lastIndexOf('\n', markerStart - 1) + 1;
+  const lineEndIndex = text.indexOf('\n', markerEnd);
+  const lineEnd = lineEndIndex < 0 ? text.length : lineEndIndex;
+  const linePrefix = text.slice(lineStart, markerStart);
+  const lineSuffix = text.slice(markerEnd, lineEnd);
+  const markerOnlyLine = /^[\s\uFFFC"'`]*(?:(?:past\s*papers?|cats?|notes)\s*=\s*)?$/i.test(linePrefix)
+    && /^[\s\uFFFC"'`.,;:!?]*$/.test(lineSuffix);
+  const cleanText = (markerOnlyLine
+    ? `${text.slice(0, lineStart)}${text.slice(lineEnd)}`
+    : text.replace(marker[0], '')).replace(/\n{3,}/g, '\n\n').trim();
   const match = await findMarkerMaterial(kind, query, message);
   if (match.exact) return { text: cleanText || 'I found this exact match for you.', attachment: makePaperChatAttachment(match.exact) };
   if (match.related) return { text: choosePersonalizedReply(NO_EXACT_MATCH_REPLIES, message.senderName, query), attachment: makePaperChatAttachment(match.related) };
@@ -571,7 +582,7 @@ const getConversationPrompt = async (message: any, assistant: Assistant): Promis
   } else {
     promptLines.push(`Student name: ${senderName}`);
     promptLines.push(`Student message: ${messageText}`);
-    promptLines.push('If the student clearly requests a specific course material, end your answer with exactly one machine-readable marker on its own final line: >>/P/course code and search words for a past paper, >>/C/course code and search words for a CAT, or >>/N/course code and search words for notes. Keep the search phrase concise and include the course code when supplied. Do not invent a marker for general questions or when no material is requested. The app will remove the marker and attach the best real library result, or replace the response with a suitable no-match message.');
+    promptLines.push('If the student clearly requests a specific course material, end your answer with exactly one machine-readable command on its own final line: >>/P/{course code and course name, if supplied} for a past paper, >>/C/{course code and course name, if supplied} for a CAT, or >>/N/{course code and course name, if supplied} for notes. Put the course search phrase inside the braces. Do not add labels such as "Past papers=", quotes, or Markdown around the command. If you need to ask a clarifying question, do not include a command yet. Do not invent a command for general questions or when no material is requested. The app removes the command and attaches the best real library result, or gives a suitable no-match response.');
   }
 
   return promptLines.join('\n');
