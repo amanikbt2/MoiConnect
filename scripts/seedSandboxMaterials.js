@@ -42,6 +42,20 @@ const main = async () => {
 
     const sourcePapers = source.collection('papers');
     const targetPapers = target.collection('papers');
+    const sourcePaperCount = await sourcePapers.countDocuments({});
+    console.log(`Source database "${source.name || '(default)'}" contains ${sourcePaperCount} document(s) in "papers".`);
+    if (sourcePaperCount > 0) {
+      const statusAndTypeCounts = await sourcePapers.aggregate([
+        { $group: { _id: { status: '$status', type: '$type' }, count: { $sum: 1 } } },
+        { $sort: { '_id.status': 1, '_id.type': 1 } }
+      ]).toArray();
+      console.log(`Paper status/type counts: ${JSON.stringify(statusAndTypeCounts.map((item) => ({ status: item._id.status || '(missing)', type: item._id.type || '(missing)', count: item.count })))}`);
+    } else {
+      const paperLikeCollections = (await source.db.listCollections({}, { nameOnly: true }).toArray())
+        .map((collection) => collection.name)
+        .filter((name) => /paper|material/i.test(name));
+      console.log(`Paper-like collections found: ${paperLikeCollections.join(', ') || '(none)'}`);
+    }
     const uniqueMaterials = new Map();
     for (const group of MATERIAL_GROUPS) {
       const docs = await sourcePapers.find(
