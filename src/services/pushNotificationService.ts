@@ -417,7 +417,7 @@ export const sendPushToTokens = async (
 };
 
 export const sendForumLivePush = async (
-  host: { userId: string; name: string },
+  host: { userId: string; name: string; email?: string },
   liveSessionId: string,
   omitUserIds: string[] = []
 ): Promise<void> => {
@@ -425,6 +425,7 @@ export const sendForumLivePush = async (
     const forumPolicy = await getForumAccessPolicy();
     const devices = await DeviceToken.find({}).select('token userId email').populate('userId', 'email').lean();
     const excludedUsers = new Set([host.userId, ...omitUserIds].filter(Boolean).map(String));
+    const hostEmail = String(host.email || '').trim().toLowerCase();
     const tokens = devices
       .filter((device: any) => {
         const userId = device.userId
@@ -432,7 +433,7 @@ export const sendForumLivePush = async (
           : '';
         const linkedEmail = device.userId && typeof device.userId === 'object' ? device.userId.email : '';
         const email = String(linkedEmail || device.email || '').trim().toLowerCase();
-        return (!userId || !excludedUsers.has(userId)) && isForumParticipationAllowed(email, forumPolicy);
+        return (!userId || !excludedUsers.has(userId)) && (!hostEmail || email !== hostEmail) && isForumParticipationAllowed(email, forumPolicy);
       })
       .map((device: any) => String(device.token))
       .filter(Boolean)

@@ -282,7 +282,7 @@ export const setupSocketIO = (io: SocketIOServer): void => {
         hostId: activeLiveBroadcast.hostId
       });
       void sendForumLivePush(
-        { userId: activeLiveBroadcast.hostId, name: activeLiveBroadcast.hostName },
+        { userId: activeLiveBroadcast.hostId, name: activeLiveBroadcast.hostName, email: socket.data.userEmail },
         activeLiveBroadcast.liveSessionId,
         Array.from(activeLiveBroadcast.participants.values()).map((participant) => participant.userId || '')
       );
@@ -290,6 +290,12 @@ export const setupSocketIO = (io: SocketIOServer): void => {
 
     socket.on('community:live_join', (data: { id?: string; name?: string; avatar?: string }) => {
       if (!userId || !activeLiveBroadcast || !data?.id) return;
+      // The host may reconnect or receive its own broadcast event; never list
+      // the host as a viewer in the participant strip.
+      if (activeLiveBroadcast.hostId === userId) {
+        activeLiveBroadcast.hostSocketId = socket.id;
+        return;
+      }
 
       const participant: LiveParticipant = {
         id: socket.id,
