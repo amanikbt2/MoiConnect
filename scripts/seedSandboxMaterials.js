@@ -40,7 +40,7 @@ const main = async () => {
 
     source = await mongoose.createConnection(sourceUri, { serverSelectionTimeoutMS: 15000 }).asPromise();
 
-    const targetPapers = target.collection('papers');
+    const targetPapers = target.collection('paper');
     const sourceCollectionNames = new Set((await source.db.listCollections({}, { nameOnly: true }).toArray()).map((item) => item.name));
     const sourcePaperCandidates = ['papers', 'paper'].filter((name) => sourceCollectionNames.has(name));
     const sourcePaperCounts = await Promise.all(sourcePaperCandidates.map(async (name) => ({
@@ -90,7 +90,7 @@ const main = async () => {
     })), { ordered: false });
     console.log(`Sandbox now has ${result.upsertedCount} newly copied material(s); existing local records were left unchanged.`);
     console.log('Copied only approved Paper records and academic file metadata. No user, message, device-token, notification, or settings collections were read.');
-    console.log('No source write operations were issued; writes were restricted to local mconnect_sandbox.papers.');
+    console.log('No source write operations were issued; writes were restricted to local mconnect_sandbox.paper.');
   } finally {
     await Promise.all([source?.close(), target?.close()].filter(Boolean));
   }

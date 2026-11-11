@@ -124,7 +124,23 @@ const main = async () => {
     }
 
     fs.mkdirSync(MATERIALS_DIR, { recursive: true });
-    const papers = db.collection('papers');
+    const papers = db.collection('paper');
+    const legacyPapers = db.collection('papers');
+    const legacyMaterials = await legacyPapers.find({
+      status: 'approved',
+      isHidden: { $ne: true },
+      isDemo: { $ne: true }
+    }).toArray();
+    if (legacyMaterials.length) {
+      const recovery = await papers.bulkWrite(legacyMaterials.map((paper) => ({
+        updateOne: {
+          filter: { _id: paper._id },
+          update: { $setOnInsert: paper },
+          upsert: true
+        }
+      })), { ordered: false });
+      console.log(`Recovered ${recovery.upsertedCount} seeded material(s) into the Paper model's local collection.`);
+    }
     const materials = await papers.find({ status: 'approved', isHidden: { $ne: true }, isDemo: { $ne: true } }).toArray();
     if (!materials.length) {
       console.log('No approved sandbox materials were found. Run seed:sandbox-materials first.');
@@ -169,7 +185,7 @@ const main = async () => {
     }
 
     console.log(`Local sandbox file copy finished: ${copied} copied, ${skipped} already local, ${failed} failed.`);
-    console.log('Only local mconnect_sandbox.papers was updated. No Cloudinary assets, production database, or user collections were changed.');
+    console.log('Only local mconnect_sandbox.paper was updated. No Cloudinary assets, production database, or user collections were changed.');
     if (failed) process.exitCode = 1;
   } finally {
     await db?.close();
