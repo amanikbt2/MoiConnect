@@ -128,15 +128,10 @@ export const deleteBatchTempFiles = (filenames: string[]): { deletedCount: numbe
 };
 
 export const getSignedCloudinaryUrl = (publicId?: string, fileUrl?: string, fileType?: string): string => {
-  const cloudName = config.sandboxMode
-    ? process.env.CLOUDINARY_SANDBOX_CLOUD_NAME || ''
-    : process.env.CLOUDINARY_CLOUD_NAME || 'mconnect';
+  const cloudName = config.sandboxMode ? '' : process.env.CLOUDINARY_CLOUD_NAME || 'mconnect';
 
   if (config.sandboxMode && publicId) {
-    if (!cloudName) return fileUrl || '';
-    if (fileUrl && !fileUrl.includes(`/res.cloudinary.com/${cloudName}/`) && !fileUrl.includes(`res.cloudinary.com/${cloudName}/`)) {
-      return fileUrl;
-    }
+    return fileUrl || '';
   }
 
   const cleanPublicUrl = (rawPublicId: string, configuredCloudName = cloudName): string => {

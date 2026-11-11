@@ -8,7 +8,7 @@
     "dev": "nodemon",
     "dev:sandbox": "node scripts/start-sandbox.js",
     "seed:sandbox-materials": "node scripts/seedSandboxMaterials.js",
-    "copy:sandbox-materials-cloudinary": "node scripts/copySandboxMaterialsToCloudinary.js",
+    "copy:sandbox-materials-local": "node scripts/copySandboxMaterialsLocal.js",
     "dev:tsnd": "ts-node-dev --respawn --transpile-only src/server.ts",
     "seed:admin": "ts-node src/scripts/seedAdmin.ts",
     "test": "vitest run"
