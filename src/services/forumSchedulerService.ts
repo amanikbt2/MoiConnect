@@ -13,7 +13,7 @@ let worker: NodeJS.Timeout | null = null;
 let processing = false;
 
 export const processDueForumMessages = async (): Promise<void> => {
-  if (processing || !ScheduledForumMessage.db.readyState) return;
+  if (processing || ScheduledForumMessage.db.readyState !== 1) return;
   processing = true;
   try {
     for (let count = 0; count < 10; count += 1) {
@@ -54,7 +54,16 @@ export const processDueForumMessages = async (): Promise<void> => {
 
 export const startForumScheduler = (): void => {
   if (worker) return;
-  worker = setInterval(() => { void processDueForumMessages(); }, 15_000);
+  const processSafely = () => {
+    void processDueForumMessages().catch((error: any) => {
+      console.error('[Forum Scheduler]: Could not process due messages:', error?.message || error);
+    });
+  };
+  worker = setInterval(processSafely, 15_000);
   worker.unref();
-  void processDueForumMessages();
+  if (ScheduledForumMessage.db.readyState === 1) {
+    processSafely();
+  } else {
+    ScheduledForumMessage.db.once('connected', processSafely);
+  }
 };
