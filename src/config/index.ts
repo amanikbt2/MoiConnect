@@ -32,7 +32,7 @@ export const config = {
   jwtAccessExpiration: '100y',
   jwtRefreshExpiration: '100y',
   cloudinary: {
-    cloudName: sandboxMode ? '' : process.env.CLOUDINARY_CLOUD_NAME || '',
+    cloudName: sandboxMode ? process.env.CLOUDINARY_SANDBOX_CLOUD_NAME || '' : process.env.CLOUDINARY_CLOUD_NAME || '',
     apiKey: sandboxMode ? '' : process.env.CLOUDINARY_API_KEY || '',
     apiSecret: sandboxMode ? '' : process.env.CLOUDINARY_API_SECRET || ''
   },
