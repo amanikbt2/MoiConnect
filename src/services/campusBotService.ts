@@ -1,7 +1,9 @@
 import { Types } from 'mongoose';
 import { CommunityMessage } from '../models/CommunityMessage';
+import { Paper } from '../models/Paper';
 import { AiFailureLog, AiPoolUsage } from '../models/AiTelemetry';
 import { getAppSettingValue, setAppSettingValue } from '../models/AppSetting';
+import { getSignedCloudinaryUrl } from './tempFileService';
 
 export const CAMPUS_BOT_FALLBACK = "Sorry, i'm not available at the moment";
 export const INTERNET_ERROR_FALLBACK = "Sorry, i can't respond now. check your internet";
@@ -75,6 +77,33 @@ const assistants: Record<AssistantKind, Assistant> = {
 const REQUEST_TIMEOUT_MS = 120_000;
 const KEY_COOLDOWN_MS = 60_000;
 const MODEL_CANDIDATES = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+type ResourceMarkerKind = 'P' | 'C' | 'N';
+type ResourceMatch = { text: string; attachment?: any };
+const RESOURCE_MARKER_REGEX = />>\s*\/\s*([PCN])\s*\/\s*([^\r\n<>]{2,120})/i;
+const NO_EXACT_MATCH_REPLIES = [
+  'Okay {name}, I couldn’t find an exact match for {query}, but this related material may still help.',
+  'I couldn’t spot an exact {query} match, {name}. Here’s the closest useful material I found.',
+  '{name}, I didn’t find that exact course material. This related resource looks like the best fit.',
+  'No exact match came up for {query}, {name}, but I found one nearby match you could try.',
+  'I checked for {query}, {name}. I couldn’t find an exact copy, so I’ve attached the closest result.',
+  '{name}, I couldn’t locate the exact material yet. This one is the closest match in the library.',
+  'I don’t have an exact {query} result, {name}, but this related paper or note may be useful.',
+  'Sorry, {name}, there isn’t an exact match for {query} right now. I found this close alternative.',
+  '{name}, I couldn’t find the exact course item. Here’s the most relevant result I could find.',
+  'I came up short on an exact {query} match, {name}. This related material may be worth a look.'
+];
+const NO_MATCH_REPLIES = [
+  'Sorry {name}, I couldn’t find a {query} match yet. Try another course code or a shorter search; we’re working on adding more materials.',
+  '{name}, I couldn’t locate {query} in the library. Could you try another course code? We’re working to add more materials.',
+  'I’m sorry, {name}—nothing matched {query} this time. Try a different course code or search phrase while we keep building the collection.',
+  'No {query} material turned up, {name}. If you try another code or course name, I can check again. We’re adding more resources.',
+  '{name}, I couldn’t find that item yet. Try searching with a different course code; we’re working on growing the library.',
+  'Sorry, I don’t have a match for {query} right now, {name}. Send another course code or keyword and I’ll look again.',
+  'I checked the available materials, {name}, but couldn’t find {query}. We’re working on adding more—try another course code meanwhile.',
+  '{name}, that search didn’t return a suitable material. Could you try a shorter title or another course code?',
+  'I couldn’t find {query} in the current collection, {name}. Try another search; more materials are being added.',
+  'Sorry {name}, I don’t have a suitable result for that request yet. Try another course code or title and I’ll check.'
+];
 export const DEFAULT_AI_TURN_LIMIT = 4;
 export const MIN_AI_TURN_LIMIT = 1;
 export const MAX_AI_TURN_LIMIT = 20;
@@ -397,6 +426,101 @@ const extractGeminiText = (payload: any): string => {
   const parts = payload?.candidates?.[0]?.content?.parts;
   return Array.isArray(parts) ? parts.map((part: any) => typeof part?.text === 'string' ? part.text : '').join('').trim() : '';
 };
+
+const normalizeMaterialText = (value: unknown): string => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+const getMaterialTypeQuery = (kind: ResourceMarkerKind): any => kind === 'P'
+  ? { $in: ['past_paper', 'solution', 'exam'] }
+  : kind === 'C'
+    ? { $in: ['cat', 'quiz'] }
+    : { $in: ['notes', 'revision', 'lecture_notes'] };
+const formatResourceTypeName = (kind: ResourceMarkerKind): string => kind === 'P' ? 'past paper' : kind === 'C' ? 'CAT material' : 'notes';
+const choosePersonalizedReply = (templates: string[], name: string, query: string): string => {
+  const template = templates[Math.floor(Math.random() * templates.length)];
+  const safeName = (name || 'there').trim().split(/\s+/)[0].replace(/[^\p{L}\p{N}'-]/gu, '') || 'there';
+  return template.replaceAll('{name}', safeName).replaceAll('{query}', query);
+};
+
+const findMarkerMaterial = async (kind: ResourceMarkerKind, queryText: string, sender: any): Promise<{ exact: any | null; related: any | null }> => {
+  const query = queryText.trim().slice(0, 120);
+  if (!query) return { exact: null, related: null };
+  const codeMatch = query.match(/\b([A-Z]{2,5})[-_ ]?(\d{2,4}[A-Z]?)\b/i);
+  const normalizedQuery = normalizeMaterialText(query);
+  const exactFilters: any[] = [];
+  if (codeMatch) {
+    const prefix = codeMatch[1].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const code = codeMatch[2].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = `^${prefix}[-_ ]?${code}($|[^0-9])`;
+    exactFilters.push({ unitCode: { $regex: pattern, $options: 'i' } }, { courseCode: { $regex: pattern, $options: 'i' } });
+  }
+
+  const base: any = { status: 'approved', isHidden: { $ne: true }, isDemo: { $ne: true }, type: getMaterialTypeQuery(kind) };
+  const exactQuery: any = exactFilters.length ? { ...base, $or: exactFilters } : base;
+  const exactCandidates = exactFilters.length ? await Paper.find(exactQuery).select('_id mtid title description type school department courseCode unitCode unitName examYear fileUrl fileType fileSize publicId submittedBy').limit(10).lean() : [];
+  const exact = exactCandidates.find((paper: any) => {
+    if (codeMatch) return new RegExp(`^${codeMatch[1]}[-_ ]?${codeMatch[2]}($|[^0-9])`, 'i').test(`${paper.unitCode || ''} ${paper.courseCode || ''}`);
+    return normalizeMaterialText(paper.unitName) === normalizedQuery || normalizeMaterialText(paper.title) === normalizedQuery;
+  }) || null;
+  if (exact) return { exact, related: exact };
+
+  const tokens = Array.from(new Set(normalizedQuery.split(' ').filter((token) => token.length > 1 && !['the', 'and', 'for', 'past', 'paper', 'papers', 'cat', 'notes', 'lecture', 'course', 'unit', 'material'].includes(token))));
+  if (!tokens.length) return { exact: null, related: null };
+  const escapedTerms = tokens.map((token) => token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const candidates = await Paper.find({
+    ...base,
+    $or: escapedTerms.flatMap((term) => [
+      { unitCode: { $regex: term, $options: 'i' } }, { courseCode: { $regex: term, $options: 'i' } },
+      { unitName: { $regex: term, $options: 'i' } }, { title: { $regex: term, $options: 'i' } },
+      { description: { $regex: term, $options: 'i' } }
+    ])
+  }).select('_id mtid title description type school department courseCode unitCode unitName examYear fileUrl fileType fileSize publicId submittedBy').limit(80).lean();
+  if (!codeMatch) {
+    const exactByName = candidates.find((paper: any) => {
+      const unitName = normalizeMaterialText(paper.unitName);
+      const title = normalizeMaterialText(paper.title);
+      return unitName === normalizedQuery || title === normalizedQuery || (unitName.length >= 5 && normalizedQuery.includes(unitName));
+    });
+    if (exactByName) return { exact: exactByName, related: exactByName };
+  }
+  const profileTokens = normalizeMaterialText(`${sender?.course || ''} ${sender?.school || ''}`).split(' ').filter((token: string) => token.length > 2);
+  const ranked = candidates.map((paper: any) => {
+    const fields = [paper.unitCode, paper.courseCode, paper.unitName, paper.title, paper.description, paper.department, paper.school].map(normalizeMaterialText);
+    const score = tokens.reduce((sum, token) => sum + fields.reduce((best, field) => Math.max(best, field === token ? 5 : field.includes(token) ? 2 : 0), 0), 0)
+      + profileTokens.reduce((sum: number, token: string) => sum + (fields.some((field) => field.includes(token)) ? 1 : 0), 0);
+    return { paper, score };
+  }).filter((entry) => entry.score >= 2).sort((a, b) => b.score - a.score);
+  return { exact: null, related: ranked[0]?.paper || null };
+};
+
+const resolveResourceMarker = async (text: string, message: any): Promise<{ text: string; attachment?: any }> => {
+  const marker = text.match(RESOURCE_MARKER_REGEX);
+  if (!marker) return { text: text.replace(/>>\s*\/\s*[PCN]\s*\/[^\r\n<>]*/gi, '').trim() };
+  const kind = marker[1].toUpperCase() as ResourceMarkerKind;
+  const query = marker[2].trim().replace(/[.,;:!?]+$/, '').slice(0, 120);
+  const cleanText = text.replace(marker[0], '').replace(/\n{3,}/g, '\n\n').trim();
+  const match = await findMarkerMaterial(kind, query, message);
+  if (match.exact) return { text: cleanText || 'I found this exact match for you.', attachment: makePaperChatAttachment(match.exact) };
+  if (match.related) return { text: choosePersonalizedReply(NO_EXACT_MATCH_REPLIES, message.senderName, query), attachment: makePaperChatAttachment(match.related) };
+  return { text: choosePersonalizedReply(NO_MATCH_REPLIES, message.senderName, query) };
+};
+
+const makePaperChatAttachment = (paper: any): any => {
+  const url = paper.publicId ? getSignedCloudinaryUrl(paper.publicId, paper.fileUrl, paper.fileType) : paper.fileUrl;
+  return {
+    name: paper.title || paper.unitName || paper.unitCode || 'Academic material',
+    title: paper.title || paper.unitName || paper.unitCode || 'Academic material',
+    url,
+    publicId: paper.publicId,
+    size: paper.fileSize ? `${(paper.fileSize / (1024 * 1024)).toFixed(1)} MB` : 'PDF',
+    type: 'pdf',
+    paperId: String(paper._id),
+    mtid: paper.mtid,
+    unitCode: paper.unitCode || paper.courseCode,
+    unitName: paper.unitName || paper.title,
+    school: paper.school,
+    author: 'MConnect Library',
+    materialCategory: paper.type
+  };
+};
 export const cleanLeadingAssistantMention = (text: string): string => text
   .replace(/^(?:\s*['"\(]?@[a-z0-9_]+['"\)]?[:,\s]*)+/i, '')
   .trim();
@@ -447,6 +571,7 @@ const getConversationPrompt = async (message: any, assistant: Assistant): Promis
   } else {
     promptLines.push(`Student name: ${senderName}`);
     promptLines.push(`Student message: ${messageText}`);
+    promptLines.push('If the student clearly requests a specific course material, end your answer with exactly one machine-readable marker on its own final line: >>/P/course code and search words for a past paper, >>/C/course code and search words for a CAT, or >>/N/course code and search words for notes. Keep the search phrase concise and include the course code when supplied. Do not invent a marker for general questions or when no material is requested. The app will remove the marker and attach the best real library result, or replace the response with a suitable no-match message.');
   }
 
   return promptLines.join('\n');
@@ -664,6 +789,13 @@ export const runCampusBotConversation = async (
     }
     if (!responseText || generationAtStart !== stopGeneration) return;
 
+    let fileAttachment: any;
+    if (!disableAiFeatures) {
+      const resolved = await resolveResourceMarker(responseText, message);
+      responseText = resolved.text;
+      fileAttachment = resolved.attachment;
+    }
+
     saved = await CommunityMessage.create({
       botReplyFor: `${sourceId}_${assistant.kind}`,
       clientMsgId: message.clientMsgId ? `bot_${assistant.kind}_${message.clientMsgId}` : undefined,
@@ -676,6 +808,7 @@ export const runCampusBotConversation = async (
       senderPhone: 'AI assistant',
       avatarBg: assistant.avatarBg,
       text: responseText,
+      fileAttachment,
       replyTo: {
         id: sourceId,
         senderName: message.senderName || (senderKind === 'ai' ? 'Campus AI' : (senderKind === 'bot' ? 'Campus Bot' : 'Student')),

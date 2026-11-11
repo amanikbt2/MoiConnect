@@ -6,6 +6,7 @@
     "build": "npm --prefix packages/shared run build && tsc",
     "start": "node dist/server.js",
     "dev": "nodemon",
+    "dev:sandbox": "node scripts/start-sandbox.js",
     "dev:tsnd": "ts-node-dev --respawn --transpile-only src/server.ts",
     "seed:admin": "ts-node src/scripts/seedAdmin.ts",
     "test": "vitest run"

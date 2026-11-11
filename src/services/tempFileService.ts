@@ -3,6 +3,7 @@ import path from 'path';
 import cloudinary from '../config/cloudinary';
 import { Paper } from '../models/Paper';
 import { TEMP_UPLOADS_DIR } from '../middleware/upload';
+import { config } from '../config';
 
 export interface ITempFileInfo {
   filename: string;
@@ -230,6 +231,13 @@ export const uploadTempFileToCloudinary = async (
   const imageExtensions = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.svg', '.ico', '.tif', '.tiff']);
   const videoExtensions = new Set(['.mp4', '.mov', '.m4v', '.webm', '.avi', '.mkv', '.3gp']);
   const resourceType = resourceTypeOverride || (imageExtensions.has(extension) ? 'image' : videoExtensions.has(extension) ? 'video' : 'raw');
+
+  if (config.sandboxMode) {
+    return {
+      secure_url: `http://localhost:${config.port}/uploads/temp/${encodeURIComponent(filename)}`,
+      public_id: ''
+    };
+  }
 
   const result: any = await cloudinary.uploader.upload(filePath, {
     folder,

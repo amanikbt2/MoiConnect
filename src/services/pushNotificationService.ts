@@ -4,6 +4,7 @@ import { getForumAccessPolicy, isForumParticipationAllowed } from './forumAccess
 import { Notification } from '../models/Notification';
 import { User } from '../models/User';
 import { getSocketIO } from '../socket';
+import { config } from '../config';
 
 export interface IPushNotificationPayload {
   title: string;
@@ -16,6 +17,7 @@ export interface IPushNotificationPayload {
 }
 
 async function sendExpoChunk(chunk: any[]): Promise<{ ok: boolean; status: number; data: any } | null> {
+  if (config.sandboxMode) return null;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 15000);
@@ -185,6 +187,14 @@ export const dispatchPushNotification = async (payload: IPushNotificationPayload
     readBy: []
   });
 
+  if (config.sandboxMode) {
+    try {
+      getSocketIO()?.emit('new_notification', { notification: notificationRecord });
+    } catch (_) {}
+    console.info('[Sandbox]: Push delivery blocked; notification remained in local sandbox.');
+    return { success: true, sentCount: 0, totalTokens: 0, failedCount: 0, storedNotificationId: notificationRecord._id };
+  }
+
   // 2. Query target DeviceTokens
   let query: any = {};
   if (target === 'emails' && recipientEmails.length > 0) {
@@ -343,8 +353,12 @@ export const sendPushToTokens = async (
   body: string,
   data: Record<string, any> = {}
 ): Promise<{ totalTokens: number; sentCount: number; failedCount: number }> => {
+  if (config.sandboxMode) {
+    console.info('[Sandbox]: Push delivery blocked.');
+    return { totalTokens: tokens?.length || 0, sentCount: 0, failedCount: 0 };
+  }
   if (!tokens || tokens.length === 0) return { totalTokens: 0, sentCount: 0, failedCount: 0 };
-  const { categoryId, richContent, ...notificationData } = data as any;
+  const { categoryId, richContent, ttl, ...notificationData } = data as any;
   const messages = tokens.map((to) => ({
     to,
     sound: 'default',
@@ -355,7 +369,7 @@ export const sendPushToTokens = async (
     ...(richContent ? { richContent } : {}),
     priority: 'high',
     channelId: notificationData?.channelId || 'mconnect_messages_v2',
-    ttl: 60 * 60 * 24 * 7,
+    ttl: Number.isFinite(Number(ttl)) ? Number(ttl) : 60 * 60 * 24 * 7,
     _displayInForeground: true,
   }));
 
@@ -416,6 +430,44 @@ export const sendPushToTokens = async (
   return { totalTokens: tokens.length, sentCount, failedCount };
 };
 
+export const sendForumLivePush = async (
+  host: { userId: string; name: string },
+  liveSessionId: string,
+  omitUserIds: string[] = []
+): Promise<void> => {
+  try {
+    const forumPolicy = await getForumAccessPolicy();
+    const devices = await DeviceToken.find({}).select('token userId email').populate('userId', 'email').lean();
+    const excludedUsers = new Set([host.userId, ...omitUserIds].filter(Boolean).map(String));
+    const tokens = devices
+      .filter((device: any) => {
+        const userId = device.userId
+          ? String(typeof device.userId === 'object' ? device.userId._id : device.userId)
+          : '';
+        const linkedEmail = device.userId && typeof device.userId === 'object' ? device.userId.email : '';
+        const email = String(linkedEmail || device.email || '').trim().toLowerCase();
+        return (!userId || !excludedUsers.has(userId)) && isForumParticipationAllowed(email, forumPolicy);
+      })
+      .map((device: any) => String(device.token))
+      .filter(Boolean)
+      .filter((token: string, index: number, all: string[]) => all.indexOf(token) === index);
+
+    if (!tokens.length) return;
+    const result = await sendPushToTokens(tokens, `${host.name || 'A student'} is live`, 'Join the forum live now.', {
+      screen: 'community',
+      channelId: 'mconnect_messages_v2',
+      categoryId: 'forum_live',
+      notificationType: 'forum_live',
+      liveSessionId,
+      hostName: host.name || 'A student',
+      ttl: 60 * 10
+    });
+    if (result.failedCount > 0) console.warn('[Forum Live Push]: Delivery summary:', result);
+  } catch (error) {
+    console.error('[Forum Live Push Error]:', error);
+  }
+};
+
 export const sendPrivateCommunityMessagePush = async (
   recipientUserId: string,
   messageId: string
@@ -452,6 +504,14 @@ export const formatSmartNotificationSnippet = (
   const cleanText = (text || '').replace(/[*~_|]/g, '').replace(/\s+/g, ' ').trim();
 
   if (fileAttachment && (fileAttachment.url || fileAttachment.name || fileAttachment.type || fileAttachment.paperId)) {
+    if (fileAttachment.materialCategory) {
+      const materialLabel = ['past_paper', 'solution', 'exam'].includes(fileAttachment.materialCategory)
+        ? 'a past paper'
+        : ['cat', 'quiz'].includes(fileAttachment.materialCategory)
+          ? 'a CAT material'
+          : 'notes';
+      return `AI sent ${materialLabel}`;
+    }
     const rawType = (fileAttachment.type || '').toLowerCase();
     const name = (fileAttachment.name || fileAttachment.title || '').toLowerCase();
     const url = (fileAttachment.url || '').toLowerCase();

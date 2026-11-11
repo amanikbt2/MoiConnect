@@ -3061,6 +3061,11 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         AI Overages
       </button>
 
+      <button id="tab-btn-scheduler" onclick="switchTab('scheduler')" class="tab-btn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/><path d="M8 2v3M16 2v3"/></svg>
+        Scheduler
+      </button>
+
       <button id="tab-btn-settings" onclick="switchTab('settings')" class="tab-btn">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
         App Settings
@@ -3956,7 +3961,7 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
               <div><label>Banner Image</label><input type="file" id="pop-interactive-image" accept="image/jpeg,image/png,image/webp,image/gif" class="form-control" /></div>
               <div><label>Subtitle (optional)</label><input type="text" id="pop-interactive-subtitle" class="form-control" /></div>
               <div><label>Body (optional)</label><textarea id="pop-interactive-body" class="form-control" rows="3"></textarea></div>
-              <div><label>Questions / Inputs</label><div id="interactive-inputs"></div><button type="button" onclick="addInteractiveInput()">+ Add input</button></div>
+              <div><label>Questions / Inputs</label><div id="interactive-validation-error" role="alert" class="hidden" style="margin:6px 0;padding:9px 11px;border:1px solid #fca5a5;border-radius:7px;background:#fef2f2;color:#b91c1c;font-size:12px;font-weight:700;"></div><div id="interactive-inputs"></div><button type="button" onclick="addInteractiveInput()">+ Add input</button></div>
               <div><label>Target Audience</label><select id="pop-interactive-audience" class="form-control"><option value="all">All Users and Guests</option><option value="unauthenticated">Guests Only</option><option value="emails">Specific Email List</option></select></div>
               <textarea id="pop-interactive-emails" class="form-control" rows="2" placeholder="student@example.com, ..." style="display: none;"></textarea>
               <label><input type="checkbox" id="pop-interactive-cancel" checked /> Allow dismissing without submitting</label>
@@ -4264,6 +4269,46 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         </div>
         <div id="ai-logs-container" style="display:flex; flex-direction:column; gap:8px; max-height:520px; overflow-y:auto;">
           <div style="text-align:center; padding:28px; color:#94a3b8;">No AI logs loaded.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB: FORUM SCHEDULER -->
+    <section id="tab-content-scheduler" class="tab-content hidden">
+      <div class="card">
+        <div class="card-header">
+          <div><h2 class="card-title">Schedule a Forum Message</h2><p class="card-sub">Choose Campus AI or Campus Bot, write a message, optionally attach media, and pick when it should appear in Uni Forum.</p></div>
+          <button type="button" onclick="loadForumSchedules()" class="btn btn-view">Refresh</button>
+        </div>
+        <div style="display:grid;grid-template-columns:minmax(280px,0.9fr) minmax(360px,1.4fr);gap:18px;align-items:start;">
+          <div style="border:1px solid #e2e8f0;border-radius:12px;padding:16px;background:#f8fafc;">
+            <label style="display:grid;gap:6px;font-size:12px;font-weight:800;color:#334155;">Send as
+              <select id="forum-schedule-assistant" class="form-control"><option value="ai">Campus AI</option><option value="bot">Campus Bot</option></select>
+            </label>
+            <label style="display:grid;gap:6px;margin-top:12px;font-size:12px;font-weight:800;color:#334155;">Date and time
+              <input id="forum-schedule-time" type="datetime-local" class="form-control" />
+            </label>
+            <label style="display:grid;gap:6px;margin-top:12px;font-size:12px;font-weight:800;color:#334155;">Message
+              <textarea id="forum-schedule-text" rows="5" maxlength="4000" placeholder="Write the forum message…" class="form-control" style="resize:vertical;"></textarea>
+            </label>
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px;">
+              <label for="forum-schedule-file" class="btn btn-view" style="cursor:pointer;">＋ Attach image, video or document</label>
+              <input id="forum-schedule-file" type="file" accept="image/*,video/*,.pdf,.doc,.docx" style="display:none;" onchange="onForumScheduleFileSelected(this.files[0])" />
+              <button type="button" id="forum-schedule-submit" onclick="createForumSchedule()" class="btn btn-approve">Schedule message</button>
+            </div>
+            <div id="forum-schedule-attachment" style="margin-top:8px;font-size:12px;color:#475569;"></div>
+            <div id="forum-schedule-status" role="status" aria-live="polite" style="margin-top:10px;font-size:12px;color:#64748b;"></div>
+          </div>
+          <div>
+            <div style="display:flex;gap:8px;margin-bottom:12px;">
+              <button id="forum-schedule-filter-pending" type="button" onclick="setForumScheduleFilter('pending')" class="btn btn-view">Pending</button>
+              <button id="forum-schedule-filter-history" type="button" onclick="setForumScheduleFilter('history')" class="btn btn-view">History</button>
+              <span id="forum-schedule-count" style="margin-left:auto;align-self:center;font-size:11px;color:#64748b;"></span>
+            </div>
+            <div id="forum-schedule-list" style="display:flex;flex-direction:column;gap:9px;max-height:620px;overflow:auto;padding-right:4px;">
+              <div style="padding:24px;text-align:center;color:#94a3b8;">Open Scheduler to load schedules.</div>
+            </div>
+          </div>
         </div>
       </div>
     </section>
@@ -5380,6 +5425,8 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         loadDirectPayments();
       } else if (tabId === 'community') {
         loadCommunityMessagesAdmin();
+      } else if (tabId === 'scheduler') {
+        loadForumSchedules();
       } else if (tabId === 'temp') {
         loadTempFiles();
       } else if (tabId === 'feedbacks') {
@@ -5387,6 +5434,104 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       } else if (tabId === 'app-reports') {
         loadSearchReports();
       }
+    }
+
+    let forumSchedules = [];
+    let forumScheduleFilter = 'pending';
+    let forumScheduleAttachment = null;
+
+    function setForumScheduleFilter(filter) {
+      forumScheduleFilter = filter === 'history' ? 'history' : 'pending';
+      renderForumSchedules();
+    }
+
+    function onForumScheduleFileSelected(file) {
+      const label = document.getElementById('forum-schedule-attachment');
+      if (!file) { forumScheduleAttachment = null; label.textContent = ''; return; }
+      label.textContent = 'Uploading ' + file.name + '…';
+      const form = new FormData();
+      form.append('file', file);
+      fetch('/api/v1/community/upload-media', { method: 'POST', body: form })
+        .then(async function(response) {
+          const json = await response.json();
+          if (!response.ok || !json.success) throw new Error(json.error || 'Upload failed.');
+          forumScheduleAttachment = json.data;
+          label.textContent = 'Attached: ' + json.data.name + ' (' + json.data.size + ')';
+        })
+        .catch(function(error) { forumScheduleAttachment = null; label.textContent = 'Upload failed: ' + error.message; });
+    }
+
+    async function createForumSchedule() {
+      const status = document.getElementById('forum-schedule-status');
+      const button = document.getElementById('forum-schedule-submit');
+      const scheduledAt = document.getElementById('forum-schedule-time').value;
+      const text = document.getElementById('forum-schedule-text').value;
+      const assistant = document.getElementById('forum-schedule-assistant').value;
+      if (!scheduledAt) { status.style.color = '#b91c1c'; status.textContent = 'Choose a date and time.'; return; }
+      if (!text.trim() && !forumScheduleAttachment) { status.style.color = '#b91c1c'; status.textContent = 'Write a message or attach a file.'; return; }
+      button.disabled = true;
+      status.style.color = '#64748b'; status.textContent = 'Saving schedule…';
+      try {
+        const response = await fetch('/api/v1/dashboard/forum-scheduler', {
+          method: 'POST', headers: await adminSettingsAuthHeaders(),
+          body: JSON.stringify({ assistant, scheduledAt: new Date(scheduledAt).toISOString(), text: text.trim(), fileAttachment: forumScheduleAttachment })
+        });
+        const json = await response.json();
+        if (!response.ok || !json.success) throw new Error(json.error || 'Could not schedule message.');
+        document.getElementById('forum-schedule-text').value = '';
+        document.getElementById('forum-schedule-file').value = '';
+        document.getElementById('forum-schedule-time').value = '';
+        document.getElementById('forum-schedule-attachment').textContent = '';
+        forumScheduleAttachment = null;
+        status.style.color = '#15803d'; status.textContent = 'Message scheduled successfully.';
+        forumScheduleFilter = 'pending';
+        await loadForumSchedules();
+      } catch (error) { status.style.color = '#b91c1c'; status.textContent = error.message || 'Could not schedule message.'; }
+      finally { button.disabled = false; }
+    }
+
+    async function cancelForumSchedule(id) {
+      if (!confirm('Cancel this pending forum message?')) return;
+      try {
+        const response = await fetch('/api/v1/dashboard/forum-scheduler/' + encodeURIComponent(id), { method: 'DELETE', headers: await adminSettingsAuthHeaders() });
+        const json = await response.json();
+        if (!response.ok || !json.success) throw new Error(json.error || 'Could not cancel schedule.');
+        await loadForumSchedules();
+      } catch (error) { showToast(error.message || 'Could not cancel schedule.', true); }
+    }
+
+    async function loadForumSchedules() {
+      const container = document.getElementById('forum-schedule-list');
+      if (!container) return;
+      try {
+        const response = await fetch('/api/v1/dashboard/forum-scheduler', { headers: await adminSettingsAuthHeaders() });
+        const json = await response.json();
+        if (!response.ok || !json.success) throw new Error(json.error || 'Could not load schedules.');
+        forumSchedules = json.data || [];
+        renderForumSchedules();
+      } catch (error) { container.innerHTML = '<div style="padding:20px;color:#b91c1c;background:#fef2f2;border-radius:9px;">' + escapeMaterialHtml(error.message || 'Could not load schedules.') + '</div>'; }
+    }
+
+    function renderForumSchedules() {
+      const container = document.getElementById('forum-schedule-list');
+      if (!container) return;
+      const jobs = forumSchedules.filter(function(job) { return forumScheduleFilter === 'pending' ? job.status === 'pending' : job.status !== 'pending'; });
+      const count = document.getElementById('forum-schedule-count');
+      if (count) count.textContent = jobs.length + (forumScheduleFilter === 'pending' ? ' pending' : ' history items');
+      document.getElementById('forum-schedule-filter-pending').style.background = forumScheduleFilter === 'pending' ? '#dcfce7' : '#fff';
+      document.getElementById('forum-schedule-filter-history').style.background = forumScheduleFilter === 'history' ? '#dcfce7' : '#fff';
+      if (!jobs.length) { container.innerHTML = '<div style="padding:28px;text-align:center;color:#94a3b8;border:1px dashed #cbd5e1;border-radius:10px;">No ' + (forumScheduleFilter === 'pending' ? 'pending schedules' : 'history') + ' yet.</div>'; return; }
+      container.innerHTML = jobs.map(function(job) {
+        const name = job.assistant === 'bot' ? 'Campus Bot' : 'Campus AI';
+        const date = new Date(job.scheduledAt).toLocaleString();
+        const attachment = job.fileAttachment ? '<div style="margin-top:7px;font-size:11px;color:#475569;">📎 ' + escapeMaterialHtml(job.fileAttachment.name) + '</div>' : '';
+        const error = job.error ? '<div style="margin-top:6px;color:#b91c1c;font-size:11px;">' + escapeMaterialHtml(job.error) + '</div>' : '';
+        const cancel = job.status === 'pending' ? '<button type="button" class="btn btn-reject forum-schedule-cancel" data-schedule-id="' + escapeMaterialHtml(job.id) + '" style="padding:5px 9px;font-size:11px;">Cancel</button>' : '';
+        return '<div style="border:1px solid #e2e8f0;border-radius:10px;padding:12px;background:#fff;"><div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;"><div><strong style="font-size:12px;color:#0f172a;">' + name + '</strong><div style="font-size:10px;color:#64748b;margin-top:3px;">' + escapeMaterialHtml(date) + ' · ' + escapeMaterialHtml(job.status) + '</div></div>' + cancel + '</div><div style="font-size:12px;color:#334155;white-space:pre-wrap;margin-top:8px;overflow-wrap:anywhere;">' + escapeMaterialHtml(job.text || '') + '</div>' + attachment + error + '</div>';
+      }).join('');
+      container.querySelectorAll('.forum-schedule-cancel').forEach(function(button) {
+        button.addEventListener('click', function() { cancelForumSchedule(button.getAttribute('data-schedule-id')); });
+      });
     }
 
     async function loadSearchReports() {
@@ -6571,10 +6716,10 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         '<strong class="interactive-question-number" style="font-size:12px;color:#334155;">Question ' + index + '</strong>' +
         '<button type="button" class="interactive-remove" style="border:0;background:#fff1f2;color:#be123c;border-radius:7px;padding:5px 9px;font-size:11px;font-weight:700;cursor:pointer;">Remove</button></div>' +
         '<div style="display:grid;grid-template-columns:minmax(0,1fr) 160px;gap:10px;align-items:end;">' +
-        '<label style="display:grid;gap:5px;font-size:11px;font-weight:700;color:#475569;">Question label *<input class="form-control interactive-label" placeholder="e.g. What do you think of the app?" required /></label>' +
+        '<label style="display:grid;gap:5px;font-size:11px;font-weight:700;color:#475569;">Question label *<input class="form-control interactive-label" placeholder="e.g. What do you think of the app?" aria-required="true" /><small class="interactive-label-error hidden" style="color:#b91c1c;font-size:11px;">Enter a question label.</small></label>' +
         '<label style="display:grid;gap:5px;font-size:11px;font-weight:700;color:#475569;">Answer type<select class="form-control interactive-type"><option value="text">Text box</option><option value="radio">Radio choices</option><option value="checkbox">Checkbox</option></select></label></div>' +
         '<div class="interactive-options-wrap" style="display:none;">' +
-        '<label style="display:grid;gap:5px;font-size:11px;font-weight:700;color:#475569;">Radio choices *<input class="form-control interactive-options" placeholder="Enter choices separated by commas" /></label>' +
+        '<label style="display:grid;gap:5px;font-size:11px;font-weight:700;color:#475569;">Radio choices *<input class="form-control interactive-options" placeholder="Enter choices separated by commas" /><small class="interactive-options-error hidden" style="color:#b91c1c;font-size:11px;">Add at least two choices, separated by commas.</small></label>' +
         '<small style="display:block;margin-top:4px;color:#64748b;font-size:11px;">Separate each option with a comma, for example: Good, Fair, Poor</small></div>' +
         '<label style="display:flex;align-items:center;gap:8px;width:max-content;font-size:12px;font-weight:600;color:#475569;cursor:pointer;"><input type="checkbox" class="interactive-required" /> Require an answer</label>';
       row.querySelector('.interactive-remove').addEventListener('click', function() {
@@ -6586,6 +6731,16 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       const typeSelect = row.querySelector('.interactive-type');
       const optionsWrap = row.querySelector('.interactive-options-wrap');
       const optionsInput = row.querySelector('.interactive-options');
+      const labelInput = row.querySelector('.interactive-label');
+      [labelInput, optionsInput].forEach(function(input) {
+        input.addEventListener('input', function() {
+          input.style.borderColor = '';
+          const error = input.parentElement.querySelector('small');
+          if (error) error.classList.add('hidden');
+          const formError = document.getElementById('interactive-validation-error');
+          if (formError) formError.classList.add('hidden');
+        });
+      });
       function syncInteractiveOptions() {
         const showOptions = typeSelect.value === 'radio';
         optionsWrap.style.display = showOptions ? 'block' : 'none';
@@ -6610,12 +6765,44 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
 
     async function handleCreateInteractivePopup(e) {
       e.preventDefault();
-      const inputs = collectInteractiveInputs();
-      if (!inputs.length) { showToast('Add at least one input.', true); return; }
-      if (inputs.some(function(input) { return input.type === 'radio' && input.options.length < 2; })) {
-        showToast('Add at least two choices for each radio question.', true);
+      const formError = document.getElementById('interactive-validation-error');
+      if (formError) formError.classList.add('hidden');
+      const rows = Array.from(document.querySelectorAll('#interactive-inputs .interactive-input-row'));
+      rows.forEach(function(row) {
+        row.querySelector('.interactive-label').style.borderColor = '';
+        row.querySelector('.interactive-label-error').classList.add('hidden');
+        row.querySelector('.interactive-options').style.borderColor = '';
+        row.querySelector('.interactive-options-error').classList.add('hidden');
+      });
+      const questionRows = rows.map(function(row) {
+        return {
+          row: row,
+          label: row.querySelector('.interactive-label').value.trim(),
+          type: row.querySelector('.interactive-type').value,
+          options: row.querySelector('.interactive-options').value.split(',').map(function(value) { return value.trim(); }).filter(Boolean)
+        };
+      });
+      const firstQuestion = questionRows.find(function(item) { return item.label; });
+      if (!firstQuestion) {
+        if (formError) { formError.textContent = 'Add at least one question before broadcasting.'; formError.classList.remove('hidden'); }
+        if (questionRows[0]) {
+          const input = questionRows[0].row.querySelector('.interactive-label');
+          input.style.borderColor = '#dc2626';
+          questionRows[0].row.querySelector('.interactive-label-error').classList.remove('hidden');
+          input.focus();
+        }
         return;
       }
+      const invalidRadio = questionRows.find(function(item) { return item.label && item.type === 'radio' && item.options.length < 2; });
+      if (invalidRadio) {
+        if (formError) { formError.textContent = 'Complete the required choices for each radio question.'; formError.classList.remove('hidden'); }
+        const input = invalidRadio.row.querySelector('.interactive-options');
+        input.style.borderColor = '#dc2626';
+        invalidRadio.row.querySelector('.interactive-options-error').classList.remove('hidden');
+        input.focus();
+        return;
+      }
+      const inputs = collectInteractiveInputs();
       const btn = document.getElementById('btn-submit-pop-interactive');
       btn.disabled = true;
       try {

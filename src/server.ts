@@ -17,6 +17,8 @@ import {
   renderSmartPdfPreviewPage
 } from './controllers/dashboardController';
 import { renderReferralLandingPage } from './controllers/referralController';
+import { startForumScheduler } from './services/forumSchedulerService';
+import { assertSandboxConfiguration } from './config';
 
 const app = express();
 const server = http.createServer(app);
@@ -146,19 +148,29 @@ setupSocketIO(io);
 // Start Server
 if (process.env.NODE_ENV !== 'test') {
   const PORT = config.port;
-  server.listen(PORT, '0.0.0.0', () => {
+  if (config.sandboxMode) assertSandboxConfiguration();
+  const bindAddress = config.sandboxMode ? '127.0.0.1' : '0.0.0.0';
+  const startListening = () => server.listen(PORT, bindAddress, () => {
     console.log(`=================================`);
     console.log(`[MConnect Server Running]`);
     console.log(`Environment: ${config.nodeEnv}`);
     console.log(`Port: ${PORT}`);
-    console.log(`Bound Interface: 0.0.0.0:${PORT}`);
+    console.log(`Bound Interface: ${bindAddress}:${PORT}`);
     console.log(`=================================`);
   });
 
-  // Connect to MongoDB asynchronously
-  connectDB().catch((err: any) => {
-    console.error('[MongoDB Connection Failure]:', err?.message || err);
-  });
+  if (config.sandboxMode) {
+    void connectDB().then(startListening).catch((err: any) => {
+      console.error('[Sandbox startup blocked]:', err?.message || err);
+      process.exitCode = 1;
+    });
+  } else {
+    startListening();
+    connectDB().catch((err: any) => {
+      console.error('[MongoDB Connection Failure]:', err?.message || err);
+    });
+    startForumScheduler();
+  }
 }
 
 export { app, server };

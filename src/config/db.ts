@@ -1,17 +1,20 @@
 import dns from 'dns';
 import mongoose from 'mongoose';
-import { config } from './index';
+import { assertSandboxConfiguration, config } from './index';
 
 // Ensure reliable DNS resolution for MongoDB Atlas SRV records and replica shards
-try {
-  dns.setServers(['8.8.8.8', '1.1.1.1']);
-} catch {
-  // Ignore if custom DNS cannot be set
+if (!config.sandboxMode) {
+  try {
+    dns.setServers(['8.8.8.8', '1.1.1.1']);
+  } catch {
+    // Ignore if custom DNS cannot be set
+  }
 }
 
 export const connectDB = async (): Promise<void> => {
+  assertSandboxConfiguration();
   const isLocalhost = config.mongoUri.includes('localhost') || config.mongoUri.includes('127.0.0.1');
-  const maxAttempts = 5;
+  const maxAttempts = config.sandboxMode ? 1 : 5;
 
   if (config.nodeEnv === 'production' && isLocalhost) {
     console.warn(`========================================================================`);
@@ -27,8 +30,8 @@ export const connectDB = async (): Promise<void> => {
       if (mongoose.connection.readyState === 1) return;
 
       const conn = await mongoose.connect(config.mongoUri, {
-        serverSelectionTimeoutMS: 10000,
-        connectTimeoutMS: 10000,
+        serverSelectionTimeoutMS: config.sandboxMode ? 3000 : 10000,
+        connectTimeoutMS: config.sandboxMode ? 3000 : 10000,
         socketTimeoutMS: 20000,
         family: 4
       });
@@ -38,6 +41,7 @@ export const connectDB = async (): Promise<void> => {
       const message = error?.message || String(error);
       if (attempt === maxAttempts) {
         console.error(`[MongoDB Connection Error]: ${message}`);
+        if (config.sandboxMode) throw new Error('Local sandbox MongoDB is unavailable. Start MongoDB locally, then run the sandbox again.');
         if (config.nodeEnv === 'production' && isLocalhost) {
           console.error(`[MongoDB Guide]: Please set your cloud MongoDB Atlas connection string under MONGODB_URI in Render Environment Variables.`);
         } else {

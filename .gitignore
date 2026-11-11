@@ -17,6 +17,7 @@ build/
 .env.development
 *.env
 !.env.example
+!.env.sandbox.example
 
 # Signing keys and certificates
 *.pem
