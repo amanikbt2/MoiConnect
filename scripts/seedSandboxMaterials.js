@@ -40,10 +40,19 @@ const main = async () => {
 
     source = await mongoose.createConnection(sourceUri, { serverSelectionTimeoutMS: 15000 }).asPromise();
 
-    const sourcePapers = source.collection('papers');
     const targetPapers = target.collection('papers');
-    const sourcePaperCount = await sourcePapers.countDocuments({});
-    console.log(`Source database "${source.name || '(default)'}" contains ${sourcePaperCount} document(s) in "papers".`);
+    const sourceCollectionNames = new Set((await source.db.listCollections({}, { nameOnly: true }).toArray()).map((item) => item.name));
+    const sourcePaperCandidates = ['papers', 'paper'].filter((name) => sourceCollectionNames.has(name));
+    const sourcePaperCounts = await Promise.all(sourcePaperCandidates.map(async (name) => ({
+      name,
+      count: await source.collection(name).countDocuments({})
+    })));
+    sourcePaperCounts.sort((a, b) => b.count - a.count || (a.name === 'papers' ? -1 : 1));
+    const selectedSourceCollection = sourcePaperCounts[0]?.name || 'papers';
+    const sourcePaperCount = sourcePaperCounts[0]?.count || 0;
+    const sourcePapers = source.collection(selectedSourceCollection);
+    const collectionSummary = sourcePaperCounts.map((item) => `${item.name}=${item.count}`).join(', ') || 'none';
+    console.log(`Source database "${source.name || '(default)'}" paper collections: ${collectionSummary}. Reading "${selectedSourceCollection}".`);
     if (sourcePaperCount > 0) {
       const statusAndTypeCounts = await sourcePapers.aggregate([
         { $group: { _id: { status: '$status', type: '$type' }, count: { $sum: 1 } } },
