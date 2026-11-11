@@ -4,6 +4,7 @@ const { Transform, Readable } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 const dotenv = require('dotenv');
 const mongoose = require('mongoose');
+const cloudinary = require('cloudinary').v2;
 
 dotenv.config({ path: path.resolve(__dirname, '../.env.sandbox') });
 
@@ -29,11 +30,8 @@ const getSafeFilename = (paper, sourceUrl) => {
   return `${id}${ext}`;
 };
 
-const downloadMaterial = async (url, destination) => {
-  const response = await fetch(url, { redirect: 'follow' });
-  if (!response.ok || !response.body) throw new Error(`Download failed with HTTP ${response.status}.`);
-  if (!isCloudinaryUrl(response.url || url)) throw new Error('The download redirected away from Cloudinary.');
-
+const saveResponseBody = async (response, destination) => {
+  if (!response.body) throw new Error('The file response had no content.');
   const contentType = String(response.headers.get('content-type') || '').toLowerCase();
   if (contentType.includes('text/html') || contentType.includes('application/json')) {
     throw new Error('The source returned a web page or error response instead of a material file.');
@@ -51,9 +49,70 @@ const downloadMaterial = async (url, destination) => {
   });
   await pipeline(Readable.fromWeb(response.body), sizeGuard, fs.createWriteStream(destination));
   if (bytesWritten < 1) throw new Error('The downloaded material is empty.');
-}
+};
+
+const getSignedSourceUrls = (paper, originalUrl, sourceCredentials) => {
+  if (!sourceCredentials || !paper.publicId) return [];
+  const parsed = new URL(originalUrl);
+  const segments = parsed.pathname.split('/').filter(Boolean);
+  const resourceIndex = segments.findIndex((segment) => ['image', 'video', 'raw'].includes(segment));
+  const resourceType = resourceIndex >= 0 ? segments[resourceIndex] : 'raw';
+  const pathDeliveryType = resourceIndex >= 0 ? segments[resourceIndex + 1] : '';
+  const deliveryTypes = [...new Set([pathDeliveryType, 'upload', 'authenticated', 'private'].filter(Boolean))];
+  const format = path.extname(parsed.pathname).replace(/^\./, '').toLowerCase() || 'pdf';
+
+  cloudinary.config({
+    cloud_name: sourceCredentials.cloudName,
+    api_key: sourceCredentials.apiKey,
+    api_secret: sourceCredentials.apiSecret,
+    secure: true
+  });
+  return deliveryTypes.map((type) => cloudinary.utils.private_download_url(paper.publicId, format, {
+    resource_type: resourceType,
+    type,
+    attachment: true,
+    expires_at: Math.floor(Date.now() / 1000) + 15 * 60
+  }));
+};
+
+const downloadMaterial = async (paper, sourceUrl, destination, sourceCredentials) => {
+  const candidateUrls = [sourceUrl, ...getSignedSourceUrls(paper, sourceUrl, sourceCredentials)];
+  let lastError;
+
+  for (const candidateUrl of candidateUrls) {
+    try {
+      const response = await fetch(candidateUrl, { redirect: 'follow' });
+      if (!response.ok) {
+        lastError = new Error(`Download failed with HTTP ${response.status}.`);
+        await response.body?.cancel().catch(() => undefined);
+        continue;
+      }
+      if (!isCloudinaryUrl(response.url || candidateUrl)) throw new Error('The download redirected away from Cloudinary.');
+      await saveResponseBody(response, destination);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (fs.existsSync(destination)) fs.unlinkSync(destination);
+      if (!/HTTP (401|403|404)/.test(String(error.message || error))) throw error;
+    }
+  }
+
+  if (lastError?.message?.includes('HTTP 401') && !sourceCredentials) {
+    throw new Error('Cloudinary requires authentication. Add CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET to the ignored backend .env, then rerun.');
+  }
+  throw lastError || new Error('Could not download the material.');
+};
 
 const main = async () => {
+  const sourceEnvPath = path.resolve(__dirname, '../.env');
+  const sourceEnv = fs.existsSync(sourceEnvPath) ? dotenv.parse(fs.readFileSync(sourceEnvPath, 'utf8')) : {};
+  const sourceCredentials = sourceEnv.CLOUDINARY_CLOUD_NAME && sourceEnv.CLOUDINARY_API_KEY && sourceEnv.CLOUDINARY_API_SECRET
+    ? {
+        cloudName: sourceEnv.CLOUDINARY_CLOUD_NAME.trim(),
+        apiKey: sourceEnv.CLOUDINARY_API_KEY.trim(),
+        apiSecret: sourceEnv.CLOUDINARY_API_SECRET.trim()
+      }
+    : null;
   let db;
   try {
     db = await mongoose.createConnection(SANDBOX_URI, {
@@ -91,7 +150,7 @@ const main = async () => {
 
         const tempDestination = `${destination}.part`;
         try {
-          await downloadMaterial(sourceUrl, tempDestination);
+          await downloadMaterial(paper, sourceUrl, tempDestination, sourceCredentials);
           fs.renameSync(tempDestination, destination);
         } catch (error) {
           if (fs.existsSync(tempDestination)) fs.unlinkSync(tempDestination);
@@ -110,7 +169,7 @@ const main = async () => {
     }
 
     console.log(`Local sandbox file copy finished: ${copied} copied, ${skipped} already local, ${failed} failed.`);
-    console.log('Only local mconnect_sandbox.papers was updated. No Cloudinary API, production database, or user collections were written.');
+    console.log('Only local mconnect_sandbox.papers was updated. No Cloudinary assets, production database, or user collections were changed.');
     if (failed) process.exitCode = 1;
   } finally {
     await db?.close();
