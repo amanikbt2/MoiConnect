@@ -344,7 +344,7 @@ export const sendPushToTokens = async (
   data: Record<string, any> = {}
 ): Promise<{ totalTokens: number; sentCount: number; failedCount: number }> => {
   if (!tokens || tokens.length === 0) return { totalTokens: 0, sentCount: 0, failedCount: 0 };
-  const { categoryId, richContent, ...notificationData } = data as any;
+  const { categoryId, richContent, ttl, ...notificationData } = data as any;
   const messages = tokens.map((to) => ({
     to,
     sound: 'default',
@@ -355,7 +355,7 @@ export const sendPushToTokens = async (
     ...(richContent ? { richContent } : {}),
     priority: 'high',
     channelId: notificationData?.channelId || 'mconnect_messages_v2',
-    ttl: 60 * 60 * 24 * 7,
+    ttl: Number.isFinite(Number(ttl)) ? Number(ttl) : 60 * 60 * 24 * 7,
     _displayInForeground: true,
   }));
 
@@ -416,6 +416,44 @@ export const sendPushToTokens = async (
   return { totalTokens: tokens.length, sentCount, failedCount };
 };
 
+export const sendForumLivePush = async (
+  host: { userId: string; name: string },
+  liveSessionId: string,
+  omitUserIds: string[] = []
+): Promise<void> => {
+  try {
+    const forumPolicy = await getForumAccessPolicy();
+    const devices = await DeviceToken.find({}).select('token userId email').populate('userId', 'email').lean();
+    const excludedUsers = new Set([host.userId, ...omitUserIds].filter(Boolean).map(String));
+    const tokens = devices
+      .filter((device: any) => {
+        const userId = device.userId
+          ? String(typeof device.userId === 'object' ? device.userId._id : device.userId)
+          : '';
+        const linkedEmail = device.userId && typeof device.userId === 'object' ? device.userId.email : '';
+        const email = String(linkedEmail || device.email || '').trim().toLowerCase();
+        return (!userId || !excludedUsers.has(userId)) && isForumParticipationAllowed(email, forumPolicy);
+      })
+      .map((device: any) => String(device.token))
+      .filter(Boolean)
+      .filter((token: string, index: number, all: string[]) => all.indexOf(token) === index);
+
+    if (!tokens.length) return;
+    const result = await sendPushToTokens(tokens, `${host.name || 'A student'} is live`, 'Join the forum live now.', {
+      screen: 'community',
+      channelId: 'mconnect_messages_v2',
+      categoryId: 'forum_live',
+      notificationType: 'forum_live',
+      liveSessionId,
+      hostName: host.name || 'A student',
+      ttl: 60 * 10
+    });
+    if (result.failedCount > 0) console.warn('[Forum Live Push]: Delivery summary:', result);
+  } catch (error) {
+    console.error('[Forum Live Push Error]:', error);
+  }
+};
+
 export const sendPrivateCommunityMessagePush = async (
   recipientUserId: string,
   messageId: string
@@ -452,6 +490,14 @@ export const formatSmartNotificationSnippet = (
   const cleanText = (text || '').replace(/[*~_|]/g, '').replace(/\s+/g, ' ').trim();
 
   if (fileAttachment && (fileAttachment.url || fileAttachment.name || fileAttachment.type || fileAttachment.paperId)) {
+    if (fileAttachment.materialCategory) {
+      const materialLabel = ['past_paper', 'solution', 'exam'].includes(fileAttachment.materialCategory)
+        ? 'a past paper'
+        : ['cat', 'quiz'].includes(fileAttachment.materialCategory)
+          ? 'a CAT material'
+          : 'notes';
+      return `AI sent ${materialLabel}`;
+    }
     const rawType = (fileAttachment.type || '').toLowerCase();
     const name = (fileAttachment.name || fileAttachment.title || '').toLowerCase();
     const url = (fileAttachment.url || '').toLowerCase();

@@ -33,6 +33,7 @@ import * as communityController from '../controllers/communityController';
 import * as liveController from '../controllers/liveController';
 import * as admin2Controller from '../controllers/admin2Controller';
 import * as aiPlaygroundController from '../controllers/aiPlaygroundController';
+import * as schedulerController from '../controllers/schedulerController';
 import * as searchReportController from '../controllers/searchReportController';
 import * as referralController from '../controllers/referralController';
 import { handleB2CResult } from '../services/mpesaB2CService';
@@ -95,6 +96,9 @@ router.get('/dashboard/ai-context', dashboardController.getAiContextSettings);
 router.put('/dashboard/ai-context', dashboardController.updateAiContextSettings);
 router.get('/dashboard/ai-playground/options', authenticate, requireRole('admin'), aiPlaygroundController.getOptions);
 router.post('/dashboard/ai-playground/test', authenticate, requireRole('admin'), aiPlaygroundController.testRequest);
+router.get('/dashboard/forum-scheduler', authenticate, requireRole('admin'), schedulerController.list);
+router.post('/dashboard/forum-scheduler', authenticate, requireRole('admin'), schedulerController.create);
+router.delete('/dashboard/forum-scheduler/:id', authenticate, requireRole('admin'), schedulerController.cancel);
 router.get('/dashboard/materials/search', dashboardController.searchDashboardMaterials);
 router.get('/materials/search', dashboardController.searchDashboardMaterials);
 router.get('/dashboard/materials', dashboardController.getDashboardMaterials);
@@ -147,8 +151,8 @@ router.delete('/notify/popups/:id', popupController.deletePopup);
 router.post('/notify/check-popup', optionalAuthenticate, popupController.checkClientPopup);
 router.post('/notify/popups/:id/responses', optionalAuthenticate, popupController.submitPopupResponse);
 router.get('/notify/popups/:id/responses', popupController.getPopupResponses);
-
 router.post('/notify/popups/:id/responses/:responseId/read', popupController.setPopupResponseReadState);
+
 // Auth Routes
 router.post('/auth/register', validateBody(registerSchema), authController.register);
 router.post('/auth/login', validateBody(loginSchema), authController.login);

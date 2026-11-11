@@ -6,6 +6,14 @@ export interface IFileAttachment {
   publicId?: string;
   size: string;
   type: 'pdf' | 'doc' | 'image' | 'video';
+  paperId?: string;
+  mtid?: string;
+  title?: string;
+  unitCode?: string;
+  unitName?: string;
+  school?: string;
+  author?: string;
+  materialCategory?: string;
 }
 
 export interface IReplyTo {
@@ -73,7 +81,15 @@ const communityMessageSchema = new Schema<ICommunityMessage>(
       url: { type: String },
       publicId: { type: String, trim: true },
       size: { type: String },
-      type: { type: String, enum: ['pdf', 'doc', 'image', 'video'] }
+      type: { type: String, enum: ['pdf', 'doc', 'image', 'video'] },
+      paperId: { type: String },
+      mtid: { type: String },
+      title: { type: String },
+      unitCode: { type: String },
+      unitName: { type: String },
+      school: { type: String },
+      author: { type: String },
+      materialCategory: { type: String }
     },
     replyTo: {
       id: { type: String },

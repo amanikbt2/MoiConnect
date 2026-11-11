@@ -7,7 +7,7 @@ import { Conversation } from '../models/Conversation';
 import { Message } from '../models/Message';
 import { CommunityMessage } from '../models/CommunityMessage';
 import { getCampusBotsGeneration, isBotStopCommand, runCampusBotConversation, shouldCampusBotRespond, stopCampusBots } from '../services/campusBotService';
-import { sendCommunityMessagePush, sendDirectMessagePush } from '../services/pushNotificationService';
+import { sendCommunityMessagePush, sendDirectMessagePush, sendForumLivePush } from '../services/pushNotificationService';
 import { getAppSettingValue } from '../models/AppSetting';
 import { ForumAccessPolicy, getForumAccessPolicy, isForumParticipationAllowed } from '../services/forumAccessService';
 
@@ -25,12 +25,14 @@ interface OnlineSession {
 
 interface LiveParticipant {
   id: string;
+  userId?: string;
   name: string;
   avatar?: string;
   socketId: string;
 }
 
 interface ActiveLiveBroadcast {
+  liveSessionId: string;
   hostId: string;
   hostSocketId: string;
   hostName: string;
@@ -171,9 +173,17 @@ export const setupSocketIO = (io: SocketIOServer): void => {
     socket.on('community:request_live_status', () => {
       socket.emit('community:live_status', activeLiveBroadcast ? {
         active: true,
+          liveSessionId: activeLiveBroadcast.liveSessionId,
           hostName: activeLiveBroadcast.hostName,
           hostAvatar: activeLiveBroadcast.hostAvatar,
           hostId: activeLiveBroadcast.hostId
+      } : { active: false });
+    });
+
+    socket.on('community:request_live_notification_status', () => {
+      socket.emit('community:live_notification_status', activeLiveBroadcast ? {
+        active: true,
+        liveSessionId: activeLiveBroadcast.liveSessionId
       } : { active: false });
     });
 
@@ -193,6 +203,7 @@ export const setupSocketIO = (io: SocketIOServer): void => {
 
     if (activeLiveBroadcast) {
       socket.emit('community:live_start', {
+        liveSessionId: activeLiveBroadcast.liveSessionId,
         hostName: activeLiveBroadcast.hostName,
         hostAvatar: activeLiveBroadcast.hostAvatar,
         hostId: activeLiveBroadcast.hostId
@@ -256,6 +267,7 @@ export const setupSocketIO = (io: SocketIOServer): void => {
       if (!host?.canGoLive) return;
 
       activeLiveBroadcast = {
+        liveSessionId: new Types.ObjectId().toString(),
         hostId: userId,
         hostSocketId: socket.id,
         hostName: host.name || 'Moi Student',
@@ -264,10 +276,16 @@ export const setupSocketIO = (io: SocketIOServer): void => {
       };
 
       io.to('community_room').emit('community:live_start', {
+        liveSessionId: activeLiveBroadcast.liveSessionId,
         hostName: activeLiveBroadcast.hostName,
         hostAvatar: activeLiveBroadcast.hostAvatar,
         hostId: activeLiveBroadcast.hostId
       });
+      void sendForumLivePush(
+        { userId: activeLiveBroadcast.hostId, name: activeLiveBroadcast.hostName },
+        activeLiveBroadcast.liveSessionId,
+        Array.from(activeLiveBroadcast.participants.values()).map((participant) => participant.userId || '')
+      );
     });
 
     socket.on('community:live_join', (data: { id?: string; name?: string; avatar?: string }) => {
@@ -275,6 +293,7 @@ export const setupSocketIO = (io: SocketIOServer): void => {
 
       const participant: LiveParticipant = {
         id: socket.id,
+        userId,
         name: (socket as any).user?.name || data.name || 'Moi Student',
         avatar: (socket as any).user?.avatarUrl || data.avatar,
         socketId: socket.id
@@ -301,8 +320,10 @@ export const setupSocketIO = (io: SocketIOServer): void => {
         hostDisconnectGraceTimer = null;
       }
       const hostName = activeLiveBroadcast.hostName;
+      const liveSessionId = activeLiveBroadcast.liveSessionId;
       activeLiveBroadcast = null;
-      io.to('community_room').emit('community:live_end', { hostName });
+      io.to('community_room').emit('community:live_end', { hostName, liveSessionId });
+      io.to('community_room').emit('community:live_notification_end', { liveSessionId });
     });
 
     // Typing Indicator Socket Handlers (Zero-DB In-Memory Sub-1ms Broadcast)
@@ -609,13 +630,15 @@ export const setupSocketIO = (io: SocketIOServer): void => {
       if (activeLiveBroadcast?.hostSocketId === socket.id) {
         const hostName = activeLiveBroadcast.hostName;
         const hostId = activeLiveBroadcast.hostId;
+        const liveSessionId = activeLiveBroadcast.liveSessionId;
         // Do not instantly terminate the live broadcast on transient mobile socket drops.
         // Give mobile hosts two minutes to recover from a network handoff or app suspension.
         if (hostDisconnectGraceTimer) clearTimeout(hostDisconnectGraceTimer);
         hostDisconnectGraceTimer = setTimeout(() => {
           if (activeLiveBroadcast && activeLiveBroadcast.hostId === hostId) {
             activeLiveBroadcast = null;
-            io.to('community_room').emit('community:live_end', { hostName });
+            io.to('community_room').emit('community:live_end', { hostName, liveSessionId });
+            io.to('community_room').emit('community:live_notification_end', { liveSessionId });
           }
           hostDisconnectGraceTimer = null;
         }, 120000);

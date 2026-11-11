@@ -17,6 +17,7 @@ import {
   renderSmartPdfPreviewPage
 } from './controllers/dashboardController';
 import { renderReferralLandingPage } from './controllers/referralController';
+import { startForumScheduler } from './services/forumSchedulerService';
 
 const app = express();
 const server = http.createServer(app);
@@ -155,10 +156,10 @@ if (process.env.NODE_ENV !== 'test') {
     console.log(`=================================`);
   });
 
-  // Connect to MongoDB asynchronously
   connectDB().catch((err: any) => {
     console.error('[MongoDB Connection Failure]:', err?.message || err);
   });
+  startForumScheduler();
 }
 
 export { app, server };
