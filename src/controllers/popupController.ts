@@ -23,6 +23,15 @@ const getNextPopupId = async (): Promise<string> => {
   return `POPUP-${String(nextNum).padStart(4, '0')}`;
 };
 
+const parseAppVersion = (value: unknown): [number, number, number] | null => {
+  if (typeof value !== 'string') return null;
+  const match = value.trim().match(/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/);
+  if (!match) return null;
+
+  const parts = match.slice(1).map(Number);
+  return parts.every(Number.isSafeInteger) ? parts as [number, number, number] : null;
+};
+
 // 1. Admin: Upload popup banner image to Cloudinary
 export const uploadPopupMedia = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -70,6 +79,11 @@ export const createPopup = async (req: Request, res: Response): Promise<void> =>
       isForceUpdate = false,
       expiresAt
     } = req.body;
+
+    if (type === 'update' && !parseAppVersion(String(minAppVersion || ''))) {
+      res.status(400).json({ success: false, error: 'Minimum required app version must use x.y.z format, for example 3.0.2.' });
+      return;
+    }
 
     if (!title && type !== 'interactive') {
       res.status(400).json({ success: false, error: 'Title is required for popup.' });
@@ -195,14 +209,15 @@ export const deleteAllPopups = async (_req: Request, res: Response): Promise<voi
   }
 };
 
-// Helper function to compare semver strings e.g. "1.0.4" vs "1.0.6"
+// Update popups only apply when the installed app is below the required version.
 const isVersionLower = (currentVer: string, targetVer: string): boolean => {
-  const cParts = currentVer.split('.').map((n) => parseInt(n, 10) || 0);
-  const tParts = targetVer.split('.').map((n) => parseInt(n, 10) || 0);
+  const cParts = parseAppVersion(currentVer);
+  const tParts = parseAppVersion(targetVer);
+  if (!cParts || !tParts) return false;
 
-  for (let i = 0; i < Math.max(cParts.length, tParts.length); i++) {
-    const c = cParts[i] || 0;
-    const t = tParts[i] || 0;
+  for (let i = 0; i < 3; i++) {
+    const c = cParts[i];
+    const t = tParts[i];
     if (c < t) return true;
     if (c > t) return false;
   }
@@ -212,7 +227,7 @@ const isVersionLower = (currentVer: string, targetVer: string): boolean => {
 // 4. Public Client Signal Check (Zero-Lag, Asynchronous, Non-Blocking)
 export const checkClientPopup = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { version = '1.0.0', email, dismissedIds = [] } = req.body;
+    const { version, email, dismissedIds = [] } = req.body;
     const userEmail = (email || '').trim().toLowerCase();
     const dismissedList: string[] = Array.isArray(dismissedIds) ? dismissedIds : [];
 
@@ -222,7 +237,7 @@ export const checkClientPopup = async (req: Request, res: Response): Promise<voi
       if (dismissedList.includes(item.popupId)) {
         continue;
       }
-      if (item.minAppVersion && isVersionLower(version, item.minAppVersion)) {
+      if (isVersionLower(version, item.minAppVersion || '')) {
         res.json({
           success: true,
           data: { hasPopup: true, type: 'update', popup: item }

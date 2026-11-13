@@ -5,7 +5,7 @@
   "scripts": {
     "build": "npm --prefix packages/shared run build && tsc",
     "start": "node dist/server.js",
-    "dev": "nodemon",
+    "dev": "npm --prefix packages/shared run build && nodemon",
     "dev:tsnd": "ts-node-dev --respawn --transpile-only src/server.ts",
     "seed:admin": "ts-node src/scripts/seedAdmin.ts",
     "test": "vitest run"

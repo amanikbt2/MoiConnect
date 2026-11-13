@@ -3971,7 +3971,8 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
             <form id="popup-update-form" onsubmit="handleCreateUpdatePopup(event)" class="hidden" style="display: flex; flex-direction: column; gap: 14px;">
               <div>
                 <label style="display: block; font-size: 12px; font-weight: 700; color: #334155; margin-bottom: 4px;">Minimum Required Version *</label>
-                <input type="text" id="pop-update-minver" class="form-control" placeholder="e.g. 1.0.7" required style="width: 100%; font-weight: 700;" />
+                <input type="text" id="pop-update-minver" class="form-control" placeholder="e.g. 3.0.2" required style="width: 100%; font-weight: 700;" />
+                <small style="display: block; margin-top: 5px; color: #64748b;">Only installed versions below this value receive the popup. Apps already on this version or newer will not receive it.</small>
               </div>
 
               <div>
