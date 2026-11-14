@@ -1,0 +1,13 @@
+{
+  "product": "MConnect Desktop",
+  "version": "3.0.1",
+  "channel": "stable",
+  "platform": "Windows",
+  "supportedVersions": ["Windows 10", "Windows 11"],
+  "architecture": "x64",
+  "fileName": "MConnect-Setup-3.0.1.exe",
+  "sizeBytes": 121830925,
+  "sha256": "78DFAA905808AC8C96FA51157A4D8673DFDBA16261A0E92D3C237AB5DD03AFE7",
+  "downloadUrl": "https://github.com/amanikbt2/MoiConnect/releases/latest/download/MConnect-Setup-3.0.1.exe",
+  "releaseNotesUrl": "https://github.com/amanikbt2/MoiConnect/releases/latest"
+}

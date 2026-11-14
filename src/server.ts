@@ -10,6 +10,7 @@ import routes from './routes';
 import { setupSocketIO } from './socket';
 import { errorHandler } from './middleware/errorHandler';
 import path from 'path';
+import { readFileSync } from 'fs';
 import {
   renderAdminDashboard,
   renderPublicTempFolder,
@@ -66,6 +67,28 @@ app.use(helmet({
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Keep the Windows download URL stable; the release manifest points to the hosted installer.
+app.get('/download/windows', (_req, res) => {
+  try {
+    const manifestPath = path.join(process.cwd(), 'releases', 'windows.json');
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { downloadUrl?: string };
+    const downloadUrl = new URL(manifest.downloadUrl || '');
+
+    if (
+      downloadUrl.protocol !== 'https:' ||
+      downloadUrl.hostname !== 'github.com' ||
+      !downloadUrl.pathname.startsWith('/amanikbt2/MoiConnect/releases/latest/download/')
+    ) {
+      return res.status(503).json({ message: 'Windows installer is not available right now.' });
+    }
+
+    res.setHeader('Cache-Control', 'no-store');
+    return res.redirect(302, downloadUrl.toString());
+  } catch {
+    return res.status(503).json({ message: 'Windows installer is not available right now.' });
+  }
+});
 
 // Rate Limiter (Protection with Admin & Localhost Skip)
 const limiter = rateLimit({
