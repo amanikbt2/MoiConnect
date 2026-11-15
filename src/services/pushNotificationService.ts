@@ -4,6 +4,7 @@ import { getForumAccessPolicy, isForumParticipationAllowed } from './forumAccess
 import { Notification } from '../models/Notification';
 import { User } from '../models/User';
 import { getSocketIO } from '../socket';
+import { getAppSettingValue } from '../models/AppSetting';
 
 export interface IPushNotificationPayload {
   title: string;
@@ -185,6 +186,22 @@ export const dispatchPushNotification = async (payload: IPushNotificationPayload
     readBy: []
   });
 
+  if (!(await getAppSettingValue('allowPushNotifications', true))) {
+    // Keep the in-app inbox and live bell updates available while suppressing phone pushes.
+    try {
+      const io = getSocketIO();
+      if (io) io.emit('new_notification', { notification: notificationRecord });
+    } catch (e) {}
+    return {
+      success: true,
+      sentCount: 0,
+      totalTokens: 0,
+      failedCount: 0,
+      pushDisabled: true,
+      storedNotificationId: notificationRecord._id
+    };
+  }
+
   // 2. Query target DeviceTokens
   let query: any = {};
   if (target === 'emails' && recipientEmails.length > 0) {
@@ -344,6 +361,9 @@ export const sendPushToTokens = async (
   data: Record<string, any> = {}
 ): Promise<{ totalTokens: number; sentCount: number; failedCount: number }> => {
   if (!tokens || tokens.length === 0) return { totalTokens: 0, sentCount: 0, failedCount: 0 };
+  if (!(await getAppSettingValue('allowPushNotifications', true))) {
+    return { totalTokens: tokens.length, sentCount: 0, failedCount: 0 };
+  }
   const { categoryId, richContent, ttl, ...notificationData } = data as any;
   const messages = tokens.map((to) => ({
     to,

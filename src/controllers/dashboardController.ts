@@ -232,6 +232,7 @@ export const getDashboardOverview = async (_req: Request, res: Response): Promis
     const allowCommunityChat = await getAppSettingValue('allowCommunityChat', true);
     const disableAiFeatures = await getAppSettingValue('disableAiFeatures', false);
     const allowPayments = await getAppSettingValue('allowPayments', true);
+    const allowPushNotifications = await getAppSettingValue('allowPushNotifications', true);
 
     res.json({
       success: true,
@@ -248,6 +249,7 @@ export const getDashboardOverview = async (_req: Request, res: Response): Promis
         showDemoMaterials,
         allowCommunityChat,
         allowPayments,
+        allowPushNotifications,
         totalOnline: onlineStats.totalOnline,
         authenticatedOnline: onlineStats.authenticatedCount,
         guestOnline: onlineStats.guestCount,
@@ -259,7 +261,8 @@ export const getDashboardOverview = async (_req: Request, res: Response): Promis
       settings: {
         showDemoMaterials,
         allowCommunityChat,
-        allowPayments
+        allowPayments,
+        allowPushNotifications
       },
       pendingPapers: pendingPaperList,
       approvedPapers: approvedPaperList,
@@ -523,11 +526,12 @@ export const getAppSettings = async (req: Request, res: Response): Promise<void>
   try {
     const showDemoMaterials = await getAppSettingValue('showDemoMaterials', false);
     const allowCommunityChat = await getAppSettingValue('allowCommunityChat', true);
+    const allowPushNotifications = await getAppSettingValue('allowPushNotifications', true);
     const forumPolicy = await getForumAccessPolicy();
     const forumAccessAllowed = isForumParticipationAllowed((req as any).user?.email, forumPolicy);
     res.json({
       success: true,
-      settings: { showDemoMaterials, allowCommunityChat, forumAccessAllowed, forumAccessMode: forumPolicy.mode }
+      settings: { showDemoMaterials, allowCommunityChat, allowPushNotifications, forumAccessAllowed, forumAccessMode: forumPolicy.mode }
     });
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });
@@ -536,12 +540,15 @@ export const getAppSettings = async (req: Request, res: Response): Promise<void>
 
 export const updateDashboardSettings = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { key, value, showDemoMaterials, allowCommunityChat, allowPayments, disableAiFeatures, forumAccessPolicy } = req.body;
+    const { key, value, showDemoMaterials, allowCommunityChat, allowPayments, allowPushNotifications, disableAiFeatures, forumAccessPolicy } = req.body;
     if (showDemoMaterials !== undefined) {
       await setAppSettingValue('showDemoMaterials', Boolean(showDemoMaterials), (req as any).user?._id);
     }
     if (allowCommunityChat !== undefined) {
       await setAppSettingValue('allowCommunityChat', Boolean(allowCommunityChat), (req as any).user?._id);
+    }
+    if (allowPushNotifications !== undefined) {
+      await setAppSettingValue('allowPushNotifications', Boolean(allowPushNotifications), (req as any).user?._id);
     }
     if (allowPayments !== undefined) {
       await setAppSettingValue('allowPayments', Boolean(allowPayments), (req as any).user?._id);
@@ -558,13 +565,14 @@ export const updateDashboardSettings = async (req: Request, res: Response): Prom
     }
     const currentShowDemo = await getAppSettingValue('showDemoMaterials', false);
     const currentAllowChat = await getAppSettingValue('allowCommunityChat', true);
+    const currentAllowPushNotifications = await getAppSettingValue('allowPushNotifications', true);
     const currentAllowPayments = await getAppSettingValue('allowPayments', true);
     const currentDisableAi = await getAppSettingValue('disableAiFeatures', false);
 
     res.json({
       success: true,
       message: 'App settings updated successfully.',
-      settings: { showDemoMaterials: currentShowDemo, allowCommunityChat: currentAllowChat, allowPayments: currentAllowPayments, disableAiFeatures: currentDisableAi }
+      settings: { showDemoMaterials: currentShowDemo, allowCommunityChat: currentAllowChat, allowPushNotifications: currentAllowPushNotifications, allowPayments: currentAllowPayments, disableAiFeatures: currentDisableAi }
     });
     return;
 
@@ -2755,6 +2763,16 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
   const chatLabelText = initialAllowChat
     ? 'Saved in Database (Community Chat Enabled)'
     : 'Saved in Database (Community Chat Disabled)';
+  const initialAllowPushNotifications = await getAppSettingValue('allowPushNotifications', true);
+  const isPushCheckedAttr = initialAllowPushNotifications ? 'checked' : '';
+  const pushBadgeText = initialAllowPushNotifications ? 'PUSH ENABLED' : 'PUSH DISABLED';
+  const pushBadgeBg = initialAllowPushNotifications ? '#dcfce7' : '#fee2e2';
+  const pushBadgeColor = initialAllowPushNotifications ? '#15803d' : '#dc2626';
+  const pushSliderBg = initialAllowPushNotifications ? '#22c55e' : '#cbd5e1';
+  const pushKnobLeft = initialAllowPushNotifications ? '29px' : '3px';
+  const pushLabelText = initialAllowPushNotifications
+    ? 'Saved in Database (Phone push notifications enabled)'
+    : 'Saved in Database (Phone push notifications suppressed)';
   const initialAllowPayments = await getAppSettingValue('allowPayments', true);
   const isPaymentsCheckedAttr = initialAllowPayments ? 'checked' : '';
   const paymentsBadgeText = initialAllowPayments ? 'PAYMENTS ACTIVE' : 'PAYMENTS DISABLED';
@@ -4422,6 +4440,31 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
                 </label>
               </div>
               <span id="chat-toggle-status-label" style="font-size: 11px; font-weight: 700; color: ${chatBadgeColor};">${chatLabelText}</span>
+            </div>
+          </div>
+
+          <!-- Setting Card: Phone Push Notifications Toggle -->
+          <div style="background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 14px; padding: 22px; margin-top: 16px; display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap;">
+            <div style="flex: 1; min-width: 280px;">
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+                <span style="font-size: 18px;">🔔</span>
+                <h3 style="margin: 0; font-size: 16px; font-weight: 800; color: #0f172a;">Allow Push Notifications</h3>
+              </div>
+              <p style="margin: 0; font-size: 13px; color: #475569; line-height: 1.5;">
+                When <b>ON</b>, the app can send push notifications to phones.<br/>
+                When <b>OFF</b>, phone pushes are suppressed. In-app notifications and the bell inbox continue to work.
+              </p>
+            </div>
+            <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 8px;">
+              <div style="display: flex; align-items: center; gap: 12px;">
+                <span id="push-status-badge" style="font-size: 11px; font-weight: 800; padding: 4px 10px; border-radius: 20px; background: ${pushBadgeBg}; color: ${pushBadgeColor}; text-transform: uppercase;">${pushBadgeText}</span>
+                <label style="position: relative; display: inline-block; width: 54px; height: 28px; cursor: pointer;">
+                  <input type="checkbox" id="toggle-push-notifications" ${isPushCheckedAttr} onchange="handlePushNotificationsToggle(this.checked)" style="opacity: 0; width: 0; height: 0;">
+                  <span id="push-toggle-slider" style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: ${pushSliderBg}; transition: .3s; border-radius: 34px;"></span>
+                  <span id="push-toggle-knob" style="position: absolute; height: 22px; width: 22px; left: ${pushKnobLeft}; bottom: 3px; background-color: white; transition: .3s; border-radius: 50%; box-shadow: 0 2px 4px rgba(0,0,0,0.2);"></span>
+                </label>
+              </div>
+              <span id="push-toggle-status-label" style="font-size: 11px; font-weight: 700; color: ${pushBadgeColor};">${pushLabelText}</span>
             </div>
           </div>
 
@@ -7171,6 +7214,9 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
     function renderAppSettings(statsOrSettings) {
       const isDemoOn = statsOrSettings && statsOrSettings.showDemoMaterials !== undefined ? statsOrSettings.showDemoMaterials : true;
       const isChatOn = statsOrSettings && statsOrSettings.allowCommunityChat !== undefined ? statsOrSettings.allowCommunityChat : true;
+      const arePushNotificationsOn = statsOrSettings && statsOrSettings.allowPushNotifications !== undefined
+        ? statsOrSettings.allowPushNotifications
+        : !!(document.getElementById('toggle-push-notifications') && document.getElementById('toggle-push-notifications').checked);
       const arePaymentsOn = statsOrSettings && statsOrSettings.allowPayments !== undefined ? statsOrSettings.allowPayments : true;
       const aiToggleInput = document.getElementById('toggle-disable-ai');
       const isAiDisabled = statsOrSettings && statsOrSettings.disableAiFeatures !== undefined
@@ -7219,6 +7265,26 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       if (chatLabel) {
         chatLabel.innerText = isChatOn ? 'Saved in Database (Community Chat Enabled)' : 'Saved in Database (Community Chat Disabled)';
         chatLabel.style.color = isChatOn ? '#15803d' : '#dc2626';
+      }
+
+      const pushToggleInput = document.getElementById('toggle-push-notifications');
+      const pushBadge = document.getElementById('push-status-badge');
+      const pushSlider = document.getElementById('push-toggle-slider');
+      const pushKnob = document.getElementById('push-toggle-knob');
+      const pushLabel = document.getElementById('push-toggle-status-label');
+      if (pushToggleInput) pushToggleInput.checked = arePushNotificationsOn;
+      if (pushBadge) {
+        pushBadge.innerText = arePushNotificationsOn ? 'PUSH ENABLED' : 'PUSH DISABLED';
+        pushBadge.style.background = arePushNotificationsOn ? '#dcfce7' : '#fee2e2';
+        pushBadge.style.color = arePushNotificationsOn ? '#15803d' : '#dc2626';
+      }
+      if (pushSlider) pushSlider.style.backgroundColor = arePushNotificationsOn ? '#22c55e' : '#cbd5e1';
+      if (pushKnob) pushKnob.style.left = arePushNotificationsOn ? '29px' : '3px';
+      if (pushLabel) {
+        pushLabel.innerText = arePushNotificationsOn
+          ? 'Saved in Database (Phone push notifications enabled)'
+          : 'Saved in Database (Phone push notifications suppressed)';
+        pushLabel.style.color = arePushNotificationsOn ? '#15803d' : '#dc2626';
       }
 
       const paymentsToggleInput = document.getElementById('toggle-allow-payments');
@@ -7302,6 +7368,27 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         const toggleInput = document.getElementById('toggle-community-chat');
         if (toggleInput) toggleInput.checked = !enabled;
         renderAppSettings({ allowCommunityChat: !enabled });
+      }
+    }
+
+    async function handlePushNotificationsToggle(enabled) {
+      const label = document.getElementById('push-toggle-status-label');
+      if (label) label.innerText = 'Saving push notification setting...';
+      try {
+        const response = await fetch('/api/v1/dashboard/settings', {
+          method: 'POST',
+          headers: await adminSettingsAuthHeaders(),
+          body: JSON.stringify({ key: 'allowPushNotifications', value: enabled })
+        });
+        const json = await response.json();
+        if (!response.ok || !json.success) throw new Error(json.error || json.message || 'Update failed');
+        showToast('Phone push notifications ' + (enabled ? 'enabled' : 'disabled') + '.');
+        renderAppSettings({ allowPushNotifications: enabled });
+      } catch (error) {
+        showToast('Push notification setting update failed: ' + error.message, true);
+        const toggle = document.getElementById('toggle-push-notifications');
+        if (toggle) toggle.checked = !enabled;
+        renderAppSettings({ allowPushNotifications: !enabled });
       }
     }
 
