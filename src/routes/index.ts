@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { authenticate, optionalAuthenticate, requireRole, requireLandlordVerified } from '../middleware/auth';
+import { authenticate, optionalAuthenticate, requireRole, requireLandlordVerified, requireDevAdmin } from '../middleware/auth';
 import { validateBody } from '../middleware/validate';
 import {
   registerSchema,
@@ -74,7 +74,7 @@ router.post('/dashboard/restore', tempUpload.single('backup'), dashboardControll
 
 // Web Dashboard API Routes
 router.post('/search-reports', optionalAuthenticate, searchReportController.createSearchReport);
-router.get('/dashboard/overview', dashboardController.getDashboardOverview);
+router.get('/dashboard/overview', authenticate, requireDevAdmin, dashboardController.getDashboardOverview);
 router.get('/dashboard/user-presence', dashboardController.getDashboardUserPresence);
 router.get('/dashboard/metrics', dashboardController.getDashboardMetrics);
 router.get('/dashboard/search-reports', searchReportController.getSearchReports);
@@ -110,15 +110,15 @@ router.patch('/dashboard/materials/flag', dashboardController.updateDashboardMat
 router.patch('/dashboard/materials/:id/flag', dashboardController.updateDashboardMaterialFlag);
 router.delete('/dashboard/materials', dashboardController.deleteDashboardMaterials);
 router.get('/dashboard/papers/:id/download-file', dashboardController.downloadPaperFile);
-router.post('/dashboard/papers/:id/upload-thumbnail', tempUpload.single('file'), dashboardController.uploadPaperThumbnail);
-router.post('/dashboard/papers/:id/approve', tempUpload.single('ttsFile'), dashboardController.quickApprovePaper);
-router.post('/dashboard/papers/:id/reject', dashboardController.quickRejectPaper);
-router.patch('/dashboard/papers/:id', dashboardController.quickEditPaper);
+router.post('/dashboard/papers/:id/upload-thumbnail', authenticate, requireDevAdmin, tempUpload.single('file'), dashboardController.uploadPaperThumbnail);
+router.post('/dashboard/papers/:id/approve', authenticate, requireDevAdmin, tempUpload.single('ttsFile'), dashboardController.quickApprovePaper);
+router.post('/dashboard/papers/:id/reject', authenticate, requireDevAdmin, dashboardController.quickRejectPaper);
+router.patch('/dashboard/papers/:id', authenticate, requireDevAdmin, dashboardController.quickEditPaper);
 router.post('/dashboard/papers/:id/smart-edit', tempUpload.fields([{ name: 'file', maxCount: 1 }, { name: 'thumbnail', maxCount: 1 }, { name: 'ttsFile', maxCount: 1 }]), dashboardController.smartEditMaterial);
 router.post('/dashboard/papers/:id/replace-file', tempUpload.single('file'), dashboardController.quickReplacePaperFile);
-router.get('/dashboard/temp-files', dashboardController.getDashboardTempFiles);
-router.delete('/dashboard/temp-files/:filename', dashboardController.deleteDashboardTempFile);
-router.post('/dashboard/temp-files/delete-batch', dashboardController.deleteDashboardBatchTempFiles);
+router.get('/dashboard/temp-files', authenticate, requireDevAdmin, dashboardController.getDashboardTempFiles);
+router.delete('/dashboard/temp-files/:filename', authenticate, requireDevAdmin, dashboardController.deleteDashboardTempFile);
+router.post('/dashboard/temp-files/delete-batch', authenticate, requireDevAdmin, dashboardController.deleteDashboardBatchTempFiles);
 router.get('/dashboard/community-messages', dashboardController.getDashboardCommunityMessages);
 router.delete('/dashboard/community-messages', dashboardController.deleteDashboardCommunityMessages);
 router.get('/dashboard/reports', adminController.getAdminReports);
@@ -144,10 +144,10 @@ router.get('/admin/registered-devices', notificationController.getRegisteredDevi
 
 // Notify & Popup API Routes
 router.post('/notify/upload-media', tempUpload.single('file'), popupController.uploadPopupMedia);
-router.get('/notify/popups', popupController.getAdminPopups);
-router.post('/notify/popups', popupController.createPopup);
-router.delete('/notify/popups', popupController.deleteAllPopups);
-router.delete('/notify/popups/:id', popupController.deletePopup);
+router.get('/notify/popups', authenticate, requireDevAdmin, popupController.getAdminPopups);
+router.post('/notify/popups', authenticate, requireDevAdmin, popupController.createPopup);
+router.delete('/notify/popups', authenticate, requireDevAdmin, popupController.deleteAllPopups);
+router.delete('/notify/popups/:id', authenticate, requireDevAdmin, popupController.deletePopup);
 router.post('/notify/check-popup', optionalAuthenticate, popupController.checkClientPopup);
 router.post('/notify/popups/:id/responses', optionalAuthenticate, popupController.submitPopupResponse);
 router.get('/notify/popups/:id/responses', popupController.getPopupResponses);

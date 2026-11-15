@@ -88,6 +88,24 @@ export const requireRole = (...roles: UserRole[]) => {
   };
 };
 
+export const requireDevAdmin = (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+): void => {
+  if (!req.user) {
+    res.status(401).json({ success: false, error: 'Authentication required.' });
+    return;
+  }
+
+  if (req.user.email.trim().toLowerCase() !== 'dev@gmail.com' || !req.user.roles.includes('admin')) {
+    res.status(403).json({ success: false, error: 'This portal is restricted to the MConnect administrator.' });
+    return;
+  }
+
+  next();
+};
+
 export const requireLandlordVerified = (
   req: AuthenticatedRequest,
   res: Response,
