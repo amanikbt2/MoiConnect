@@ -7176,9 +7176,9 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       const icon = refreshBtn ? refreshBtn.querySelector('svg') : null;
       if (icon) icon.style.animation = 'spin 0.8s linear infinite';
       try {
-        const res = await fetch('/api/v1/dashboard/overview');
+        const res = await fetch('/api/v1/dashboard/overview', { headers: await adminSettingsAuthHeaders() });
         const json = await res.json();
-        if (!json.success) throw new Error(json.error || 'Fetch failed');
+        if (!res.ok || !json.success) throw new Error(json.error || 'Fetch failed');
 
         globalData = json;
         renderStats(json.stats);
@@ -7208,6 +7208,10 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
         if (icon) icon.style.animation = 'none';
       } catch (err) {
         showToast('Error loading dashboard: ' + err.message, true);
+        const usersBody = document.getElementById('users-table-body');
+        if (usersBody) {
+          usersBody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:32px;color:#dc2626;">Could not load the user database. Check your admin session and click Refresh to retry.</td></tr>';
+        }
       }
     }
 
@@ -8817,7 +8821,10 @@ export const renderAdminDashboard = async (_req: Request, res: Response): Promis
       if (userPresenceRefreshInFlight || !globalData) return;
       userPresenceRefreshInFlight = true;
       try {
-        const response = await fetch('/api/v1/dashboard/user-presence', { cache: 'no-store' });
+        const response = await fetch('/api/v1/dashboard/user-presence', {
+          cache: 'no-store',
+          headers: await adminSettingsAuthHeaders()
+        });
         const data = await response.json();
         if (!response.ok || !data.success) return;
         globalData.stats = { ...(globalData.stats || {}), onlineUserIds: data.onlineUserIds || [] };
