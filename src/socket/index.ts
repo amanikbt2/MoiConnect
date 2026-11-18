@@ -42,6 +42,10 @@ interface ActiveLiveBroadcast {
 
 // In-memory zero-polling active sockets registry for maximum speed (O(1) lookups)
 const activeSockets = new Map<string, OnlineSession>();
+const COMMUNITY_ASSISTANT_USER_IDS = new Set([
+  '000000000000000000000001', // Campus Bot
+  '000000000000000000000002'  // Campus AI
+]);
 const processedClientMsgIds = new Map<string, string>();
 let activeLiveBroadcast: ActiveLiveBroadcast | null = null;
 let hostDisconnectGraceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -74,6 +78,7 @@ export const getOnlineStats = () => {
   const onlineUserIdsSet = new Set<string>();
 
   activeSockets.forEach(session => {
+    if (session.userId && COMMUNITY_ASSISTANT_USER_IDS.has(session.userId)) return;
     if (session.userId) {
       authenticatedCount++;
       onlineUserIdsSet.add(session.userId);
@@ -83,7 +88,7 @@ export const getOnlineStats = () => {
   });
 
   return {
-    totalOnline: activeSockets.size,
+    totalOnline: authenticatedCount + guestCount,
     authenticatedCount,
     guestCount,
     onlineUserIds: Array.from(onlineUserIdsSet)
@@ -218,7 +223,7 @@ export const setupSocketIO = (io: SocketIOServer): void => {
     }
 
     // Broadcast system connection pill notice if user is authenticated
-    if (userId) {
+    if (userId && !COMMUNITY_ASSISTANT_USER_IDS.has(userId)) {
       User.findById(userId).select('name').then(u => {
         if (u) {
           socket.to('community_room').emit('community:system_event', {
@@ -658,7 +663,7 @@ export const setupSocketIO = (io: SocketIOServer): void => {
       activeSockets.delete(socket.id);
       broadcastOnlineCount();
       console.log(`[Socket Disconnected]: ${isGuest ? 'Guest (Unknown)' : `User ${userId}`} (Active: ${activeSockets.size})`);
-      if (userId) {
+      if (userId && !COMMUNITY_ASSISTANT_USER_IDS.has(userId)) {
         const stillConnected = Array.from(activeSockets.values()).some((session) => session.userId === userId);
         const userLookup = stillConnected
           ? User.findById(userId).select('name')
